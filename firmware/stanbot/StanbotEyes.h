@@ -10,12 +10,18 @@
 
 #include <Arduino.h>
 
+enum class StanbotEmotion : uint8_t {
+  Normal, Angry, Glee, Happy, Sad, Worried, Focused, Annoyed, Surprised,
+  Skeptic, Frustrated, Unimpressed, Sleepy, Suspicious, Squint, Furious,
+  Scared, Awe
+};
+
 // The renderer is a template so it can use StackChan's M5GFX display without
 // coupling this component to a particular M5Unified display type.
 class StanbotEyes {
  public:
   void begin(uint32_t now) {
-    nextBlinkMs_ = now + 9600;
+    nextBlinkMs_ = now + 19200;
     lastFrameMs_ = now;
   }
 
@@ -23,6 +29,22 @@ class StanbotEyes {
     targetX_ = constrain(x, -1.0f, 1.0f);
     targetY_ = constrain(y, -1.0f, 1.0f);
     lastTargetMs_ = now;
+  }
+
+  void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
+
+  static bool emotionFromName(const char* name, StanbotEmotion& result) {
+    static constexpr const char* kNames[] = {
+        "normal", "angry", "glee", "happy", "sad", "worried", "focused",
+        "annoyed", "surprised", "skeptic", "frustrated", "unimpressed",
+        "sleepy", "suspicious", "squint", "furious", "scared", "awe"};
+    for (uint8_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+      if (strcmp(name, kNames[i]) == 0) {
+        result = static_cast<StanbotEmotion>(i);
+        return true;
+      }
+    }
+    return false;
   }
 
   template <typename Display>
@@ -38,6 +60,11 @@ class StanbotEyes {
     }
     lookX_ += (targetX_ - lookX_) * 0.14f;
     lookY_ += (targetY_ - lookY_) * 0.14f;
+    currentPose_.width += (targetPose_.width - currentPose_.width) * 0.10f;
+    currentPose_.height += (targetPose_.height - currentPose_.height) * 0.10f;
+    currentPose_.tilt += (targetPose_.tilt - currentPose_.tilt) * 0.10f;
+    currentPose_.pupilScale +=
+        (targetPose_.pupilScale - currentPose_.pupilScale) * 0.10f;
 
     if (!blinking_ && now >= nextBlinkMs_) {
       blinking_ = true;
@@ -45,7 +72,7 @@ class StanbotEyes {
     }
     if (blinking_ && now - blinkStartedMs_ >= 180) {
       blinking_ = false;
-      nextBlinkMs_ = now + 9600 + random(0, 5400);
+      nextBlinkMs_ = now + 19200 + random(0, 10800);
     }
 
     float blink = 0.0f;
@@ -67,22 +94,48 @@ class StanbotEyes {
   uint32_t nextBlinkMs_ = 0;
   uint32_t blinkStartedMs_ = 0;
   bool blinking_ = false;
+  struct Pose { float width; float height; float tilt; float pupilScale; };
+  Pose currentPose_{86, 112, 0, 1};
+  Pose targetPose_{86, 112, 0, 1};
+
+  static Pose poseFor(StanbotEmotion emotion) {
+    switch (emotion) {
+      case StanbotEmotion::Normal: return {86,112,0,1};
+      case StanbotEmotion::Angry: return {90,56,18,0.85f};
+      case StanbotEmotion::Glee: return {90,32,-4,0.9f};
+      case StanbotEmotion::Happy: return {90,26,0,0.9f};
+      case StanbotEmotion::Sad: return {82,48,-14,1.05f};
+      case StanbotEmotion::Worried: return {82,72,-8,1.2f};
+      case StanbotEmotion::Focused: return {92,42,9,0.7f};
+      case StanbotEmotion::Annoyed: return {92,34,12,0.75f};
+      case StanbotEmotion::Surprised: return {94,130,0,1.25f};
+      case StanbotEmotion::Skeptic: return {82,84,15,0.85f};
+      case StanbotEmotion::Frustrated: return {88,32,18,0.7f};
+      case StanbotEmotion::Unimpressed: return {94,30,0,0.7f};
+      case StanbotEmotion::Sleepy: return {88,30,-10,0.8f};
+      case StanbotEmotion::Suspicious: return {84,52,12,0.8f};
+      case StanbotEmotion::Squint: return {72,48,0,0.65f};
+      case StanbotEmotion::Furious: return {92,62,24,0.65f};
+      case StanbotEmotion::Scared: return {92,138,0,1.35f};
+      case StanbotEmotion::Awe: return {100,142,0,1.1f};
+    }
+    return {86,112,0,1};
+  }
 
   template <typename Display>
   void draw(Display& display, bool attending, float blink) {
-    constexpr int kEyeWidth = 86;
-    constexpr int kEyeHeight = 112;
     constexpr int kBaseY = 120;
-    const int height = max(6, static_cast<int>(kEyeHeight * (1.0f - blink)));
+    const int width = static_cast<int>(currentPose_.width);
+    const int height = max(6, static_cast<int>(currentPose_.height * (1.0f - blink)));
     const int radius = min(30, height / 2);
     const int pupilX = static_cast<int>(lookX_ * 18);
     const int pupilY = static_cast<int>(lookY_ * 12);
     const uint16_t iris = attending ? TFT_CYAN : 0xBDF7;
 
     display.fillScreen(TFT_BLACK);
-    drawEye(display, 102, kBaseY, kEyeWidth, height, radius, pupilX, pupilY,
+    drawEye(display, 102, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
-    drawEye(display, 218, kBaseY, kEyeWidth, height, radius, pupilX, pupilY,
+    drawEye(display, 218, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
   }
 
@@ -91,12 +144,17 @@ class StanbotEyes {
                int radius, int pupilX, int pupilY, uint16_t iris) {
     const int top = centerY - height / 2;
     display.fillRoundRect(centerX - width / 2, top, width, height, radius, iris);
-    const int pupilRadius = max(8, min(18, height / 4));
+    const int pupilRadius = max(6, static_cast<int>(min(18, height / 4) * currentPose_.pupilScale));
     display.fillCircle(centerX + pupilX, centerY + pupilY, pupilRadius, TFT_BLACK);
     if (height > 24) {
       display.fillCircle(centerX + pupilX - pupilRadius / 3,
                          centerY + pupilY - pupilRadius / 3,
                          max(2, pupilRadius / 5), TFT_WHITE);
     }
+    const int tilt = static_cast<int>(currentPose_.tilt);
+    if (tilt > 0) display.fillTriangle(centerX - width / 2, top, centerX + width / 2, top,
+                                        centerX + width / 2, top + tilt, TFT_BLACK);
+    if (tilt < 0) display.fillTriangle(centerX - width / 2, top, centerX + width / 2, top,
+                                        centerX - width / 2, top - tilt, TFT_BLACK);
   }
 };

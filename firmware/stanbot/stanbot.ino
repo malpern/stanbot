@@ -29,6 +29,8 @@ constexpr float kConfidenceToAttend = 0.70f;
 
 struct FaceObservation {
   bool present = false;
+  bool hasEmotion = false;
+  StanbotEmotion emotion = StanbotEmotion::Normal;
   float confidence = 0.0f;
   // Normalized image coordinates: -1 left/up, +1 right/down.
   float x = 0.0f;
@@ -46,7 +48,8 @@ class UsbTargetSource {
   }
 
   FaceObservation poll(uint32_t now) {
-    // One line per result: T,<frame-sequence>,<x>,<y>,<confidence>\n
+    // Allowed local messages: T,<frame-sequence>,<x>,<y>,<confidence> or
+    // E,<one of the 18 documented emotion names>. Neither can arm motion.
     // x/y must be normalized to [-1, 1]. Values outside the protocol range,
     // stale partial lines, and malformed input are discarded.
     while (Serial.available()) {
@@ -55,6 +58,14 @@ class UsbTargetSource {
         line_[lineLength_] = '\0';
         FaceObservation result{};
         unsigned long sequence = 0;
+        StanbotEmotion emotion;
+        if (strncmp(line_, "E,", 2) == 0 &&
+            StanbotEyes::emotionFromName(line_ + 2, emotion)) {
+          result.hasEmotion = true;
+          result.emotion = emotion;
+          lineLength_ = 0;
+          return result;
+        }
         if (sscanf(line_, "T,%lu,%f,%f,%f", &sequence, &result.x, &result.y,
                    &result.confidence) == 4 &&
             result.x >= -1.0f && result.x <= 1.0f &&
@@ -205,6 +216,7 @@ void loop() {
   const uint32_t now = millis();
   const FaceObservation observation = faceSource.poll(now);
   head.update(observation, now);
+  if (observation.hasEmotion) eyes.setEmotion(observation.emotion);
   if (observation.present && observation.confidence >= kConfidenceToAttend) {
     eyes.attend(observation.x, observation.y, now);
   }

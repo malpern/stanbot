@@ -31,6 +31,16 @@ T,<frame-sequence>,<normalized-x>,<normalized-y>,<confidence>\n
 image and `y=-1` is the top. `confidence` must be in `[0, 1]`. The sketch parses
 this response but receives no motor-angle protocol at all.
 
+The mini may separately select a display-only emotion using a strict allowlist:
+
+```text
+E,normal|angry|glee|happy|sad|worried|focused|annoyed|surprised|skeptic|frustrated|unimpressed|sleepy|suspicious|squint|furious|scared|awe\n
+```
+
+This changes only the on-device eye expression; it cannot move the head, arm
+the servos, or alter safety limits. Idle remains `normal` with slow local drift
+and a blink about every 20–30 seconds.
+
 The mini must emit a response only for an actual detected face. It may use face
 rectangle position to suggest *apparent orientation/attention*, but neither a
 face rectangle nor face landmarks establish eye contact. The display language
