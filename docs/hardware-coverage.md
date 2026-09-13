@@ -4,11 +4,11 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 | Capability | Meaningful hardware test | Implemented | Hardware verified |
 | --- | --- | --- | --- |
-| Head pan servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | No | No |
-| Head tilt servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | No | No |
-| Display | Verify avatar rendering, blinking, and attention states at startup. | No | No |
+| Head pan servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
+| Head tilt servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
+| Display | Verify avatar rendering, blinking, and attention states at startup. | Avatar implementation prepared | No |
 | Display touch | Verify coordinates and press/release events across the display. | No | No |
-| Camera | Capture frames and verify face presence/loss under varied lighting. | No | No |
+| Camera | Capture frames and verify face presence/loss under varied lighting. | ESP-WHO integration design prepared; no capture or detection build yet | No |
 | Dual microphones | Verify both channels with known audio and distinguish channel input. | No | No |
 | Speaker | Play a known signal at a conservative level and inspect distortion. | No | No |
 | Wi-Fi | Verify local connection, reconnect behavior, and operation without internet. | No | No |

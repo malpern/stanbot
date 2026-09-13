@@ -1,0 +1,3 @@
+[submodule "firmware/lib/StackChan-BSP"]
+	path = firmware/lib/StackChan-BSP
+	url = https://github.com/m5stack/StackChan-BSP.git
