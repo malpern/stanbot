@@ -10,6 +10,19 @@ On startup, display a simple animated avatar, detect a person with the camera, s
 
 The project has a safe animated-eye firmware slice, an explicit factory-recovery workflow, and a local camera transport probe. USB flashing, the base animated display renderer, and local 640×480 camera frame capture have been tested on the attached StackChan. Servo motion remains deliberately disabled pending physical calibration. Image quality, face detection, and head following are not yet hardware-verified.
 
+## Mini companion control app
+
+`companion/StanbotCompanion` is a native macOS SwiftUI app. It is intentionally
+local and conservative: it opens the selected USB serial device, shows whether
+the control connection is available, and sends display-only expression commands.
+Camera, face, and motion cards explicitly remain inactive until the firmware
+features behind them have passed hardware validation.
+
+```sh
+cd companion/StanbotCompanion
+swift run
+```
+
 See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware-coverage.md).
 
 ## Development sequence

@@ -8,6 +8,7 @@ sdkconfig.old
 
 # Build outputs and downloaded tools
 build/
+.build/
 managed_components/
 .venv/
 __pycache__/
