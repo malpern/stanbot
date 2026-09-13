@@ -14,13 +14,15 @@ The project has a safe animated-eye firmware slice, an explicit factory-recovery
 
 `companion/StanbotCompanion` is a native macOS SwiftUI app. It is intentionally
 local and conservative: it opens the selected USB serial device, shows whether
-the control connection is available, and sends display-only expression commands.
-Camera, face, and motion cards explicitly remain inactive until the firmware
-features behind them have passed hardware validation.
+the control connection is available, sends display-only expression commands,
+and can render bounded local camera frames with macOS Vision face rectangles.
+The rectangle is labelled `person detected`, never eye contact or identity.
+Head movement remains unavailable until calibration is complete.
 
 ```sh
 cd companion/StanbotCompanion
-swift run
+./build-app.sh
+open build/Stanbot.app
 ```
 
 See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware-coverage.md).
