@@ -6,6 +6,8 @@ import Darwin
 
 @main
 struct StanbotCompanionApp: App {
+    @NSApplicationDelegateAdaptor(StanbotAppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var robot = RobotConnection()
 
     var body: some Scene {
@@ -16,11 +18,20 @@ struct StanbotCompanionApp: App {
         }
         .defaultSize(width: 1060, height: 720)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Stanbot") { openWindow(id: "about") }
+            }
             CommandGroup(after: .toolbar) {
                 Button("Reconnect to StackChan") { robot.connect() }
                     .keyboardShortcut("r", modifiers: [.command])
             }
         }
+        Window("About Stanbot", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .commandsRemoved()
     }
 }
 
