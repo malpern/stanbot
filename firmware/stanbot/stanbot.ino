@@ -143,38 +143,42 @@ bool eyesClosed = false;
 
 void drawAvatar(bool attentive) {
   auto& display = M5StackChan.Display();
-  constexpr uint16_t kCaseBeige = 0xD5B7;
-  constexpr uint16_t kCaseShadow = 0x9C71;
-  constexpr uint16_t kCrt = 0x18E3;
-  constexpr uint16_t kPhosphor = 0xEF5D;
-  constexpr uint16_t kFeature = 0x2945;
+  constexpr uint16_t kPaper = 0xFFFE;
+  constexpr uint16_t kInk = 0x18E3;
+  constexpr int kStroke = 9;
 
-  display.fillScreen(TFT_BLACK);
-  // An original compact-computer character: its warm enclosure and inset CRT
-  // nod to early Macs without reproducing Apple's historic face artwork.
-  display.fillRoundRect(44, 14, 232, 212, 22, kCaseBeige);
-  display.drawRoundRect(44, 14, 232, 212, 22, kCaseShadow);
-  display.fillRoundRect(66, 42, 184, 132, 12, kCrt);
-  display.drawRoundRect(66, 42, 184, 132, 12, kCaseShadow);
+  display.fillScreen(kPaper);
+  // A deliberately original one-bit computer character built from hard pixel
+  // blocks. Its proportions and face are specific to Stanbot.
+  display.fillRect(52, 10, 216, kStroke, kInk);       // top cap
+  display.fillRect(34, 28, kStroke, 178, kInk);       // left case edge
+  display.fillRect(277, 28, kStroke, 178, kInk);      // right case edge
+  display.fillRect(43, 205, 234, kStroke, kInk);      // case shelf
+  display.fillRect(62, 210, 196, 22, kInk);           // base
+  display.fillRect(72, 218, 176, 14, kPaper);         // base inset
 
-  const uint16_t eye = attentive ? TFT_CYAN : kPhosphor;
+  // Inset CRT.
+  display.fillRect(72, 40, 176, 132, kInk);
+  display.fillRect(81, 49, 158, 114, kPaper);
+
+  const uint16_t eye = kInk;
   if (eyesClosed) {
-    display.drawFastHLine(98, 108, 40, eye);
-    display.drawFastHLine(182, 108, 40, eye);
+    display.drawFastHLine(110, 104, 28, kInk);
+    display.drawFastHLine(182, 104, 28, kInk);
   } else {
-    display.fillRoundRect(102, 80, 32, 50, 12, eye);
-    display.fillRoundRect(186, 80, 32, 50, 12, eye);
-    display.fillCircle(118, 105, 8, kCrt);
-    display.fillCircle(202, 105, 8, kCrt);
+    display.fillRect(112, 77, 15, 31, eye);
+    display.fillRect(193, 77, 15, 31, eye);
   }
-  // A deliberately plain mouth line, with no bright anti-aliased glow.
-  display.drawFastHLine(136, 143, 48, kFeature);
+  // Asymmetric nose and square smile: no curves, gradients, or glow.
+  display.fillRect(154, 91, 11, 37, kInk);
+  display.fillRect(143, 117, 22, 11, kInk);
+  display.fillRect(120, 139, 12, 10, kInk);
+  display.fillRect(132, 149, 56, 10, kInk);
+  display.fillRect(188, 139, 12, 10, kInk);
 
-  // Speaker grille and a single local attention indicator.
-  for (int y = 68; y <= 150; y += 10) {
-    display.drawFastHLine(244, y, 14, kCaseShadow);
-  }
-  display.fillCircle(160, 196, 5, attentive ? TFT_CYAN : kCaseShadow);
+  // Small local status mark; it changes only after a confidence-qualified
+  // observation and is never a claim of eye contact.
+  display.fillRect(56, 184, 18, 8, attentive ? kInk : kPaper);
   // This is a presence signal only; it does not indicate or claim eye contact.
 }
 
