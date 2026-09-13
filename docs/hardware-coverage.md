@@ -1,20 +1,22 @@
 # Hardware coverage
 
-Requested coverage; exact components and supported functions must be confirmed against official board documentation. All implementation and physical validation are pending.
+Requested coverage; exact components and supported functions must be confirmed against official board documentation. Results below distinguish implementation, build/transport validation, and physical validation.
 
 ## Build and transport record
 
 | Date | Result | Scope and limitation |
 | --- | --- | --- |
 | 2026-09-13 | `stanbot` built for ESP32-S3 (588,671 bytes program, 28,852 bytes RAM) and uploaded to `/dev/cu.usbmodem31201`; the flasher verified every written segment by hash. | This confirms the USB flashing path to the attached ESP32-S3 only. It is **not** a display, camera, servo, or other functional hardware test. Motion remains disabled in the uploaded build. |
+| 2026-09-13 | Corrected the build target to `esp32:esp32:m5stack_cores3` with QSPI PSRAM. `stanbot` built (544,591 bytes program, 28,820 bytes RAM) and was flashed with per-segment hash verification. | This corrects the board profile used for all subsequent builds. The avatar needs a fresh visual confirmation after this rebuild. |
+| 2026-09-13 | `camera_probe` built and flashed with the official StackChan DVP pin map, external 20 MHz camera clock, and CoreS3 QSPI PSRAM profile. It initialized the sensor and returned local 640×480 YUV422 frames. | This is a camera transport test only. The probe does not send images over USB, has not established image quality, and reported capture overruns at the native full frame rate. Face detection is not implemented or verified. |
 
 | Capability | Meaningful hardware test | Implemented | Hardware verified |
 | --- | --- | --- | --- |
 | Head pan servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
 | Head tilt servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
-| Display | Verify avatar rendering, blinking, and attention states at startup. | AGPL-3.0-or-later M5GFX port companion based on `esp32-eyes`; compiled and flashed. | Previous prototype: Yes — 2026-09-13. Current port: awaiting visual confirmation; attention state remains untested. |
+| Display | Verify avatar rendering, blinking, and attention states at startup. | AGPL-3.0-or-later M5GFX port companion based on `esp32-eyes`; compiled and flashed. | Base animated renderer: Yes — 2026-09-13. CoreS3-profile rebuild and emotion variants: awaiting fresh visual confirmation; attention state remains untested. |
 | Display touch | Verify coordinates and press/release events across the display. | No | No |
-| Camera | Capture frames and verify face presence/loss under varied lighting. | ESP-WHO integration design prepared; no capture or detection build yet | No |
+| Camera | Capture frames and verify face presence/loss under varied lighting. | Motion-free local `camera_probe` validates sensor initialization and frame capture with official StackChan configuration. | Frame transport: Yes — 2026-09-13. Image quality, face presence/loss, and detection: No. |
 | Dual microphones | Verify both channels with known audio and distinguish channel input. | No | No |
 | Speaker | Play a known signal at a conservative level and inspect distortion. | No | No |
 | Wi-Fi | Verify local connection, reconnect behavior, and operation without internet. | No | No |

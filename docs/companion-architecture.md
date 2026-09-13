@@ -19,9 +19,12 @@ disabled until physical calibration is complete.
 ## Initial USB protocol
 
 The camera transport will be a bounded binary JPEG-frame protocol from the
-robot to the mini, with a maximum frame size negotiated before use. It will be
-strictly USB-local; it has no Wi-Fi setup, broker, cloud endpoint, or stored
-credential. The mini replies over the same serial device with one ASCII line:
+robot to the mini. Each packet is `SBFR` (four ASCII bytes), version `1` (one
+byte), a little-endian frame sequence (`uint32`), a little-endian JPEG length
+(`uint32`), then that JPEG. The Mini rejects packets above 300,000 bytes and
+resynchronizes after malformed input. It will be strictly USB-local; it has no
+Wi-Fi setup, broker, cloud endpoint, or stored credential. The mini replies
+over the same serial device with one ASCII line:
 
 ```text
 T,<frame-sequence>,<normalized-x>,<normalized-y>,<confidence>\n
@@ -45,6 +48,13 @@ The mini must emit a response only for an actual detected face. It may use face
 rectangle position to suggest *apparent orientation/attention*, but neither a
 face rectangle nor face landmarks establish eye contact. The display language
 therefore says `person detected`, never `eye contact`.
+
+`companion/stanbot-vision.swift` is a buildable macOS Vision implementation of
+the Mini side. It accepts the packet format above, selects at most one largest
+confidence-qualified face, and sends only `T` commands. It does not recognize
+people, retain frames, use the network, or control motors. The firmware packet
+producer is intentionally not enabled until low-rate JPEG output is validated
+on hardware.
 
 ## Why this is the first choice
 

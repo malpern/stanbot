@@ -8,7 +8,7 @@ On startup, display a simple animated avatar, detect a person with the camera, s
 
 ## Status
 
-Project initialized. No firmware implemented, build verified, or hardware tested yet. The robot is reported to be running factory firmware and has not yet been connected to the companion by USB-C.
+The project has a safe animated-eye firmware slice, an explicit factory-recovery workflow, and a local camera transport probe. USB flashing, the base animated display renderer, and local 640×480 camera frame capture have been tested on the attached StackChan. Servo motion remains deliberately disabled pending physical calibration. Image quality, face detection, and head following are not yet hardware-verified.
 
 See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware-coverage.md).
 
