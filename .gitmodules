@@ -7,3 +7,6 @@
 [submodule "firmware/lib/M5GFX"]
 	path = firmware/lib/M5GFX
 	url = https://github.com/m5stack/M5GFX.git
+[submodule "firmware/third_party/esp32-eyes"]
+	path = firmware/third_party/esp32-eyes
+	url = https://github.com/playfultechnology/esp32-eyes.git

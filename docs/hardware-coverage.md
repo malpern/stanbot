@@ -12,7 +12,7 @@ Requested coverage; exact components and supported functions must be confirmed a
 | --- | --- | --- | --- |
 | Head pan servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
 | Head tilt servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |
-| Display | Verify avatar rendering, blinking, and attention states at startup. | Avatar implementation prepared | Yes — 2026-09-13: user visually confirmed blinking eyes and smile after the verified Stanbot upload. Attention state remains untested. |
+| Display | Verify avatar rendering, blinking, and attention states at startup. | AGPL-3.0-or-later M5GFX port companion based on `esp32-eyes`; compiled and flashed. | Previous prototype: Yes — 2026-09-13. Current port: awaiting visual confirmation; attention state remains untested. |
 | Display touch | Verify coordinates and press/release events across the display. | No | No |
 | Camera | Capture frames and verify face presence/loss under varied lighting. | ESP-WHO integration design prepared; no capture or detection build yet | No |
 | Dual microphones | Verify both channels with known audio and distinguish channel input. | No | No |

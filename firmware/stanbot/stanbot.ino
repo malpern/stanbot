@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <M5StackChan.h>
+#include "StanbotEyes.h"
 
 namespace {
 
@@ -135,6 +136,7 @@ class SafeHeadController {
 
 UsbTargetSource faceSource;
 SafeHeadController head;
+StanbotEyes eyes;
 constexpr uint32_t kBlinkIntervalMs = 3600;
 constexpr uint32_t kBlinkDurationMs = 130;
 uint32_t blinkStartedMs = 0;
@@ -189,8 +191,7 @@ void setup() {
   M5StackChan.Display().setRotation(1);
   faceSource.begin();
   head.begin();
-  drawAvatar(false);
-  nextBlinkMs = millis() + kBlinkIntervalMs;
+  eyes.begin(millis());
   Serial.println("STANBOT_READY motion=disabled protocol=T,seq,x,y,confidence");
 }
 
@@ -199,16 +200,9 @@ void loop() {
   const uint32_t now = millis();
   const FaceObservation observation = faceSource.poll(now);
   head.update(observation, now);
-
-  // A short, deterministic blink. It does not depend on networking.
-  if (!eyesClosed && now >= nextBlinkMs) {
-    eyesClosed = true;
-    blinkStartedMs = now;
-    drawAvatar(head.attending());
-  } else if (eyesClosed && now - blinkStartedMs >= kBlinkDurationMs) {
-    eyesClosed = false;
-    nextBlinkMs = now + kBlinkIntervalMs;
-    drawAvatar(head.attending());
+  if (observation.present && observation.confidence >= kConfidenceToAttend) {
+    eyes.attend(observation.x, observation.y, now);
   }
+  eyes.update(M5StackChan.Display(), now);
   delay(5);
 }
