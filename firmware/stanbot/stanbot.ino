@@ -135,26 +135,46 @@ class SafeHeadController {
 
 UsbTargetSource faceSource;
 SafeHeadController head;
-uint32_t lastFrameMs = 0;
+constexpr uint32_t kBlinkIntervalMs = 3600;
+constexpr uint32_t kBlinkDurationMs = 130;
+uint32_t blinkStartedMs = 0;
+uint32_t nextBlinkMs = 0;
 bool eyesClosed = false;
 
 void drawAvatar(bool attentive) {
   auto& display = M5StackChan.Display();
+  constexpr uint16_t kCaseBeige = 0xD5B7;
+  constexpr uint16_t kCaseShadow = 0x9C71;
+  constexpr uint16_t kCrt = 0x18E3;
+  constexpr uint16_t kPhosphor = 0xEF5D;
+  constexpr uint16_t kFeature = 0x2945;
+
   display.fillScreen(TFT_BLACK);
-  const uint32_t eye = attentive ? TFT_CYAN : TFT_WHITE;
+  // An original compact-computer character: its warm enclosure and inset CRT
+  // nod to early Macs without reproducing Apple's historic face artwork.
+  display.fillRoundRect(44, 14, 232, 212, 22, kCaseBeige);
+  display.drawRoundRect(44, 14, 232, 212, 22, kCaseShadow);
+  display.fillRoundRect(66, 42, 184, 132, 12, kCrt);
+  display.drawRoundRect(66, 42, 184, 132, 12, kCaseShadow);
+
+  const uint16_t eye = attentive ? TFT_CYAN : kPhosphor;
   if (eyesClosed) {
-    display.drawFastHLine(68, 104, 56, eye);
-    display.drawFastHLine(196, 104, 56, eye);
+    display.drawFastHLine(98, 108, 40, eye);
+    display.drawFastHLine(182, 108, 40, eye);
   } else {
-    display.fillRoundRect(68, 72, 56, 64, 24, eye);
-    display.fillRoundRect(196, 72, 56, 64, 24, eye);
-    display.fillCircle(96, 104, 13, TFT_BLACK);
-    display.fillCircle(224, 104, 13, TFT_BLACK);
+    display.fillRoundRect(102, 80, 32, 50, 12, eye);
+    display.fillRoundRect(186, 80, 32, 50, 12, eye);
+    display.fillCircle(118, 105, 8, kCrt);
+    display.fillCircle(202, 105, 8, kCrt);
   }
-  display.drawArc(160, 170, 36, 30, 20, 160, attentive ? TFT_CYAN : TFT_WHITE);
-  display.setTextDatum(middle_center);
-  display.setTextColor(attentive ? TFT_CYAN : TFT_DARKGREY, TFT_BLACK);
-  display.drawString(attentive ? "person detected" : "local / waiting", 160, 222, 2);
+  // A deliberately plain mouth line, with no bright anti-aliased glow.
+  display.drawFastHLine(136, 143, 48, kFeature);
+
+  // Speaker grille and a single local attention indicator.
+  for (int y = 68; y <= 150; y += 10) {
+    display.drawFastHLine(244, y, 14, kCaseShadow);
+  }
+  display.fillCircle(160, 196, 5, attentive ? TFT_CYAN : kCaseShadow);
   // This is a presence signal only; it does not indicate or claim eye contact.
 }
 
@@ -166,6 +186,7 @@ void setup() {
   faceSource.begin();
   head.begin();
   drawAvatar(false);
+  nextBlinkMs = millis() + kBlinkIntervalMs;
   Serial.println("STANBOT_READY motion=disabled protocol=T,seq,x,y,confidence");
 }
 
@@ -175,11 +196,15 @@ void loop() {
   const FaceObservation observation = faceSource.poll(now);
   head.update(observation, now);
 
-  // Small, deterministic blink animation. It does not depend on networking.
-  if (now - lastFrameMs >= 2500) {
-    eyesClosed = !eyesClosed;
+  // A short, deterministic blink. It does not depend on networking.
+  if (!eyesClosed && now >= nextBlinkMs) {
+    eyesClosed = true;
+    blinkStartedMs = now;
     drawAvatar(head.attending());
-    lastFrameMs = now;
+  } else if (eyesClosed && now - blinkStartedMs >= kBlinkDurationMs) {
+    eyesClosed = false;
+    nextBlinkMs = now + kBlinkIntervalMs;
+    drawAvatar(head.attending());
   }
   delay(5);
 }

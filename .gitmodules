@@ -1,3 +1,9 @@
 [submodule "firmware/lib/StackChan-BSP"]
 	path = firmware/lib/StackChan-BSP
 	url = https://github.com/m5stack/StackChan-BSP.git
+[submodule "firmware/lib/M5Unified"]
+	path = firmware/lib/M5Unified
+	url = https://github.com/m5stack/M5Unified.git
+[submodule "firmware/lib/M5GFX"]
+	path = firmware/lib/M5GFX
+	url = https://github.com/m5stack/M5GFX.git
