@@ -26,8 +26,8 @@ class StanbotEyes {
   }
 
   template <typename Display>
-  void update(Display& display, uint32_t now) {
-    if (now - lastFrameMs_ < 33) return;  // bounded at about 30 fps
+  bool update(Display& display, uint32_t now) {
+    if (now - lastFrameMs_ < 33) return false;  // bounded at about 30 fps
     lastFrameMs_ = now;
 
     const bool attending = now - lastTargetMs_ < 900;
@@ -54,6 +54,7 @@ class StanbotEyes {
       blink = phase < 0.5f ? phase * 2.0f : (1.0f - phase) * 2.0f;
     }
     draw(display, attending, blink);
+    return true;
   }
 
  private:

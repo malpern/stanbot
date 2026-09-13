@@ -137,6 +137,8 @@ class SafeHeadController {
 UsbTargetSource faceSource;
 SafeHeadController head;
 StanbotEyes eyes;
+M5Canvas eyeFrame(&M5StackChan.Display());
+bool eyeFrameReady = false;
 constexpr uint32_t kBlinkIntervalMs = 3600;
 constexpr uint32_t kBlinkDurationMs = 130;
 uint32_t blinkStartedMs = 0;
@@ -191,6 +193,9 @@ void setup() {
   M5StackChan.Display().setRotation(1);
   faceSource.begin();
   head.begin();
+  eyeFrame.setColorDepth(16);
+  eyeFrameReady = eyeFrame.createSprite(M5StackChan.Display().width(),
+                                        M5StackChan.Display().height());
   eyes.begin(millis());
   Serial.println("STANBOT_READY motion=disabled protocol=T,seq,x,y,confidence");
 }
@@ -203,6 +208,11 @@ void loop() {
   if (observation.present && observation.confidence >= kConfidenceToAttend) {
     eyes.attend(observation.x, observation.y, now);
   }
-  eyes.update(M5StackChan.Display(), now);
+  if (eyeFrameReady) {
+    if (eyes.update(eyeFrame, now)) eyeFrame.pushSprite(0, 0);
+  } else {
+    // Safe fallback if a frame buffer cannot be allocated.
+    eyes.update(M5StackChan.Display(), now);
+  }
   delay(5);
 }
