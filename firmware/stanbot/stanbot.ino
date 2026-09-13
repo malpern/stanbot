@@ -35,17 +35,51 @@ struct FaceObservation {
   uint32_t capturedAtMs = 0;
 };
 
-class LocalFaceSource {
+class UsbTargetSource {
  public:
   void begin() {
-    // ESP-WHO integration is intentionally gated behind the ESP-IDF project
-    // described in docs/face-detection.md. Do not synthesize observations or
-    // treat camera availability as a detected face.
+    // The mini owns perception. This endpoint accepts a bounded, local USB
+    // message only after the mini has analyzed a real camera frame. It cannot
+    // command a motor directly.
+    Serial.begin(115200);
   }
 
-  FaceObservation poll() {
+  FaceObservation poll(uint32_t now) {
+    // One line per result: T,<frame-sequence>,<x>,<y>,<confidence>\n
+    // x/y must be normalized to [-1, 1]. Values outside the protocol range,
+    // stale partial lines, and malformed input are discarded.
+    while (Serial.available()) {
+      const char byte = static_cast<char>(Serial.read());
+      if (byte == '\n') {
+        line_[lineLength_] = '\0';
+        FaceObservation result{};
+        unsigned long sequence = 0;
+        if (sscanf(line_, "T,%lu,%f,%f,%f", &sequence, &result.x, &result.y,
+                   &result.confidence) == 4 &&
+            result.x >= -1.0f && result.x <= 1.0f &&
+            result.y >= -1.0f && result.y <= 1.0f &&
+            result.confidence >= 0.0f && result.confidence <= 1.0f &&
+            sequence > lastSequence_) {
+          lastSequence_ = sequence;
+          result.present = true;
+          result.capturedAtMs = now;
+          lineLength_ = 0;
+          return result;
+        }
+        lineLength_ = 0;
+      } else if (byte != '\r' && lineLength_ + 1 < sizeof(line_)) {
+        line_[lineLength_++] = byte;
+      } else {
+        lineLength_ = 0;
+      }
+    }
     return {};
   }
+
+ private:
+  char line_[80]{};
+  size_t lineLength_ = 0;
+  unsigned long lastSequence_ = 0;
 };
 
 class SafeHeadController {
@@ -99,7 +133,7 @@ class SafeHeadController {
   void moveRest() { M5StackChan.Motion.move(kRestYaw, kRestPitch, 120); }
 };
 
-LocalFaceSource faceSource;
+UsbTargetSource faceSource;
 SafeHeadController head;
 uint32_t lastFrameMs = 0;
 bool eyesClosed = false;
@@ -137,7 +171,7 @@ void setup() {
 void loop() {
   M5StackChan.update();
   const uint32_t now = millis();
-  const FaceObservation observation = faceSource.poll();
+  const FaceObservation observation = faceSource.poll(now);
   head.update(observation, now);
 
   // Small, deterministic blink animation. It does not depend on networking.

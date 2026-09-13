@@ -33,8 +33,8 @@ Do not upload this sketch until the factory-recovery procedure and physical
 calibration checklist are complete. The expected device port is currently
 `/dev/cu.usbmodem31201`; confirm it by disconnect/reconnect before any upload.
 
-The first build on the mini completed successfully: 572,003 bytes of flash
-(43% of the selected 16 MB layout) and 28,764 bytes of RAM (8%). It was not
+The current build on the mini completed successfully: 588,499 bytes of flash
+(44% of the selected 16 MB layout) and 28,852 bytes of RAM (8%). It was not
 uploaded.
 
 See [face-detection.md](../docs/face-detection.md) and

@@ -16,7 +16,7 @@ See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware
 
 1. Verify official source, board support, and factory recovery instructions.
 2. Inspect companion build tools and USB devices; prepare a buildable project.
-3. Implement boot → avatar → camera face detection → safe head following → attention indication → lost-target behavior.
+3. Implement boot → avatar → local USB camera handoff → safe head following → attention indication → lost-target behavior.
 4. Prepare and verify the USB flash and factory recovery workflow before requesting a physical connection.
 5. Validate hardware, then add OTA with USB recovery retained.
 
@@ -28,4 +28,7 @@ See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware
 - [Espressif ESP-WHO](https://github.com/espressif/esp-who)
 - [Community stackchan-mcp](https://github.com/kisaragi-mochi/stackchan-mcp)
 
-These references have not yet been evaluated in this repository.
+The official resources have now been evaluated. The StackChan uses a CoreS3
+(ESP32-S3, 16 MB flash, 8 MB PSRAM) and its official BSP is pinned as a
+submodule. See [local companion architecture](docs/companion-architecture.md),
+[recovery](docs/recovery.md), and [hardware coverage](docs/hardware-coverage.md).
