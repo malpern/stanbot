@@ -1,0 +1,15 @@
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+secrets/
+sdkconfig
+sdkconfig.old
+
+# Build outputs and downloaded tools
+build/
+managed_components/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
