@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import SwiftUI
 import Vision
+import Darwin
 
 @main
 struct StanbotCompanionApp: App {
@@ -69,13 +70,22 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var cameraImage: NSImage?
     @Published private(set) var faceBoxes: [FaceBox] = []
     @Published var selectedPort: String?
-    private var cameraReader: FileHandle?
-    private var cameraWriter: FileHandle?
-    private let frameDecoder = FrameDecoder()
+    private var serialFD: Int32 = -1
+    private var frameDecoder = FrameDecoder()
+    private var timer: Timer?
+    private var wantsCamera = false
+    private var generation = UUID()
+    private var analyzing = false
+    private var lastFrameAt = Date.distantPast
+    private var nextReconnect = Date.distantPast
 
-    init() {
-        selectedPort = availablePorts.first
+    init(port: String? = nil, automaticPolling: Bool = true) {
+        selectedPort = port ?? availablePorts.first
         connect()
+        guard automaticPolling else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
     }
 
     var availablePorts: [String] {
@@ -92,54 +102,124 @@ final class RobotConnection: ObservableObject {
     }
 
     func connect() {
-        stopCamera()
+        closeSerial()
+        cameraState = wantsCamera ? .waiting : .off
         guard let selectedPort else {
             connection = .unavailable
             lastAction = "Connect StackChan by USB-C, then reconnect."
             return
         }
-        guard FileHandle(forWritingAtPath: selectedPort) != nil else {
+        let fd = Darwin.open(selectedPort, O_RDWR | O_NOCTTY | O_NONBLOCK)
+        guard fd >= 0 else {
             connection = .unavailable
             lastAction = "Couldn’t open \(portName)."
             return
         }
+        var settings = termios()
+        guard tcgetattr(fd, &settings) == 0 else {
+            Darwin.close(fd)
+            connection = .unavailable
+            return
+        }
+        cfmakeraw(&settings)
+        settings.c_cflag |= tcflag_t(CLOCAL | CREAD)
+        cfsetspeed(&settings, speed_t(B115200))
+        guard tcsetattr(fd, TCSANOW, &settings) == 0 else {
+            Darwin.close(fd)
+            connection = .unavailable
+            return
+        }
+        serialFD = fd
         connection = .connected(selectedPort)
         lastAction = "Connected locally through \(portName). Motion remains locked."
+        if wantsCamera { startCamera() }
     }
 
     func startCamera() {
-        guard case let .connected(port) = connection else {
+        wantsCamera = true
+        guard serialFD >= 0 else {
             cameraState = .unavailable
             lastAction = "Connect StackChan before starting the local camera view."
             return
         }
-        guard let reader = FileHandle(forReadingAtPath: port) else {
-            cameraState = .unavailable
-            lastAction = "Couldn’t open \(portName) for camera frames."
-            return
-        }
-        cameraReader = reader
-        cameraWriter = FileHandle(forWritingAtPath: port)
+        generation = UUID()
+        frameDecoder = FrameDecoder()
+        lastFrameAt = Date()
         cameraState = .waiting
         lastAction = "Waiting for the local StackChan camera stream."
-        reader.readabilityHandler = { [weak self] handle in
-            let bytes = handle.availableData
-            guard !bytes.isEmpty else { return }
-            Task { @MainActor in self?.receiveCameraBytes(bytes) }
-        }
-        cameraWriter?.write(Data("S\\n".utf8))
+        _ = send("S\n")
     }
 
     func stopCamera() {
-        cameraWriter?.write(Data("X\\n".utf8))
-        cameraReader?.readabilityHandler = nil
-        cameraReader?.closeFile()
-        cameraReader = nil
-        cameraWriter?.closeFile()
-        cameraWriter = nil
+        wantsCamera = false
+        _ = send("X\n")
+        generation = UUID()
+        frameDecoder = FrameDecoder()
         cameraImage = nil
         faceBoxes = []
         cameraState = .off
+    }
+
+    private func closeSerial() {
+        if serialFD >= 0 { Darwin.close(serialFD) }
+        serialFD = -1
+        generation = UUID()
+        frameDecoder = FrameDecoder()
+        cameraImage = nil
+        faceBoxes = []
+    }
+
+    private func disconnected() {
+        closeSerial()
+        connection = .unavailable
+        cameraState = wantsCamera ? .waiting : .off
+        lastAction = "USB disconnected. Waiting for StackChan to reconnect."
+        nextReconnect = Date().addingTimeInterval(1)
+    }
+
+    private func send(_ command: String) -> Bool {
+        guard serialFD >= 0 else { return false }
+        let bytes = Array(command.utf8)
+        let count = bytes.withUnsafeBytes { Darwin.write(serialFD, $0.baseAddress, $0.count) }
+        guard count == bytes.count else {
+            disconnected()
+            return false
+        }
+        return true
+    }
+
+    func tick() {
+        guard serialFD >= 0 else {
+            // Reopen only the selected device; never switch to another USB device.
+            if Date() >= nextReconnect, let selectedPort,
+               FileManager.default.fileExists(atPath: selectedPort) {
+                nextReconnect = Date().addingTimeInterval(2)
+                connect()
+            }
+            return
+        }
+        var bytes = [UInt8](repeating: 0, count: 16384)
+        // Bound work per UI tick, even for a noisy or malformed serial stream.
+        for _ in 0..<8 {
+            let count = Darwin.read(serialFD, &bytes, bytes.count)
+            if count > 0 {
+                if wantsCamera { receiveCameraBytes(Data(bytes.prefix(count))) }
+            } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                break
+            } else {
+                disconnected()
+                return
+            }
+        }
+        if wantsCamera && Date().timeIntervalSince(lastFrameAt) > 3 {
+            cameraImage = nil
+            faceBoxes = []
+            cameraState = .waiting
+            generation = UUID()
+            frameDecoder = FrameDecoder()
+            lastFrameAt = Date()
+            _ = send("S\n")
+        }
     }
 
     private func receiveCameraBytes(_ bytes: Data) {
@@ -149,38 +229,40 @@ final class RobotConnection: ObservableObject {
     }
 
     private func analyze(_ frame: CameraFrame) {
+        guard !analyzing else { return }
         guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
         if cameraState != .receiving {
             lastAction = "Receiving local camera frames from StackChan."
         }
         cameraState = .receiving
+        lastFrameAt = Date()
+        analyzing = true
+        let session = generation
         cameraImage = NSImage(cgImage: image, size: .zero)
+        faceBoxes = []
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let request = VNDetectFaceRectanglesRequest()
             let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
             try? handler.perform([request])
-            let boxes = (request.results ?? []).map {
+            let boxes = (request.results ?? []).filter { $0.confidence >= 0.7 }.map {
                 FaceBox(rect: $0.boundingBox, confidence: $0.confidence)
             }
             DispatchQueue.main.async {
+                self?.analyzing = false
+                guard self?.generation == session else { return }
                 self?.faceBoxes = boxes
             }
         }
     }
 
     func select(_ emotion: Emotion) {
-        guard case let .connected(port) = connection else {
+        guard case .connected = connection else {
             lastAction = "Connect to StackChan before changing its expression."
             return
         }
-        guard let handle = FileHandle(forWritingAtPath: port) else {
-            connection = .unavailable
-            lastAction = "The USB connection is no longer available."
-            return
-        }
-        handle.write(Data("E,\(emotion.rawValue)\\n".utf8))
+        guard send("E,\(emotion.rawValue)\n") else { return }
         selectedEmotion = emotion
         lastAction = "Expression set to \(emotion.title)."
     }

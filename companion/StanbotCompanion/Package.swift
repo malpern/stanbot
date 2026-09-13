@@ -5,5 +5,6 @@ let package = Package(
     name: "StanbotCompanion",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "StanbotCompanion", targets: ["StanbotCompanion"])],
-    targets: [.executableTarget(name: "StanbotCompanion")]
+    targets: [.executableTarget(name: "StanbotCompanion"),
+              .testTarget(name: "StanbotCompanionTests", dependencies: ["StanbotCompanion"])]
 )

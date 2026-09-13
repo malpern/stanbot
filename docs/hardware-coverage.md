@@ -4,6 +4,15 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-13 companion resilience: the unplug crash was traced to an uncaught
+Objective-C exception from `FileHandle.availableData`. The app now uses bounded,
+nonblocking POSIX reads/writes and closes the descriptor on disconnect. Tests
+using real pseudo-terminals passed for removal during reads, removal before
+writes, repeated camera start/stop, and reconnect. Preview and face boxes are
+cleared on disconnect or stalled video; results from old detection sessions are
+discarded. Physical unplug/reconnect verification of this repair is pending:
+StackChan was absent from the Mini's USB enumeration after the reported replug.
+
 | Date | Result | Scope and limitation |
 | --- | --- | --- |
 | 2026-09-13 | `stanbot` built for ESP32-S3 (588,671 bytes program, 28,852 bytes RAM) and uploaded to `/dev/cu.usbmodem31201`; the flasher verified every written segment by hash. | This confirms the USB flashing path to the attached ESP32-S3 only. It is **not** a display, camera, servo, or other functional hardware test. Motion remains disabled in the uploaded build. |
