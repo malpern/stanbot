@@ -2,6 +2,12 @@
 
 Requested coverage; exact components and supported functions must be confirmed against official board documentation. All implementation and physical validation are pending.
 
+## Build and transport record
+
+| Date | Result | Scope and limitation |
+| --- | --- | --- |
+| 2026-09-13 | `stanbot` built for ESP32-S3 (588,671 bytes program, 28,852 bytes RAM) and uploaded to `/dev/cu.usbmodem31201`; the flasher verified every written segment by hash. | This confirms the USB flashing path to the attached ESP32-S3 only. It is **not** a display, camera, servo, or other functional hardware test. Motion remains disabled in the uploaded build. |
+
 | Capability | Meaningful hardware test | Implemented | Hardware verified |
 | --- | --- | --- | --- |
 | Head pan servo | Calibrate safe range and direction; verify smooth bounded motion and stop behavior. | Bounded controller prepared; disabled pending calibration | No |

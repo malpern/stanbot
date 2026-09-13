@@ -166,6 +166,7 @@ void setup() {
   faceSource.begin();
   head.begin();
   drawAvatar(false);
+  Serial.println("STANBOT_READY motion=disabled protocol=T,seq,x,y,confidence");
 }
 
 void loop() {
