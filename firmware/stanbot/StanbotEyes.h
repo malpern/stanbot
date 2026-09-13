@@ -15,7 +15,7 @@
 class StanbotEyes {
  public:
   void begin(uint32_t now) {
-    nextBlinkMs_ = now + 3200;
+    nextBlinkMs_ = now + 9600;
     lastFrameMs_ = now;
   }
 
@@ -45,7 +45,7 @@ class StanbotEyes {
     }
     if (blinking_ && now - blinkStartedMs_ >= 180) {
       blinking_ = false;
-      nextBlinkMs_ = now + 3200 + random(0, 1800);
+      nextBlinkMs_ = now + 9600 + random(0, 5400);
     }
 
     float blink = 0.0f;
