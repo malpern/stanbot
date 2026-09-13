@@ -25,6 +25,7 @@ constexpr uint32_t kFrameIntervalMs = 750;  // Conservative ~1.3 fps for bring-u
 ESPVideoCaptureDevClass capture;
 uint32_t sequence = 0;
 uint32_t nextFrameAtMs = 0;
+bool streamEnabled = false;
 
 void putUInt32LE(uint8_t* bytes, uint32_t value) {
   bytes[0] = static_cast<uint8_t>(value & 0xff);
@@ -76,9 +77,6 @@ bool beginCamera() {
 }
 
 void sendFrame(const ESPVideoBufferClass& frame) {
-  // USB CDC's truthy state requires the host to have opened the device. Do not
-  // create a partial packet while the Mini app is not listening.
-  if (!Serial) return;
   uint8_t* jpeg = nullptr;
   size_t jpegLength = 0;
   const bool encoded = fmt2jpg(frame.data(), frame.size(), frame.getWidth(), frame.getHeight(),
@@ -110,6 +108,14 @@ void setup() {
 }
 
 void loop() {
+  // The Mini must explicitly enable the camera stream. This avoids filling USB
+  // buffers before it has opened a reader and works with native macOS file
+  // handles that do not assert a modem-control line.
+  while (Serial.available()) {
+    const char command = static_cast<char>(Serial.read());
+    if (command == 'S') streamEnabled = true;
+    if (command == 'X') streamEnabled = false;
+  }
   if (!capture.isCaptureStarted()) {
     delay(250);
     return;
@@ -119,7 +125,7 @@ void loop() {
   if (!frame.valid()) return;
 
   const uint32_t now = millis();
-  if (now >= nextFrameAtMs) {
+  if (streamEnabled && now >= nextFrameAtMs) {
     nextFrameAtMs = now + kFrameIntervalMs;
     sendFrame(frame);
   }

@@ -70,6 +70,7 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var faceBoxes: [FaceBox] = []
     @Published var selectedPort: String?
     private var cameraReader: FileHandle?
+    private var cameraWriter: FileHandle?
     private let frameDecoder = FrameDecoder()
 
     init() {
@@ -118,6 +119,7 @@ final class RobotConnection: ObservableObject {
             return
         }
         cameraReader = reader
+        cameraWriter = FileHandle(forWritingAtPath: port)
         cameraState = .waiting
         lastAction = "Waiting for the local StackChan camera stream."
         reader.readabilityHandler = { [weak self] handle in
@@ -125,12 +127,16 @@ final class RobotConnection: ObservableObject {
             guard !bytes.isEmpty else { return }
             Task { @MainActor in self?.receiveCameraBytes(bytes) }
         }
+        cameraWriter?.write(Data("S\\n".utf8))
     }
 
     func stopCamera() {
+        cameraWriter?.write(Data("X\\n".utf8))
         cameraReader?.readabilityHandler = nil
         cameraReader?.closeFile()
         cameraReader = nil
+        cameraWriter?.closeFile()
+        cameraWriter = nil
         cameraImage = nil
         faceBoxes = []
         cameraState = .off
