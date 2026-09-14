@@ -12,6 +12,10 @@
 #include <esp_log.h>
 #include <StanbotEyes.h>
 #include <atomic>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <esp_video_ioctl.h>
 
 namespace {
 
@@ -113,7 +117,38 @@ bool beginCamera() {
   };
   static esp_video_init_config_t videoConfig = {.dvp = &dvpConfig};
   if (esp_video_init_with_flags(&videoConfig, ESP_VIDEO_INIT_FLAGS_DVP) != ESP_OK) return false;
-  return capture.begin(ESP_VIDEO_DVP_DEVICE_NAME, 2) && capture.startCapture();
+  if (!capture.begin(ESP_VIDEO_DVP_DEVICE_NAME, 2)) return false;
+
+  // GC0308 PCLK divider, documented by Espressif's esp32-camera GC0308
+  // driver: register 0x28, bits 6:4. Slow the actual pixel bus, not merely
+  // the rate at which we forward completed frames. Preserve all other bits.
+  const int controlFD = open(ESP_VIDEO_DVP_DEVICE_NAME, O_RDWR);
+  if (controlFD < 0) return false;
+  auto sensorRegister = [&](uint32_t command, esp_cam_sensor_reg_val_t& reg) {
+    v4l2_ext_control control{};
+    control.id = command;
+    control.size = sizeof(reg);
+    control.p_u8 = reinterpret_cast<uint8_t*>(&reg);
+    v4l2_ext_controls controls{};
+    controls.ctrl_class = V4L2_CTRL_CLASS_ESP_CAM_IOCTL;
+    controls.count = 1;
+    controls.controls = &control;
+    return ioctl(controlFD, VIDIOC_S_EXT_CTRLS, &controls) == 0;
+  };
+  esp_cam_sensor_reg_val_t page{0xfe, 0};
+  esp_cam_sensor_reg_val_t divider{0x28, 0};
+  bool ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, page) &&
+            sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider);
+  if (ok) {
+    divider.value = (divider.value & ~0x70u) | 0x20u;
+    ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, divider);
+    divider.value = 0;
+    ok = ok && sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider) &&
+         (divider.value & 0x70u) == 0x20u;
+  }
+  close(controlFD);
+  if (!ok) return false;
+  return capture.startCapture();
 }
 
 void sendFrame(const ESPVideoBufferClass& frame) {

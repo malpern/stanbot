@@ -23,8 +23,10 @@ arduino-cli compile \
 
 Use the recovery notes for flashing. A normal physical power cycle may be
 needed after upload: watchdog reset has not been reliable on this board.
-Horizontal camera tearing remains a separate issue; correct packet framing
-does not establish image quality. See the hardware coverage record for tests.
+The camera now sets and verifies a slower GC0308 pixel-clock divider to avoid
+the horizontal tearing observed at the default sensor rate. Correct packet
+framing alone does not establish image quality; see hardware coverage for the
+limited live visual checks and remaining validation.
 
 ## Historical avatar-only slice
 

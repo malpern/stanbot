@@ -4,6 +4,25 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 tearing fix: configured GC0308 register `0x28` divider bits `[6:4]`
+to `0b010`, preserving the other bits and verifying the register readback before
+starting capture. The fixed external 20 MHz clock is unchanged; this slows the
+sensor's pixel output instead of only dropping frames at the USB sender.
+The first live Mac preview had no visible horizontal slicing and correctly
+outlined a face in the current scene. This is a limited visual check, not a
+guarantee under all lighting/motion. Build: 589,867 program bytes and 34,604
+static RAM bytes; flash hash verification passed. Eyes/motion-lock code was
+unchanged. Register reference: Espressif's
+[GC0308 driver](https://github.com/espressif/esp32-camera/blob/master/sensors/gc0308.c)
+and [register definitions](https://github.com/espressif/esp32-camera/blob/master/sensors/private_include/gc0308_regs.h).
+
+User confirmed the combined-build eyes are visible and animated before this
+camera-only adjustment.
+Two later previews also showed continuous, unsliced images with face overlays,
+including after a Stop Camera / Show Camera cycle. Stopping cleared the preview
+and face rectangle; restarting returned to live video. No physical USB removal
+or power cycle was part of this particular test.
+
 2026-09-14 combined eyes/camera: moved the existing AGPL eye renderer into a
 shared Arduino library and integrated it into `camera_stream`. The eye display
 and bounded expression-command parser run independently of the camera task.
