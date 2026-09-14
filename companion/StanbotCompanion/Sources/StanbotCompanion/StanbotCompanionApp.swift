@@ -80,6 +80,19 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var cameraState: CameraState = .off
     @Published private(set) var cameraImage: NSImage?
     @Published private(set) var faceBoxes: [FaceBox] = []
+    @Published private(set) var faceState: FaceSelection.State = .searching
+    private var faceSelection = FaceSelection()
+
+    private func resetFaces() {
+        faceSelection.reset()
+        faceBoxes = []
+        faceState = .searching
+    }
+
+    private func publishFaces() {
+        faceBoxes = faceSelection.box.map { [$0] } ?? []
+        faceState = faceSelection.state
+    }
     @Published var selectedPort: String?
     private var serialFD: Int32 = -1
     private var frameDecoder = FrameDecoder()
@@ -147,6 +160,7 @@ final class RobotConnection: ObservableObject {
     }
 
     func startCamera() {
+        resetFaces()
         wantsCamera = true
         guard serialFD >= 0 else {
             cameraState = .unavailable
@@ -167,7 +181,7 @@ final class RobotConnection: ObservableObject {
         generation = UUID()
         frameDecoder = FrameDecoder()
         cameraImage = nil
-        faceBoxes = []
+        resetFaces()
         cameraState = .off
     }
 
@@ -177,7 +191,7 @@ final class RobotConnection: ObservableObject {
         generation = UUID()
         frameDecoder = FrameDecoder()
         cameraImage = nil
-        faceBoxes = []
+        resetFaces()
     }
 
     private func disconnected() {
@@ -200,6 +214,8 @@ final class RobotConnection: ObservableObject {
     }
 
     func tick() {
+        faceSelection.expire(at: ProcessInfo.processInfo.systemUptime)
+        publishFaces()
         guard serialFD >= 0 else {
             // Reopen only the selected device; never switch to another USB device.
             if Date() >= nextReconnect, let selectedPort,
@@ -224,7 +240,7 @@ final class RobotConnection: ObservableObject {
         }
         if wantsCamera && Date().timeIntervalSince(lastFrameAt) > 3 {
             cameraImage = nil
-            faceBoxes = []
+            resetFaces()
             cameraState = .waiting
             generation = UUID()
             frameDecoder = FrameDecoder()
@@ -250,8 +266,7 @@ final class RobotConnection: ObservableObject {
         lastFrameAt = Date()
         analyzing = true
         let session = generation
-        cameraImage = NSImage(cgImage: image, size: .zero)
-        faceBoxes = []
+        let receivedAt = ProcessInfo.processInfo.systemUptime
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let request = VNDetectFaceRectanglesRequest()
@@ -262,8 +277,12 @@ final class RobotConnection: ObservableObject {
             }
             DispatchQueue.main.async {
                 self?.analyzing = false
-                guard self?.generation == session else { return }
-                self?.faceBoxes = boxes
+                guard let self, self.generation == session,
+                      ProcessInfo.processInfo.systemUptime - receivedAt < 0.75 else { return }
+                // Publish the image and its detection together, never an old box on a new frame.
+                self.cameraImage = NSImage(cgImage: image, size: .zero)
+                self.faceSelection.update(boxes, at: receivedAt)
+                self.publishFaces()
             }
         }
     }
@@ -280,7 +299,7 @@ final class RobotConnection: ObservableObject {
 }
 
 struct FaceBox: Identifiable {
-    let id = UUID()
+    var id = UUID()
     let rect: CGRect  // Vision coordinates: origin at lower left.
     let confidence: Float
 }
@@ -441,7 +460,7 @@ private struct CompanionView: View {
             GridRow {
                 StatusCard(title: "Connection", value: connectionValue,
                            detail: robot.portName, symbol: "cable.connector")
-                StatusCard(title: "Camera", value: "Standby",
+                StatusCard(title: "Camera", value: robot.cameraState == .receiving ? "Live" : "Standby",
                            detail: robot.cameraState.title, symbol: "camera")
             }
             GridRow {
@@ -507,7 +526,7 @@ private struct CompanionView: View {
     private var cameraDescription: String {
         switch robot.cameraState {
         case .receiving:
-            return robot.faceBoxes.isEmpty ? "No person detected" : "Person detected — face outlined"
+            return robot.faceState.rawValue
         case .waiting: return "Waiting for StackChan’s local USB stream"
         case .off: return "Camera feed is off"
         case .unavailable: return "Camera stream unavailable"
@@ -528,8 +547,7 @@ private struct CompanionView: View {
     }
 
     private var personDetectionValue: String {
-        robot.cameraState == .receiving && !robot.faceBoxes.isEmpty
-            ? "Person detected" : "No person detected"
+        robot.cameraState == .receiving ? robot.faceState.rawValue : "Not observing"
     }
 
     private var expressionPicker: some View {
@@ -571,6 +589,7 @@ private struct CompanionView: View {
 }
 
 private struct FaceOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let boxes: [FaceBox]
 
     var body: some View {
@@ -583,7 +602,7 @@ private struct FaceOverlay: View {
                     .stroke(.green, lineWidth: 3)
                     .frame(width: width, height: height)
                     .overlay(alignment: .topLeading) {
-                        Text("Person detected")
+                        Text("Face selected")
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 4)
@@ -593,7 +612,7 @@ private struct FaceOverlay: View {
                     }
                     .position(x: rect.midX * proxy.size.width,
                               y: (1 - rect.midY) * proxy.size.height)
-                    .animation(.smooth(duration: 0.2), value: rect)
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: rect)
             }
         }
         .allowsHitTesting(false)

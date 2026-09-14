@@ -4,6 +4,17 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 face-selection pass: Mini-only geometric selection and temporal
+qualification implemented; seven automated tests passed and release app rebuilt.
+Live USB preview resumed in the updated app. See [face selection](face-selection.md)
+for thresholds and limitations. Physical entry/exit and multiple-person validation
+remain pending; no head movement is enabled and no firmware was changed.
+
+Before this app update, the user physically unplugged/reconnected USB. The app
+was subsequently inspected showing connected/live video without an agent restart
+or Reconnect action, and the user confirmed the eyes remained visible/animated.
+This validates one reconnect of that build, not a full battery-off cold start.
+
 2026-09-14 performance pass: instrumented capture wait, image preparation,
 USB writes, and eye-present gaps; compared VGA JPEG, QVGA JPEG, and CRC-checked
 raw QVGA transport on hardware. Selected QVGA JPEG at a 200 ms minimum interval:
