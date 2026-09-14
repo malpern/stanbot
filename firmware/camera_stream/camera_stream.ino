@@ -5,8 +5,11 @@
 // Mini companion using the SBFR protocol documented in companion-architecture.
 
 #include <Arduino.h>
+#include <M5Unified.h>
 #include <ESP_Video.h>
 #include <img_converters.h>
+#include <esp_rom_sys.h>
+#include <esp_log.h>
 
 namespace {
 
@@ -99,11 +102,38 @@ void sendFrame(const ESPVideoBufferClass& frame) {
 }  // namespace
 
 void setup() {
+  // Initialize CoreS3 power rails and camera reset through M5's official
+  // board driver. A warm flash can inherit these settings; a cold boot cannot.
+  // Do not call the StackChan BSP begin(): that also enables the servo rail.
+  auto config = M5.config();
+  config.internal_spk = false;
+  config.internal_mic = false;
+  config.internal_imu = false;
+  config.internal_rtc = false;
+  M5.begin(config);
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(20, 80);
+  M5.Display.println("Camera starting...");
+  // Give the video driver sole ownership of the internal SCCB/I2C bus.
+  M5.In_I2C.release();
   Serial.begin(921600);
+  // ROM camera ISR warnings otherwise interleave with binary JPEG payloads
+  // on USB Serial/JTAG. Reserve that transport exclusively for our protocol.
+  // Capture overruns still require performance work; silencing their console
+  // text protects framing, it does not resolve the underlying overruns.
+  esp_log_level_set("*", ESP_LOG_NONE);
+  esp_rom_install_channel_putc(1, nullptr);
+  esp_rom_install_channel_putc(2, nullptr);
   if (!beginCamera()) {
+    M5.Display.setCursor(20, 120);
+    M5.Display.println("Camera init failed");
     Serial.println("CAMERA_STREAM_INIT_FAILED");
     return;
   }
+  M5.Display.setCursor(20, 120);
+  M5.Display.println("Ready for Mac");
   Serial.println("CAMERA_STREAM_READY protocol=SBFR/jpeg/local-only");
 }
 

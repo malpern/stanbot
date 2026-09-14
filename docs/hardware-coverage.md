@@ -4,6 +4,34 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 camera diagnosis: ROM output showed the chip was still waiting for
+download after the standard RTS reset. A watchdog reset started the firmware,
+which then reported camera initialization failure. Added M5Unified board/power
+initialization (without StackChan BSP servo initialization) and released its
+I2C bus before the video driver starts. The camera subsequently initialized and
+produced JPEG packets. Raw capture also proved ROM ISR overflow warnings could
+interleave inside packets, so ROM console channels are disabled in the binary
+transport build. This protects framing; camera overruns and image quality remain
+separate unresolved performance work. The display now shows camera-startup and
+ready/failure status instead of remaining deliberately blank.
+
+Final transport build compiled (575,791 program bytes; 34,116 static RAM bytes)
+and uploaded with verification. Following the next watchdog reset, boot output
+reported variable partition-table magic/MD5 errors; the cause is not established.
+An independent esptool verification of the partition table and application then
+matched the build files. Left the device in its loader rather than a reset loop;
+a physical normal power cycle is pending. Final-build streaming, cold-start
+reliability, and diagnostic-output suppression are therefore **not yet verified**.
+
+2026-09-14: after connecting USB directly to the screen unit and entering
+download mode with RST, the Mini enumerated the known Espressif device
+`68:EE:8F:D8:4F:04` at `/dev/cu.usbmodem31201`. The pending `camera_stream`
+start/stop-handshake build was uploaded successfully with flash verification.
+This verifies recovery flashing through that port, not factory restoration.
+The temporary build contains no display renderer or motor control; a black
+screen is expected. Live camera and physical unplug/reconnect validation of
+the repaired companion remain pending for this build.
+
 2026-09-13 companion resilience: the unplug crash was traced to an uncaught
 Objective-C exception from `FileHandle.availableData`. The app now uses bounded,
 nonblocking POSIX reads/writes and closes the descriptor on disconnect. Tests
