@@ -16,6 +16,7 @@ enum class StanbotEmotion : uint8_t {
   Scared, Awe
 };
 
+// Shared renderer for the avatar-only and camera-enabled sketches.
 // The renderer is a template so it can use StackChan's M5GFX display without
 // coupling this component to a particular M5Unified display type.
 class StanbotEyes {
@@ -29,6 +30,7 @@ class StanbotEyes {
     targetX_ = constrain(x, -1.0f, 1.0f);
     targetY_ = constrain(y, -1.0f, 1.0f);
     lastTargetMs_ = now;
+    hasTarget_ = true;
   }
 
   void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
@@ -52,7 +54,7 @@ class StanbotEyes {
     if (now - lastFrameMs_ < 33) return false;  // bounded at about 30 fps
     lastFrameMs_ = now;
 
-    const bool attending = now - lastTargetMs_ < 900;
+    const bool attending = hasTarget_ && now - lastTargetMs_ < 900;
     if (!attending) {
       // Quiet local idle drift; no network or camera claim is implied.
       targetX_ = sinf(now / 2400.0f) * 0.18f;
@@ -94,6 +96,7 @@ class StanbotEyes {
   uint32_t nextBlinkMs_ = 0;
   uint32_t blinkStartedMs_ = 0;
   bool blinking_ = false;
+  bool hasTarget_ = false;
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
   Pose targetPose_{86, 112, 0, 1};

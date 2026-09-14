@@ -1,5 +1,33 @@
 # Firmware
 
+## Current combined eyes + camera build
+
+`camera_stream/camera_stream.ino` combines the shared `lib/StanbotEyes`
+renderer with USB camera streaming. It starts in Normal, blinks about every
+19–30 seconds, and accepts newline-terminated `S` (stream on), `X` (stream off),
+and `E,<name>` for all eighteen expressions. Input lines are bounded and unknown
+commands are ignored. No target or motor commands are accepted.
+
+The main loop exclusively owns the double-buffered eye display and command
+reader. A separate core-0 task owns camera initialization, capture, JPEG
+compression, and USB output. Neither calls StackChan's servo initialization.
+Camera failure leaves the eyes running. M5Unified initializes board power before
+handing the internal I2C bus to the video driver; do not call `M5.update()` while
+the video driver owns that bus.
+
+```sh
+arduino-cli compile \
+  --fqbn 'esp32:esp32:m5stack_cores3:PSRAM=enabled,USBMode=hwcdc,CDCOnBoot=cdc' \
+  --libraries firmware/lib firmware/camera_stream
+```
+
+Use the recovery notes for flashing. A normal physical power cycle may be
+needed after upload: watchdog reset has not been reliable on this board.
+Horizontal camera tearing remains a separate issue; correct packet framing
+does not establish image quality. See the hardware coverage record for tests.
+
+## Historical avatar-only slice
+
 `stanbot/stanbot.ino` is the first, deliberately safe firmware slice. It uses
 the official `StackChan-BSP` submodule for display, RGB, battery and servo
 interfaces. It has a local avatar and a bounded head-control state machine,

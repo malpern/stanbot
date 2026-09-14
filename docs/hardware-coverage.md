@@ -4,6 +4,18 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 combined eyes/camera: moved the existing AGPL eye renderer into a
+shared Arduino library and integrated it into `camera_stream`. The eye display
+and bounded expression-command parser run independently of the camera task.
+Normal remains the default, with 19.2–30 second blink spacing; all eighteen
+named poses remain available. No StackChan servo initialization or motor
+commands are present. Build: 589,627 program bytes and 34,604 static RAM bytes;
+upload hash verification passed. A three-second USB sample contained three
+complete JPEG packets with correct start/end markers and no ISR warning text,
+plus partial boundary packets from attaching to an ongoing stream. Physical
+eye appearance, blink smoothness during video, and expression appearance need
+user observation; image tearing is still a separate unresolved issue.
+
 2026-09-14 subsequent physical power cycle: the final transport firmware
 returned seven complete JPEG packets in a six-second USB check, with zero
 invalid complete packets and zero interleaved ISR warnings. This verifies one

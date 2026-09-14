@@ -10,6 +10,8 @@
 #include <img_converters.h>
 #include <esp_rom_sys.h>
 #include <esp_log.h>
+#include <StanbotEyes.h>
+#include <atomic>
 
 namespace {
 
@@ -28,7 +30,42 @@ constexpr uint32_t kFrameIntervalMs = 750;  // Conservative ~1.3 fps for bring-u
 ESPVideoCaptureDevClass capture;
 uint32_t sequence = 0;
 uint32_t nextFrameAtMs = 0;
-bool streamEnabled = false;
+std::atomic<bool> streamEnabled{false};
+StanbotEyes eyes;
+M5Canvas eyeFrame(&M5.Display);
+bool eyeFrameReady = false;
+char commandLine[48]{};
+size_t commandLength = 0;
+bool discardCommand = false;
+uint32_t lastCommandByteMs = 0;
+
+void pollCommands(uint32_t now) {
+  if (commandLength && now - lastCommandByteMs > 1000) {
+    commandLength = 0;
+    discardCommand = true;
+  }
+  // Bound input work so a noisy sender cannot starve the avatar.
+  for (unsigned i = 0; i < 128 && Serial.available(); ++i) {
+    const char c = static_cast<char>(Serial.read());
+    lastCommandByteMs = now;
+    if (c == '\n') {
+      commandLine[commandLength] = '\0';
+      if (!discardCommand) {
+        if (strcmp(commandLine, "S") == 0) streamEnabled.store(true);
+        else if (strcmp(commandLine, "X") == 0) streamEnabled.store(false);
+        else if (strncmp(commandLine, "E,", 2) == 0) {
+          StanbotEmotion emotion;
+          if (StanbotEyes::emotionFromName(commandLine + 2, emotion)) eyes.setEmotion(emotion);
+        }
+      }
+      commandLength = 0;
+      discardCommand = false;
+    } else if (c != '\r' && !discardCommand) {
+      if (commandLength + 1 < sizeof(commandLine)) commandLine[commandLength++] = c;
+      else discardCommand = true;
+    }
+  }
+}
 
 void putUInt32LE(uint8_t* bytes, uint32_t value) {
   bytes[0] = static_cast<uint8_t>(value & 0xff);
@@ -99,6 +136,27 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   free(jpeg);
 }
 
+void cameraTask(void*) {
+  // Camera capture/JPEG/USB can block; they never own the display or eyes.
+  if (!beginCamera()) {
+    Serial.println("CAMERA_STREAM_INIT_FAILED");
+    vTaskDelete(nullptr);
+    return;
+  }
+  Serial.println("CAMERA_STREAM_READY protocol=SBFR/jpeg/local-only emotions=18 motion=disabled");
+  for (;;) {
+    ESPVideoBufferClass frame = capture.captureBuffer();
+    if (frame.valid()) {
+      const uint32_t now = millis();
+      if (streamEnabled.load() && static_cast<int32_t>(now - nextFrameAtMs) >= 0) {
+        nextFrameAtMs = now + kFrameIntervalMs;
+        sendFrame(frame);
+      }
+    }
+    vTaskDelay(1);
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -111,11 +169,12 @@ void setup() {
   config.internal_imu = false;
   config.internal_rtc = false;
   M5.begin(config);
+  M5.Display.setRotation(1);
   M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(20, 80);
-  M5.Display.println("Camera starting...");
+  eyeFrame.setColorDepth(16);
+  eyeFrameReady = eyeFrame.createSprite(M5.Display.width(), M5.Display.height());
+  eyes.begin(millis() - 34);
+  if (eyeFrameReady && eyes.update(eyeFrame, millis())) eyeFrame.pushSprite(0, 0);
   // Give the video driver sole ownership of the internal SCCB/I2C bus.
   M5.In_I2C.release();
   Serial.begin(921600);
@@ -126,37 +185,19 @@ void setup() {
   esp_log_level_set("*", ESP_LOG_NONE);
   esp_rom_install_channel_putc(1, nullptr);
   esp_rom_install_channel_putc(2, nullptr);
-  if (!beginCamera()) {
-    M5.Display.setCursor(20, 120);
-    M5.Display.println("Camera init failed");
-    Serial.println("CAMERA_STREAM_INIT_FAILED");
-    return;
+  if (xTaskCreatePinnedToCore(cameraTask, "camera", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
+    Serial.println("CAMERA_TASK_FAILED");
   }
-  M5.Display.setCursor(20, 120);
-  M5.Display.println("Ready for Mac");
-  Serial.println("CAMERA_STREAM_READY protocol=SBFR/jpeg/local-only");
 }
 
 void loop() {
-  // The Mini must explicitly enable the camera stream. This avoids filling USB
-  // buffers before it has opened a reader and works with native macOS file
-  // handles that do not assert a modem-control line.
-  while (Serial.available()) {
-    const char command = static_cast<char>(Serial.read());
-    if (command == 'S') streamEnabled = true;
-    if (command == 'X') streamEnabled = false;
-  }
-  if (!capture.isCaptureStarted()) {
-    delay(250);
-    return;
-  }
-
-  ESPVideoBufferClass frame = capture.captureBuffer();
-  if (!frame.valid()) return;
-
   const uint32_t now = millis();
-  if (streamEnabled && now >= nextFrameAtMs) {
-    nextFrameAtMs = now + kFrameIntervalMs;
-    sendFrame(frame);
+  pollCommands(now);
+  if (eyeFrameReady) {
+    if (eyes.update(eyeFrame, now)) eyeFrame.pushSprite(0, 0);
+  } else {
+    eyes.update(M5.Display, now);
   }
+  // Do not call M5.update(): the video task exclusively owns internal I2C.
+  delay(5);
 }
