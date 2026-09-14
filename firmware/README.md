@@ -24,6 +24,15 @@ power, torque, change EEPROM, or send position goals. With the app closed:
 `python3 companion/probe_servos.py /dev/cu.usbmodem31201`.
 Missing/invalid feedback exits nonzero and must never be treated as position zero.
 
+Supervised `C,POWERTEST` (host `--power-test`) is a separate, explicitly mutating
+preflight: one attempt per boot with streaming stopped. It briefly requests VM
+power, broadcasts torque-off, and queries feedback only after torque reads zero.
+It never enables torque or sends position/mode/EEPROM commands. A separate task
+requests VM off after two seconds or earlier completion; I2C failures can prevent
+physical cutoff, so the operator must remain present. The report verifies the
+output latch and input signal are low, not a measured motor-rail voltage. No USB
+output occurs while the power window is active. This is not motion calibration.
+
 The main loop exclusively owns the double-buffered eye display and command
 reader. A separate core-0 task owns camera initialization, capture, JPEG
 compression, and USB output. Neither calls StackChan's servo initialization.

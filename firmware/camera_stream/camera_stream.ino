@@ -46,6 +46,7 @@ std::atomic<uint8_t> imageMode{1};
 uint8_t* smallFrame = nullptr;
 std::atomic<bool> statsRequested{false}, resetStats{false};
 std::atomic<bool> servoProbeRequested{false};
+std::atomic<bool> powerTestRequested{false};
 std::atomic<uint32_t> maxEyeGapMs{0};
 uint32_t lastEyeMs = 0;
 struct PipelineStats {
@@ -76,6 +77,7 @@ void pollCommands(uint32_t now) {
         else if (strcmp(commandLine, "X") == 0) streamEnabled.store(false);
         else if (strcmp(commandLine, "P") == 0) statsRequested.store(true);
         else if (strcmp(commandLine, "Q") == 0) servoProbeRequested.store(true);
+        else if (strcmp(commandLine, "C,POWERTEST") == 0) powerTestRequested.store(true);
         else if (strcmp(commandLine, "Z") == 0) {
           resetStats.store(true);
           maxEyeGapMs.store(0);
@@ -233,6 +235,120 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   if (!raw) free(jpeg);
 }
 
+SCSCL servoBus;
+bool servoBusReady = false;
+
+bool prepareServoBus() {
+  if (!servoBusReady) servoBusReady = servoBus.begin(UART_NUM_1, 1000000, 6, 7);
+  servoBus.IOTimeOut = 20;
+  return servoBusReady;
+}
+
+// One power window per boot. No position goals, torque-on, or EEPROM writes.
+// The independent cutoff task never waits on USB, camera capture, or servo UART.
+struct PowerCutoff {
+  i2c_master_dev_handle_t device = nullptr;
+  uint8_t offValue = 0;
+  std::atomic<bool> done{false};
+  std::atomic<bool> written{false};
+  std::atomic<bool> release{false};
+} powerCutoff;
+
+bool writeBase(i2c_master_dev_handle_t device, uint8_t reg, uint8_t value) {
+  const uint8_t bytes[] = {reg, value};
+  return i2c_master_transmit(device, bytes, sizeof(bytes), 100) == ESP_OK;
+}
+
+void cutoffTask(void*) {
+  ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));
+  bool written = false;
+  for (int attempt = 0; attempt < 3 && !written; ++attempt)
+    written = writeBase(powerCutoff.device, 0x05, powerCutoff.offValue);
+  powerCutoff.written.store(written);
+  powerCutoff.done.store(true);
+  while (!powerCutoff.release.load()) vTaskDelay(1);
+  vTaskDelete(nullptr);
+}
+
+void testServoPower() {
+  static bool attempted = false;
+  if (attempted || streamEnabled.load()) {
+    Serial.println("SBPW {\"error\":\"requires_stopped_stream_and_unused_boot\"}");
+    return;
+  }
+  attempted = true;
+  i2c_master_bus_handle_t master = nullptr;
+  i2c_master_dev_handle_t device = nullptr;
+  i2c_device_config_t config{};
+  config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  config.device_address = 0x6f;
+  config.scl_speed_hz = 100000;
+  uint8_t regs[7]{};
+  const uint8_t start = 0x02;
+  bool ready = prepareServoBus() &&
+    i2c_master_get_bus_handle(kSccbPort, &master) == ESP_OK &&
+    i2c_master_bus_add_device(master, &config, &device) == ESP_OK &&
+    i2c_master_transmit_receive(device, &start, 1, regs, sizeof(regs), 100) == ESP_OK;
+  // Refuse a base already driving VM high; this test must start from off.
+  ready = ready && regs[0] != 0 && regs[0] != 255 && !(regs[3] & 1) && !(regs[5] & 1);
+  const uint8_t off = regs[3] & ~1u;
+  if (ready) ready = writeBase(device, 0x05, off) && writeBase(device, 0x03, regs[1] | 1u);
+  if (!ready) {
+    if (device) i2c_master_bus_rm_device(device);
+    Serial.println("SBPW {\"error\":\"preflight_failed_no_power_enabled\"}");
+    return;
+  }
+  powerCutoff.device = device;
+  powerCutoff.offValue = off;
+  powerCutoff.done.store(false);
+  powerCutoff.written.store(false);
+  powerCutoff.release.store(false);
+  TaskHandle_t cutoff = nullptr;
+  if (xTaskCreatePinnedToCore(cutoffTask, "servo-cutoff", 3072, nullptr, 5, &cutoff, 1) != pdPASS) {
+    i2c_master_bus_rm_device(device);
+    Serial.println("SBPW {\"error\":\"cutoff_task_unavailable_no_power_enabled\"}");
+    return;
+  }
+  // Broadcast torque-off before and repeatedly during the boot window.
+  servoBus.EnableTorque(0xfe, 0);
+  const uint32_t started = millis();
+  bool enabled = writeBase(device, 0x05, off | 1u);
+  struct Reading { int position = -1, torque = -1, minimum = -1, maximum = -1, moving = -1; } readings[2];
+  if (enabled) {
+    for (int i = 0; i < 10; ++i) {
+      servoBus.EnableTorque(0xfe, 0);
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    for (int id = 1; id <= 2; ++id) {
+      servoBus.EnableTorque(id, 0);
+      auto& r = readings[id - 1];
+      r.torque = servoBus.readByte(id, SCSCL_TORQUE_ENABLE);
+      if (r.torque != 0) break;
+      r.position = servoBus.ReadPos(id);
+      r.minimum = servoBus.readWord(id, SCSCL_MIN_ANGLE_LIMIT_L);
+      r.maximum = servoBus.readWord(id, SCSCL_MAX_ANGLE_LIMIT_L);
+      r.moving = servoBus.ReadMove(id);
+    }
+  }
+  // The task stays alive until release, even if its deadline already fired.
+  xTaskNotifyGive(cutoff);
+  while (!powerCutoff.done.load()) vTaskDelay(1);
+  uint8_t after[4]{};
+  const uint8_t outReg = 0x05;
+  bool readback = i2c_master_transmit_receive(device, &outReg, 1, after, sizeof(after), 100) == ESP_OK;
+  bool offVerified = powerCutoff.written.load() && readback && !(after[0] & 1) && !(after[2] & 1);
+  i2c_master_bus_rm_device(device);
+  powerCutoff.release.store(true);
+  // No USB output while power is enabled: a stalled host cannot delay cutoff.
+  for (int id = 1; id <= 2; ++id) {
+    auto& r = readings[id - 1];
+    Serial.printf("SBSC {\"id\":%d,\"position\":%d,\"torque\":%d,\"minimum\":%d,\"maximum\":%d,\"moving\":%d,\"read_only\":false}\n",
+                  id, r.position, r.torque, r.minimum, r.maximum, r.moving);
+  }
+  Serial.printf("SBPW {\"power_write_ack\":%s,\"power_off_verified\":%s,\"elapsed_ms\":%lu,\"position_commands\":0}\n",
+                enabled ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started));
+}
+
 void probeServos() {
   // Read the base expander using the camera's existing I2C bus, on its owner task.
   // Never reinitialize M5.In_I2C while the camera owns this peripheral.
@@ -257,11 +373,8 @@ void probeServos() {
   // Never call M5StackChan.begin(): it enables motor power.
   // Do not write goals, torque, modes, offsets, or EEPROM. Missing feedback is
   // an explicit failure, never a substitute position or permission to move.
-  static SCSCL bus;
-  static bool ready = false;
-  if (!ready) ready = bus.begin(UART_NUM_1, 1000000, 6, 7);
-  if (!ready) { Serial.println("SBSC {\"error\":\"uart_unavailable\"}"); return; }
-  bus.IOTimeOut = 20;
+  if (!prepareServoBus()) { Serial.println("SBSC {\"error\":\"uart_unavailable\"}"); return; }
+  auto& bus = servoBus;
   for (int id = 1; id <= 2; ++id) {
     int position = bus.ReadPos(id);
     int torque = bus.readByte(id, SCSCL_TORQUE_ENABLE);
@@ -284,6 +397,7 @@ void cameraTask(void*) {
   stats.startedMs = millis();
   for (;;) {
     // Only the camera task writes USB, and diagnostics appear between packets.
+    if (powerTestRequested.exchange(false)) testServoPower();
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); nextFrameAtMs = 0; }
     if (statsRequested.exchange(false)) {

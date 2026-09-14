@@ -4,6 +4,21 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 supervised power preflight: added one power window per boot, accepted
+only with streaming stopped. Independent core-1 cutoff task requests VM low by
+two seconds, with up to three 100 ms I2C write attempts. No goal, torque-on,
+mode, or EEPROM writes. Three host pseudo-terminal tests passed (valid feedback,
+invalid position rejection, unverified cutoff error); these do not validate
+physical cutoff under hardware/bus failure. Firmware built at 604,571 program
+bytes and 39,588 static RAM bytes; flashed with hash verification.
+
+One authorized live test returned power-write ACK=true, power-off-verified=true,
+elapsed=244 ms, position-commands=0. Servo 1 torque query returned -1, so no
+position was accepted and servo 2 was not queried (its report remains -1).
+The low output latch/input were verified after cutoff. Motor-rail voltage and
+the enable signal during the on-window were not measured, so ACK does not prove
+that the servos actually received power. Calibration remains blocked on feedback.
+
 2026-09-14 calibration preflight: user confirmed a stable surface and cable slack.
 No movement attempted. Read-only UART queries returned -1 for both servos.
 Moving the Mini USB cable to the base removed host enumeration; a head power
