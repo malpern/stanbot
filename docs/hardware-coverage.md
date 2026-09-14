@@ -4,6 +4,15 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 subsequent physical power cycle: the final transport firmware
+returned seven complete JPEG packets in a six-second USB check, with zero
+invalid complete packets and zero interleaved ISR warnings. This verifies one
+post-power-cycle camera transport session, not sustained image quality or
+repeatable cold-start reliability.
+The native app was reopened and Show Camera enabled; its UI reported live
+local frames and visibly displayed the room. Horizontal image tearing remains
+visible, so image quality is not yet accepted. No motion was enabled.
+
 2026-09-14 camera diagnosis: ROM output showed the chip was still waiting for
 download after the standard RTS reset. A watchdog reset started the firmware,
 which then reported camera initialization failure. Added M5Unified board/power
