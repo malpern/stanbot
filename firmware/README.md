@@ -8,6 +8,15 @@ renderer with USB camera streaming. It starts in Normal, blinks about every
 and `E,<name>` for all eighteen expressions. Input lines are bounded and unknown
 commands are ignored. No target or motor commands are accepted.
 
+The default stream is 320×240 JPEG at a 200 ms minimum interval (measured about
+3.5 fps). The sensor remains VGA; downsampling occurs before JPEG compression.
+See [camera performance](../docs/camera-performance.md) for measurements and limits.
+Diagnostic newline commands are `P` (timing stats), `Z` (reset stats),
+`R,750|333|200|100` (choose one interval in ms), and `M,640|320|raw320`
+(choose one output mode). Raw mode is benchmark-only, not supported by the app.
+JPEG uses SBFR version 1; raw uses version 2 with 153600 YUYV bytes followed by a
+little-endian CRC32. Stats use a separate `SBST ` JSON line between packets.
+
 The main loop exclusively owns the double-buffered eye display and command
 reader. A separate core-0 task owns camera initialization, capture, JPEG
 compression, and USB output. Neither calls StackChan's servo initialization.

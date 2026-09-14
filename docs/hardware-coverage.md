@@ -4,6 +4,21 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 performance pass: instrumented capture wait, image preparation,
+USB writes, and eye-present gaps; compared VGA JPEG, QVGA JPEG, and CRC-checked
+raw QVGA transport on hardware. Selected QVGA JPEG at a 200 ms minimum interval:
+short tests measured 3.54 fps versus the previous 1.34 fps, with zero malformed
+complete packets. Raw transfer gave no rate advantage and used about 19 times
+the payload. Build: 591,583 program bytes, 34,668 static RAM bytes; upload hash
+verification passed. Motion remains absent. See [performance record](camera-performance.md)
+for methodology and limitations; physical reconnect/cold-start checks remain pending.
+The final-default 30-second run received 105 frames at 3.48 fps with zero
+malformed packets. The Mac app displayed the smaller image and a face overlay;
+the inspected preview had no visible horizontal slicing. This is one scene,
+not a varied-lighting or motion-quality validation. Stop Camera cleared both
+the preview and detection indication.
+Show Camera subsequently resumed live local frames. The app is left streaming.
+
 2026-09-14 tearing fix: configured GC0308 register `0x28` divider bits `[6:4]`
 to `0b010`, preserving the other bits and verifying the register readback before
 starting capture. The fixed external 20 MHz clock is unchanged; this slows the

@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <esp_video_ioctl.h>
+#include <esp_rom_crc.h>
+#include <esp_heap_caps.h>
 
 namespace {
 
@@ -29,12 +31,23 @@ constexpr int kExternalXclk = -1;  // Fixed external 20 MHz clock.
 constexpr int kDataPins[] = {39, 40, 41, 42, 15, 16, 48, 47};
 constexpr uint8_t kJpegQuality = 35;
 constexpr size_t kMaxJpegBytes = 300000;
-constexpr uint32_t kFrameIntervalMs = 750;  // Conservative ~1.3 fps for bring-up.
+constexpr uint32_t kFrameIntervalMs = 200;  // Requests up to 5 fps; measured ~3.5 fps.
 
 ESPVideoCaptureDevClass capture;
 uint32_t sequence = 0;
 uint32_t nextFrameAtMs = 0;
 std::atomic<bool> streamEnabled{false};
+std::atomic<uint32_t> frameIntervalMs{kFrameIntervalMs};
+// 0: VGA JPEG; 1: QVGA JPEG; 2: benchmark-only QVGA raw YUYV + CRC32.
+std::atomic<uint8_t> imageMode{1};
+uint8_t* smallFrame = nullptr;
+std::atomic<bool> statsRequested{false}, resetStats{false};
+std::atomic<uint32_t> maxEyeGapMs{0};
+uint32_t lastEyeMs = 0;
+struct PipelineStats {
+  uint32_t startedMs = 0, captures = 0, sent = 0, failures = 0;
+  uint64_t captureWaitUs = 0, encodeUs = 0, enqueueUs = 0, jpegBytes = 0;
+} stats;
 StanbotEyes eyes;
 M5Canvas eyeFrame(&M5.Display);
 bool eyeFrameReady = false;
@@ -57,6 +70,18 @@ void pollCommands(uint32_t now) {
       if (!discardCommand) {
         if (strcmp(commandLine, "S") == 0) streamEnabled.store(true);
         else if (strcmp(commandLine, "X") == 0) streamEnabled.store(false);
+        else if (strcmp(commandLine, "P") == 0) statsRequested.store(true);
+        else if (strcmp(commandLine, "Z") == 0) {
+          resetStats.store(true);
+          maxEyeGapMs.store(0);
+        }
+        else if (strcmp(commandLine, "R,750") == 0) frameIntervalMs.store(750);
+        else if (strcmp(commandLine, "R,333") == 0) frameIntervalMs.store(333);
+        else if (strcmp(commandLine, "R,200") == 0) frameIntervalMs.store(200);
+        else if (strcmp(commandLine, "R,100") == 0) frameIntervalMs.store(100);
+        else if (strcmp(commandLine, "M,640") == 0) imageMode.store(0);
+        else if (strcmp(commandLine, "M,320") == 0) imageMode.store(1);
+        else if (strcmp(commandLine, "M,raw320") == 0) imageMode.store(2);
         else if (strncmp(commandLine, "E,", 2) == 0) {
           StanbotEmotion emotion;
           if (StanbotEyes::emotionFromName(commandLine + 2, emotion)) eyes.setEmotion(emotion);
@@ -154,10 +179,36 @@ bool beginCamera() {
 void sendFrame(const ESPVideoBufferClass& frame) {
   uint8_t* jpeg = nullptr;
   size_t jpegLength = 0;
-  const bool encoded = fmt2jpg(frame.data(), frame.size(), frame.getWidth(), frame.getHeight(),
-                                PIXFORMAT_YUV422, kJpegQuality, &jpeg, &jpegLength);
+  const uint32_t encodeStart = micros();
+  const uint8_t mode = imageMode.load();
+  if (mode && !smallFrame) smallFrame = static_cast<uint8_t*>(heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (mode && (!smallFrame || frame.getWidth() != 640 || frame.getHeight() != 480 || frame.size() != 640 * 480 * 2)) {
+    ++stats.failures;
+    return;
+  }
+  if (mode) {
+    // Decimate YUYV by two in both dimensions, retaining paired U/V samples.
+    for (unsigned y = 0; y < 240; ++y) {
+      const uint8_t* src = frame.data() + y * 2 * 640 * 2;
+      uint8_t* dst = smallFrame + y * 320 * 2;
+      for (unsigned x = 0; x < 160; ++x) {
+        dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[4]; dst[3] = src[3];
+        src += 8; dst += 4;
+      }
+    }
+  }
+  const bool raw = mode == 2;
+  bool encoded = true;
+  if (raw) { jpeg = smallFrame; jpegLength = 320 * 240 * 2; }
+  else encoded = fmt2jpg(mode ? smallFrame : frame.data(), mode ? 320 * 240 * 2 : frame.size(),
+                         mode ? 320 : frame.getWidth(), mode ? 240 : frame.getHeight(),
+                         PIXFORMAT_YUV422, kJpegQuality, &jpeg, &jpegLength);
+  uint8_t checksum[4]{};
+  if (raw) putUInt32LE(checksum, esp_rom_crc32_le(0, jpeg, jpegLength));
+  stats.encodeUs += static_cast<uint32_t>(micros() - encodeStart);
   if (!encoded || jpeg == nullptr || jpegLength == 0 || jpegLength > kMaxJpegBytes) {
-    if (jpeg != nullptr) free(jpeg);
+    if (jpeg != nullptr && !raw) free(jpeg);
+    ++stats.failures;
     return;
   }
 
@@ -165,10 +216,16 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   // recover from an interrupted packet, but we never deliberately start a
   // second payload until the first one has drained.
   uint8_t header[13] = {'S', 'B', 'F', 'R', 1};
+  header[4] = raw ? 2 : 1;
   putUInt32LE(header + 5, ++sequence);
-  putUInt32LE(header + 9, static_cast<uint32_t>(jpegLength));
-  if (writeFully(header, sizeof(header))) writeFully(jpeg, jpegLength);
-  free(jpeg);
+  putUInt32LE(header + 9, static_cast<uint32_t>(jpegLength + (raw ? 4 : 0)));
+  const uint32_t enqueueStart = micros();
+  const bool sent = writeFully(header, sizeof(header)) && writeFully(jpeg, jpegLength) &&
+                    (!raw || writeFully(checksum, sizeof(checksum)));
+  stats.enqueueUs += static_cast<uint32_t>(micros() - enqueueStart);
+  if (sent) { ++stats.sent; stats.jpegBytes += jpegLength; }
+  else ++stats.failures;
+  if (!raw) free(jpeg);
 }
 
 void cameraTask(void*) {
@@ -179,12 +236,26 @@ void cameraTask(void*) {
     return;
   }
   Serial.println("CAMERA_STREAM_READY protocol=SBFR/jpeg/local-only emotions=18 motion=disabled");
+  stats.startedMs = millis();
   for (;;) {
+    // Only the camera task writes USB, and diagnostics appear between packets.
+    if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); nextFrameAtMs = 0; }
+    if (statsRequested.exchange(false)) {
+      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu}\n",
+        (unsigned long)(millis() - stats.startedMs), (unsigned long)stats.captures,
+        (unsigned long)stats.sent, (unsigned long)stats.failures,
+        (unsigned long long)stats.captureWaitUs, (unsigned long long)stats.encodeUs,
+        (unsigned long long)stats.enqueueUs, (unsigned long long)stats.jpegBytes,
+        (unsigned long)maxEyeGapMs.load());
+    }
+    const uint32_t captureStart = micros();
     ESPVideoBufferClass frame = capture.captureBuffer();
+    stats.captureWaitUs += static_cast<uint32_t>(micros() - captureStart);
     if (frame.valid()) {
+      ++stats.captures;
       const uint32_t now = millis();
       if (streamEnabled.load() && static_cast<int32_t>(now - nextFrameAtMs) >= 0) {
-        nextFrameAtMs = now + kFrameIntervalMs;
+        nextFrameAtMs = now + frameIntervalMs.load();
         sendFrame(frame);
       }
     }
@@ -229,7 +300,16 @@ void loop() {
   const uint32_t now = millis();
   pollCommands(now);
   if (eyeFrameReady) {
-    if (eyes.update(eyeFrame, now)) eyeFrame.pushSprite(0, 0);
+    if (eyes.update(eyeFrame, now)) {
+      eyeFrame.pushSprite(0, 0);
+      const uint32_t presentedMs = millis();
+      if (lastEyeMs) {
+        const uint32_t gap = presentedMs - lastEyeMs;
+        uint32_t old = maxEyeGapMs.load();
+        while (gap > old && !maxEyeGapMs.compare_exchange_weak(old, gap)) {}
+      }
+      lastEyeMs = presentedMs;
+    }
   } else {
     eyes.update(M5.Display, now);
   }
