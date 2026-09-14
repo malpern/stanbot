@@ -4,6 +4,22 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 calibration preflight: user confirmed a stable surface and cable slack.
+No movement attempted. Read-only UART queries returned -1 for both servos.
+Moving the Mini USB cable to the base removed host enumeration; a head power
+cycle restored eyes but not base-port USB. Returning the same cable to the head
+restored `/dev/cu.usbmodem31201`. An expanded read-only probe then returned base
+expander version 65, VM pin direction=input, output latch=0, input level=0.
+The base controller is reachable; the low motor-enable signal is consistent
+with motor power disabled, but rail voltage was not measured. Both servos still
+returned -1 for position, torque, limits, and movement. Controlled power enable
+and physical calibration remain pending. No power-enable, torque, mode, EEPROM,
+or position writes were made by this diagnostic. Build: 602,599 program bytes,
+39,588 static RAM bytes; upload hash verification passed.
+
+User subsequently confirmed the prior face-selection build's highlight stayed
+steady and cleared when leaving the frame. Multi-person crossing remains untested.
+
 2026-09-14 face-selection pass: Mini-only geometric selection and temporal
 qualification implemented; seven automated tests passed and release app rebuilt.
 Live USB preview resumed in the updated app. See [face selection](face-selection.md)

@@ -1,6 +1,6 @@
 // Local USB camera stream for StackChan bring-up.
 //
-// This intentionally contains no Wi-Fi, network stack, motor code, face
+// This intentionally contains no Wi-Fi, network stack, motor movement, face
 // inference, or persistent frame storage. It emits bounded JPEG frames for the
 // Mini companion using the SBFR protocol documented in companion-architecture.
 
@@ -18,6 +18,9 @@
 #include <esp_video_ioctl.h>
 #include <esp_rom_crc.h>
 #include <esp_heap_caps.h>
+#include <M5StackChan.h>
+#include <drivers/FTServo_Arduino/src/SCSCL.h>
+#include <driver/i2c_master.h>
 
 namespace {
 
@@ -42,6 +45,7 @@ std::atomic<uint32_t> frameIntervalMs{kFrameIntervalMs};
 std::atomic<uint8_t> imageMode{1};
 uint8_t* smallFrame = nullptr;
 std::atomic<bool> statsRequested{false}, resetStats{false};
+std::atomic<bool> servoProbeRequested{false};
 std::atomic<uint32_t> maxEyeGapMs{0};
 uint32_t lastEyeMs = 0;
 struct PipelineStats {
@@ -71,6 +75,7 @@ void pollCommands(uint32_t now) {
         if (strcmp(commandLine, "S") == 0) streamEnabled.store(true);
         else if (strcmp(commandLine, "X") == 0) streamEnabled.store(false);
         else if (strcmp(commandLine, "P") == 0) statsRequested.store(true);
+        else if (strcmp(commandLine, "Q") == 0) servoProbeRequested.store(true);
         else if (strcmp(commandLine, "Z") == 0) {
           resetStats.store(true);
           maxEyeGapMs.store(0);
@@ -228,6 +233,46 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   if (!raw) free(jpeg);
 }
 
+void probeServos() {
+  // Read the base expander using the camera's existing I2C bus, on its owner task.
+  // Never reinitialize M5.In_I2C while the camera owns this peripheral.
+  i2c_master_bus_handle_t master = nullptr;
+  i2c_master_dev_handle_t device = nullptr;
+  i2c_device_config_t config{};
+  config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  config.device_address = 0x6f;
+  config.scl_speed_hz = 100000;
+  esp_err_t status = i2c_master_get_bus_handle(kSccbPort, &master);
+  if (status == ESP_OK) status = i2c_master_bus_add_device(master, &config, &device);
+  uint8_t registers[7]{};
+  const uint8_t startRegister = 0x02; // BSP: version, direction, output, input.
+  if (status == ESP_OK) status = i2c_master_transmit_receive(device, &startRegister, 1, registers, sizeof(registers), 100);
+  if (device) i2c_master_bus_rm_device(device);
+  if (status == ESP_OK) {
+    Serial.printf("SBSC {\"base\":true,\"version\":%u,\"vm_output_mode\":%u,\"vm_output_latch\":%u,\"vm_input_level\":%u,\"read_only\":true}\n",
+                  registers[0], registers[1] & 1, registers[3] & 1, registers[5] & 1);
+  } else {
+    Serial.printf("SBSC {\"base\":true,\"error\":%d,\"read_only\":true}\n", status);
+  }
+  // Never call M5StackChan.begin(): it enables motor power.
+  // Do not write goals, torque, modes, offsets, or EEPROM. Missing feedback is
+  // an explicit failure, never a substitute position or permission to move.
+  static SCSCL bus;
+  static bool ready = false;
+  if (!ready) ready = bus.begin(UART_NUM_1, 1000000, 6, 7);
+  if (!ready) { Serial.println("SBSC {\"error\":\"uart_unavailable\"}"); return; }
+  bus.IOTimeOut = 20;
+  for (int id = 1; id <= 2; ++id) {
+    int position = bus.ReadPos(id);
+    int torque = bus.readByte(id, SCSCL_TORQUE_ENABLE);
+    int minimum = bus.readWord(id, SCSCL_MIN_ANGLE_LIMIT_L);
+    int maximum = bus.readWord(id, SCSCL_MAX_ANGLE_LIMIT_L);
+    int moving = bus.ReadMove(id);
+    Serial.printf("SBSC {\"id\":%d,\"position\":%d,\"torque\":%d,\"minimum\":%d,\"maximum\":%d,\"moving\":%d,\"read_only\":true}\n",
+                  id, position, torque, minimum, maximum, moving);
+  }
+}
+
 void cameraTask(void*) {
   // Camera capture/JPEG/USB can block; they never own the display or eyes.
   if (!beginCamera()) {
@@ -239,6 +284,7 @@ void cameraTask(void*) {
   stats.startedMs = millis();
   for (;;) {
     // Only the camera task writes USB, and diagnostics appear between packets.
+    if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); nextFrameAtMs = 0; }
     if (statsRequested.exchange(false)) {
       Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu}\n",

@@ -17,6 +17,13 @@ Diagnostic newline commands are `P` (timing stats), `Z` (reset stats),
 JPEG uses SBFR version 1; raw uses version 2 with 153600 YUYV bytes followed by a
 little-endian CRC32. Stats use a separate `SBST ` JSON line between packets.
 
+`Q` performs a read-only base/servo preflight, returning `SBSC` JSON lines.
+It reads the base expander at 0x6f on the existing camera I2C bus, then servo
+IDs 1 and 2 over the official UART1 TX6/RX7 mapping. It does not enable motor
+power, torque, change EEPROM, or send position goals. With the app closed:
+`python3 companion/probe_servos.py /dev/cu.usbmodem31201`.
+Missing/invalid feedback exits nonzero and must never be treated as position zero.
+
 The main loop exclusively owns the double-buffered eye display and command
 reader. A separate core-0 task owns camera initialization, capture, JPEG
 compression, and USB output. Neither calls StackChan's servo initialization.
