@@ -27,6 +27,9 @@ Missing/invalid feedback exits nonzero and must never be treated as position zer
 Supervised `C,POWERTEST` (host `--power-test`) is a separate, explicitly mutating
 preflight: one attempt per boot with streaming stopped. It briefly requests VM
 power, broadcasts torque-off, and queries feedback only after torque reads zero.
+VM configuration now matches the BSP pull-up/no-pull-down setup and is read
+back while low. Output mode, latch and input must all indicate enabled before
+the test proceeds to servo queries; a write acknowledgement alone is insufficient.
 It never enables torque or sends position/mode/EEPROM commands. A separate task
 requests VM off after two seconds or earlier completion; I2C failures can prevent
 physical cutoff, so the operator must remain present. The report verifies the

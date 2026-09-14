@@ -4,6 +4,17 @@ Requested coverage; exact components and supported functions must be confirmed a
 
 ## Build and transport record
 
+2026-09-14 pull-up correction: matched BSP VM pin pull-up/no-pull-down setup,
+verified output configuration while low, and required output-mode/latch/input
+readback high before servo queries. Four host simulation tests passed; firmware
+built (604,827 program bytes, 39,588 static RAM bytes) and upload hash verified.
+One authorized live test returned write-ACK=true, enable-high-verified=false,
+power-off-verified=true, elapsed=6 ms, position-commands=0. Neither servo was
+queried in this run because enable verification failed. Individual on-state
+register values were not logged, so this does not identify which check failed
+or establish motor-rail voltage. The immediate readback timing and base pin
+behavior need investigation before repeating powered tests. Motion remains locked.
+
 2026-09-14 supervised power preflight: added one power window per boot, accepted
 only with streaming stopped. Independent core-1 cutoff task requests VM low by
 two seconds, with up to three 100 ms I2C write attempts. No goal, torque-on,

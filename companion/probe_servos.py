@@ -59,6 +59,8 @@ def main():
                         raise RuntimeError("Power preflight refused or failed; do not retry automatically")
         if args.power_test and (power is None or not power.get("power_off_verified")):
             raise RuntimeError("POWER OFF NOT VERIFIED: physically power off the robot")
+        if args.power_test and not (power.get("power_write_ack") and power.get("enable_high_verified")):
+            raise RuntimeError("Motor-enable high NOT verified; calibration must stay locked")
         if len(records) != 2:
             raise RuntimeError("Incomplete servo preflight")
         for record in records.values():

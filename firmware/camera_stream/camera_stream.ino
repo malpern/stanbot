@@ -283,7 +283,7 @@ void testServoPower() {
   config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
   config.device_address = 0x6f;
   config.scl_speed_hz = 100000;
-  uint8_t regs[7]{};
+  uint8_t regs[11]{}; // 0x02..0x0c: version through pull-down settings.
   const uint8_t start = 0x02;
   bool ready = prepareServoBus() &&
     i2c_master_get_bus_handle(kSccbPort, &master) == ESP_OK &&
@@ -293,6 +293,13 @@ void testServoPower() {
   ready = ready && regs[0] != 0 && regs[0] != 255 && !(regs[3] & 1) && !(regs[5] & 1);
   const uint8_t off = regs[3] & ~1u;
   if (ready) ready = writeBase(device, 0x05, off) && writeBase(device, 0x03, regs[1] | 1u);
+  // Match the official BSP: VM output with pull-up, no pull-down. Keep VM low
+  // throughout configuration, and preserve every other pin's settings.
+  if (ready) ready = writeBase(device, 0x0b, regs[9] & ~1u) && writeBase(device, 0x09, regs[7] | 1u);
+  uint8_t configured[11]{};
+  if (ready) ready = i2c_master_transmit_receive(device, &start, 1, configured, sizeof(configured), 100) == ESP_OK &&
+    (configured[1] & 1) && !(configured[3] & 1) && !(configured[5] & 1) &&
+    (configured[7] & 1) && !(configured[9] & 1);
   if (!ready) {
     if (device) i2c_master_bus_rm_device(device);
     Serial.println("SBPW {\"error\":\"preflight_failed_no_power_enabled\"}");
@@ -313,8 +320,12 @@ void testServoPower() {
   servoBus.EnableTorque(0xfe, 0);
   const uint32_t started = millis();
   bool enabled = writeBase(device, 0x05, off | 1u);
+  uint8_t onState[6]{};
+  const uint8_t modeReg = 0x03;
+  bool onVerified = enabled && i2c_master_transmit_receive(device, &modeReg, 1, onState, sizeof(onState), 100) == ESP_OK &&
+    (onState[0] & 1) && (onState[2] & 1) && (onState[4] & 1);
   struct Reading { int position = -1, torque = -1, minimum = -1, maximum = -1, moving = -1; } readings[2];
-  if (enabled) {
+  if (onVerified) {
     for (int i = 0; i < 10; ++i) {
       servoBus.EnableTorque(0xfe, 0);
       vTaskDelay(pdMS_TO_TICKS(20));
@@ -345,8 +356,8 @@ void testServoPower() {
     Serial.printf("SBSC {\"id\":%d,\"position\":%d,\"torque\":%d,\"minimum\":%d,\"maximum\":%d,\"moving\":%d,\"read_only\":false}\n",
                   id, r.position, r.torque, r.minimum, r.maximum, r.moving);
   }
-  Serial.printf("SBPW {\"power_write_ack\":%s,\"power_off_verified\":%s,\"elapsed_ms\":%lu,\"position_commands\":0}\n",
-                enabled ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started));
+  Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_high_verified\":%s,\"power_off_verified\":%s,\"elapsed_ms\":%lu,\"position_commands\":0}\n",
+                enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started));
 }
 
 void probeServos() {
