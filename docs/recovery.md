@@ -1,5 +1,119 @@
 # USB recovery and factory restoration
 
+## Yaw sweep diagnostic installed, 2026-09-15
+
+Two application-only writes at 0x10000 on the known device (head USB), both
+hash-verified, no full erase, no partition/bootloader/NVS change: the sweep
+build (613,691 bytes) and its timing fix (613,719 bytes, SHA-256
+daf2a1db1d6ef6ffdb004d74536152725277f5fb2f346eaf0057d97ea5019ecf). Each was left in the bootloader and
+the user pressed RST. The serial port vanished twice this session after
+resets; the cause was a Parallels VM capturing the USB device on
+re-enumeration, not the connector (user diagnosed and fixed it). If
+`/dev/cu.usbmodem*` is absent while the eyes are up, check VM USB capture
+before touching the cable. The base USB port still does not enumerate on this
+unit; the official docs say it should carry data, so that is a hardware fault
+in this robot (internal seven-wire base-to-head cable suspected), not a design
+limit. Factory state remains recoverable from the 2026-09-14 full backups.
+
+## Settling diagnostic installed, 2026-09-14
+
+With user present and side USB confirmed, reverified device MAC
+`68:EE:8F:D8:4F:04`. Saved current full 16 MB factory state privately as
+`pre-settling-test-full-flash.bin` in the recovery directory below (mode 0600).
+ROM verify-flash matched its complete digest; SHA-256:
+`fd94675f5cd0550f1320cc5ebd549049a520afa81dcfd8522c80851c34ac1d37`.
+This backup may contain credentials: never commit or upload it.
+
+Installed the 605,387-byte-program settling diagnostic using separate bootloader,
+partition, OTA-selection, and application writes at 0, 0x8000, 0xe000, 0x10000.
+No full-chip erase; every written segment passed hash verification. Current
+factory state remains recoverable from the full backup. Left in bootloader with
+no automatic/watchdog reset; physical brief RST and boot confirmation pending.
+No servo-power test or movement/calibration command was sent in this installation.
+
+## Return to StackChan factory image for RGB test, 2026-09-14
+
+After the voltage and USB comparisons, user authorized restoring the saved
+StackChan-UserDemo V1.5.1 for its built-in RGB test. Reconfirmed known device
+identity on head USB and image SHA-256. Full erase and 12,783,792-byte write at
+address 0 succeeded with written-data hash verification. Left in bootloader,
+without automatic or watchdog reset. User should briefly press RST, choose
+Skip at Welcome (avoid onboarding servo test), then navigate to Setup's RGB
+test. RGB behavior and subsequent factory startup are pending observation.
+
+## Power diagnostic installation, 2026-09-14
+
+User confirmed StackChan-UserDemo V1.5.1 booted to Welcome and then the
+AI.AGENT menu after Skip. Rear USB remained absent; moving the same cable back
+to head USB restored the known serial device under the same official firmware.
+Factory restoration is therefore now boot-tested, not merely flash-verified.
+
+User photos show the rear red LED can also illuminate with side USB connected
+and rear USB empty; it is not an exclusive rear-input indicator. A reported fix
+in https://github.com/m5stack/StackChan/issues/78 identifies the central black
+seven-wire cable (confirmed visually against the report image), NOT the silver
+ribbon to its right. After USB removal and shutdown, user gently pressed the
+black cable with a finger. Rear insertion then turned on the screen, but rear
+USB enumeration remained absent, including after a physical restart. Neither
+charging nor the precise failed connection is established.
+
+With authorization, downloaded M5Stack CoreS3 UserDemo v0.12 from the M5Burner
+CDN using catalogue file `814dba58deaf2918cc19b8088e3f602f.bin`. Saved alongside
+the recovery copies as `CoreS3-UserDemo-v0.12.bin`, SHA-256
+`b85af8bd116897ee71e00b5111b8b5643754f18990fcf322bd15638f98a6c5ea`.
+Image header identifies ESP32-S3, DIO/80 MHz and an 8 MB layout (physical device
+has 16 MB). Bootloader checksum/hash valid. After user moved to side USB,
+reconfirmed serial identity; full erase and 7,138,816-byte write at address 0
+succeeded with written-data hash verification. Left in bootloader without an
+automatic reset. Diagnostic boot and voltage readings remain pending.
+
+The Power page has interactive USB/BUS direction controls: do NOT toggle them
+for the side/rear voltage comparison. Public source also conditions battery
+voltage display on charge state, so a displayed 0 V alone must not be treated
+as proof of a dead battery. Source: m5stack/CoreS3-UserDemo,
+`src/pages/AppPower/AppPower.cpp` and `AppPowerModel.cpp`; exact correspondence
+of public source to downloaded v0.12 has not been established.
+
+## Controlled factory comparison, 2026-09-14
+
+Rear USB did not enumerate on the Mini in either plug orientation. The user
+confirmed the rear red LED follows cable connection, while eyes remain on even
+when unplugged (battery operation). Returning the same cable to the head port
+restored USB serial `68:EE:8F:D8:4F:04` at `/dev/cu.usbmodem31201`.
+These observations do not establish rear-to-head power delivery or charging.
+
+User authorized a factory-firmware comparison and confirmed head clearance and
+cable slack. The companion was stopped before serial operations. M5Burner's
+downloaded catalogue identifies `746f9662f48ac465cccf49bcad941414.bin` as
+M5Stack **StackChan-UserDemo V1.5.1**, published 2026-07-31. This is not proven
+to be the exact version originally shipped on this particular robot.
+
+Recovery copies are outside Git at
+`/Users/malpern/Library/Application Support/stanbot/recovery/2026-09-14/`:
+
+- `stanbot-43c391c-merged.bin`: saved compiled custom image, SHA-256
+  `defa56ffcc3442f885c57c6a325ab5e96c28e29c1ccc23d85b5410005576de88`.
+- `StackChan-UserDemo-V1.5.1.bin`: official downloaded image, SHA-256
+  `411578a2ebca2cfe3541fdc32aeddbc4703cf912a5daa7e1253f69306d6e1d87`.
+- `pre-factory-rom-full-flash.bin`: complete 16,777,216-byte device backup,
+  mode 0600, SHA-256
+  `861952df0d2959a4493b24d5ed83b36c25d75497b7f6c88111c0c5b303fe21aa`.
+  Treat this as sensitive: it may contain previous settings/credentials.
+  Never commit or upload it. ROM `verify-flash` matched the complete digest.
+
+The initial stub-based full read failed partway with a serial read error and
+produced no backup file. The subsequent `--no-stub` full read and verification
+succeeded. No flash write preceded that verified backup. Factory installation
+uses address 0, full erase, and `--after no-reset`; physical startup and rear
+port comparison are separate validation steps, not implied by flash success.
+
+Installation result: the ROM-only attempt refused `erase_flash` as unsupported,
+before erasing. Retried with the standard flasher stub: full erase succeeded,
+12,783,792 padded bytes were written at address 0, and the written-data hash
+verified. The device was left in the bootloader (`--after no-reset`). No watchdog
+reset was used. Physical factory startup, rear-port enumeration, charging, and
+servo behavior remain pending user observation. The companion remains stopped.
+
 ## Observed USB recovery, 2026-09-14
 
 The head/screen USB-C port enumerated the known robot after the user held RST
