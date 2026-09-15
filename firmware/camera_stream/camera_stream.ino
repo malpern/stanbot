@@ -113,7 +113,7 @@ uint32_t lastCommandByteMs = 0;
  * ------------------------------------------------------------------------ */
 constexpr uint16_t kStreamPort = 3333;
 constexpr char kHostname[] = "stanbot";
-constexpr int kMaxProfiles = 4;
+constexpr int kMaxProfiles = 5;
 // The radio is 2.4 GHz only, so a 5 GHz SSID can never associate however
 // correct its passphrase. Rotating past a profile that cannot work is the
 // point of the attempt timeout below.

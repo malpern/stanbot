@@ -9,7 +9,7 @@ does not echo them back either; `--status` reports only whether one is stored.
 Close Stanbot first: only one process can hold the serial port.
 
   python3 companion/provision_wifi.py /dev/cu.usbmodem31201 --scan
-  python3 companion/provision_wifi.py /dev/cu.usbmodem31201 --home --dojo
+  python3 companion/provision_wifi.py /dev/cu.usbmodem31201 --home --dojo --saturday
   python3 companion/provision_wifi.py /dev/cu.usbmodem31201 --status
 """
 import argparse
@@ -21,6 +21,7 @@ import termios
 import time
 
 SECRETS = os.path.expanduser("~/dotfiles/secrets.env")
+MAX_PROFILES = 5  # must match kMaxProfiles in firmware/camera_stream/camera_stream.ino
 
 
 def secrets():
@@ -51,6 +52,11 @@ def profiles(chosen, store):
         # Hacker Dojo is WPA2-Enterprise (PEAP), not a pre-shared key: the
         # identity is the account, which is why it needs its own shape here.
         "dojo": (None, "KEYPATH_HACKER_DOJO_USERNAME", "KEYPATH_HACKER_DOJO_PASSWORD"),
+        # SATURDAY-5G is named for the 5 GHz band, but the robot's radio is
+        # 2.4 GHz only. Provision it and check `--scan`: if the router also
+        # broadcasts this SSID on 2.4 GHz, as the eeros do at home, the join
+        # works; if it is genuinely 5 GHz-only, no passphrase can help.
+        "saturday": ("KEYPATH_WIFI_SSID_5", None, "KEYPATH_WIFI_PASSWORD_5"),
         "beach": ("KEYPATH_WIFI_SSID_4", None, "KEYPATH_WIFI_PASSWORD_4"),
         "phone": ("KEYPATH_WIFI_SSID_3", None, "KEYPATH_WIFI_PASSWORD_3"),
     }
@@ -106,6 +112,7 @@ def main():
     parser.add_argument("port")
     parser.add_argument("--home", action="store_true", help="home 2.4 GHz network")
     parser.add_argument("--dojo", action="store_true", help="Hacker Dojo (WPA2-Enterprise)")
+    parser.add_argument("--saturday", action="store_true", help="SATURDAY-5G")
     parser.add_argument("--beach", action="store_true")
     parser.add_argument("--phone", action="store_true", help="phone hotspot, last resort")
     parser.add_argument("--ota-password", action="store_true",
@@ -137,9 +144,14 @@ def main():
             return
 
         chosen = [n for n, on in (("home", args.home), ("dojo", args.dojo),
-                                  ("beach", args.beach), ("phone", args.phone)) if on]
+                                  ("saturday", args.saturday), ("beach", args.beach),
+                                  ("phone", args.phone)) if on]
         if not chosen:
-            raise SystemExit("choose at least one of --home --dojo --beach --phone")
+            raise SystemExit("choose at least one of --home --dojo --saturday "
+                             "--beach --phone")
+        if len(chosen) > MAX_PROFILES:
+            raise SystemExit(f"the robot stores at most {MAX_PROFILES} profiles; "
+                             f"{len(chosen)} were chosen")
         store = secrets()
         selected = profiles(chosen, store)
         for index, (name, ssid, identity, password) in enumerate(selected):

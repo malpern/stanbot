@@ -150,11 +150,14 @@ companion's decoder and every command are shared and either link works.
   is WPA2-Enterprise and needs a PEAP identity**, which is a difference in kind,
   not just in name. The profile order and PEAP setup mirror the KeyPath HID
   fixture, which already works there. A profile that does not associate within
-  12 seconds rotates to the next, so one image works at both venues.
+  12 seconds rotates to the next, so one image works at both venues. Up to five
+  profiles are stored (`kMaxProfiles`), which the provisioner enforces too.
 - **`W,SCAN` reports what is actually broadcasting.** Use it before trusting an
   SSID from a note. It found that neither `Alpern-Home` nor `Alpern-Fiber`
   exists here: the eeros broadcast `Alpern-Home-5G` on 2.4 GHz channels 6 and
-  11, so despite the name that is the network to join.
+  11, so despite the name that is the network to join. `SATURDAY-5G` is stored
+  under the same assumption and has not been confirmed on 2.4 GHz yet; scan
+  there before blaming the passphrase.
 - **Modem sleep is disabled.** It is on by default and cost 78-110 ms of round
   trip on a -38 dBm link, which is invisible for a status poll and ruinous for
   video. The robot is mains powered, so the trade is free.
