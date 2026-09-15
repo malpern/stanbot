@@ -25,3 +25,24 @@ The head controller only accepts observations that are present, recent and at
 least `0.70` confidence. It ignores a target after 900 ms, then returns to the
 calibrated rest position at a limited speed. These are conservative starting
 values, not hardware validation.
+
+## What was actually wrong, 2026-09-15
+
+Faces stopped being recognised after the encoder quality went up. Detection was
+never the problem: 40 consecutive captured frames all found the face at
+confidence 0.76-0.84, every box inside the frame and past every validity filter,
+and replaying those same boxes through the real selection code reached a lock in
+0.6 s. Vision itself runs in about 6 ms on a 320x240 frame.
+
+Two defects in the companion, both fixed:
+
+- The app polled the serial port on a timer and silently lost most large frames.
+  See [transport.md](transport.md). It received 0.93 frames per second while the
+  robot sent 3.5.
+- Loss tolerance was expressed in fixed seconds while acquisition needs three
+  consecutive hits, which silently demanded about 3.3 fps. Below that, locking on
+  was impossible rather than slow. Tolerance now scales with the measured frame
+  interval and stays patient until an interval has been measured.
+
+The lesson worth keeping: a face-detection failure reported by this app is far
+more likely to be frame delivery than Vision. Measure the arrival rate first.

@@ -1,5 +1,11 @@
 # USB recovery and factory restoration
 
+Transport facts that bound everything here — which port carries data, how fast
+the link really is, and what the partition table allows — live in
+[transport.md](transport.md). The short version: all USB data goes through the
+**head** port on this unit, and the flashed partition table already supports OTA
+(otadata plus two 3 MB app slots), so flashing over Wi-Fi needs no repartitioning.
+
 ## Yaw sweep diagnostic installed, 2026-09-15
 
 Two application-only writes at 0x10000 on the known device (head USB), both

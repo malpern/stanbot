@@ -8,7 +8,19 @@ On startup, display a simple animated avatar, detect a person with the camera, s
 
 ## Status
 
-The project has a safe animated-eye firmware slice, an explicit factory-recovery workflow, and a local camera transport probe. USB flashing, the base animated display renderer, and local 640×480 camera frame capture have been tested on the attached StackChan. Servo motion remains deliberately disabled pending physical calibration. Image quality, face detection, and head following are not yet hardware-verified.
+The project has an animated-eye firmware slice, an explicit factory-recovery
+workflow, a local camera stream, and supervised bounded head motion. Verified on
+the attached robot: USB flashing and factory restore, the animated display, live
+640×480 capture streamed as QVGA JPEG, and a full 180° yaw sweep plus a first 5°
+pitch move, both observed physically. The companion app locks onto a face and
+holds it.
+
+Not yet verified: sustained head following, pitch travel beyond 5°, image quality
+under varied lighting, and anything over Wi-Fi. Head following remains off, and
+servo travel is bounded by explicit guards rather than by a measured calibration.
+Every servo position settles 2–6 raw steps short of its goal, which is the
+factory configuration rather than a fault; see
+[servo startup review](docs/servo-startup-review.md).
 
 ## Mini companion control app
 
@@ -31,7 +43,8 @@ cd companion/StanbotCompanion
 open build/Stanbot.app
 ```
 
-See [project brief](docs/project-brief.md) and [hardware coverage](docs/hardware-coverage.md).
+See [project brief](docs/project-brief.md), [hardware coverage](docs/hardware-coverage.md),
+and [transport](docs/transport.md) for what the link can and cannot do.
 
 ## Development sequence
 
