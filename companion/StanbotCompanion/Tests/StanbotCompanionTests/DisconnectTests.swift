@@ -3,6 +3,17 @@ import Darwin
 @testable import StanbotCompanion
 
 final class DisconnectTests: XCTestCase {
+
+    /// Disconnect is now noticed by the SerialReader's dispatch source rather
+    /// than inside tick(), so it arrives on a later main-queue hop.
+    @MainActor
+    private func wait(upTo seconds: TimeInterval, for condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !condition(), Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+    }
+
     @MainActor
     func testUnplugWhileReadingAndReconnect() throws {
         var master: Int32 = -1
@@ -18,6 +29,7 @@ final class DisconnectTests: XCTestCase {
         Darwin.close(slave)
         Darwin.close(master)
         robot.tick()
+        wait(upTo: 2) { robot.connection == .unavailable }
         XCTAssertEqual(robot.connection, .unavailable)
         XCTAssertNil(robot.cameraImage)
         XCTAssertTrue(robot.faceBoxes.isEmpty)
@@ -85,6 +97,7 @@ final class DisconnectTests: XCTestCase {
         Darwin.close(slave)
         Darwin.close(master)
         robot.startCamera()
+        wait(upTo: 2) { robot.connection == .unavailable }
         XCTAssertEqual(robot.connection, .unavailable)
         robot.select(.happy)
         robot.stopCamera()

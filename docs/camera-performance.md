@@ -1,5 +1,49 @@
 # USB camera performance
 
+## The companion was losing two thirds of the stream — 2026-09-15
+
+Raising encoder quality to 90 made the app stop recognising faces. The cause was
+not detection and not the robot: it was the Mac reading the serial port on a
+50 ms timer.
+
+The robot writes each JPEG as one burst. A 21.7 KB frame at quality 90 lands in
+about 24 ms, entirely between two polls, and the terminal input buffer is smaller
+than that, so the kernel discards the tail before anyone reads it. The decoder
+resyncs and the whole frame is lost. Same robot, same app, only quality changed:
+
+| Quality | Frame size | Frames the app received |
+| --- | --- | --- |
+| 35 | 6.8 KB | 2.64 per second |
+| 90 | 21.7 KB | 0.93 per second |
+
+The robot was sending 3.5 fps throughout. Nothing robot-side showed this, because
+the benchmark and capture tools drain the port continuously with large reads.
+
+Evidence that detection was never at fault: 40 consecutive captured frames were
+run through the app's exact Vision request and all 40 found the face, confidence
+0.76 to 0.84, every box inside the frame and past every validity filter. Those
+same boxes replayed through the real selection code reached "Face selected" in
+0.6 s. Instrumenting the running app showed the true failure: hits reached 1, a
+0.95 s gap tripped the loss window, reset, repeat, indefinitely.
+
+Two independent defects, both fixed:
+
+- **Transport.** The app now reads from a dispatch source that drains the port as
+  bytes arrive, so frame size no longer matters. `SerialReader` owns the
+  descriptor and closes it on cancel. Disconnect is now noticed by the reader
+  rather than inside the UI timer, so it is reported on a later main-queue hop.
+- **Selection tolerance.** Loss was expressed in fixed seconds (0.45 and 0.9)
+  while acquisition needs three consecutive hits. That silently required about
+  3.3 fps: below it, lock-on was impossible rather than slow, and it failed
+  looking exactly like a detection problem. Tolerance now scales with the
+  measured frame interval, is patient until an interval has actually been
+  measured, and survives a reset since it describes the transport, not the face.
+  A frame that simply misses the face no longer discards progress; only genuine
+  ambiguity, several faces overlapping the selection, still does.
+
+Verified on the robot: the app locks on within about a second and holds.
+
+
 ## Bitrate and downsampling — 2026-09-15
 
 Two changes, both aimed at image quality rather than frame rate.

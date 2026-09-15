@@ -14,12 +14,40 @@ struct FaceSelection {
     private var hits = 0
     private var lastSeen: TimeInterval = -.infinity
     private var lastUpdate: TimeInterval = -.infinity
+    /// Smoothed spacing between updates, so tolerance can be expressed in
+    /// missed frames rather than in seconds. Fixed second-based thresholds
+    /// silently require a minimum frame rate: with a 0.9 s loss window and the
+    /// three consecutive hits below, anything slower than about 3.3 fps could
+    /// never lock on at all, and failed by looking like a detection problem.
+    /// Measured on 2026-09-15 at 0.93 fps, where it never left "Confirming".
+    private var interval: TimeInterval = 0.3
+    /// Whether `interval` reflects a real measurement yet. Until a second frame
+    /// arrives the rate is genuinely unknown, and assuming a fast stream would
+    /// discard the first hit before the frame that would confirm it ever lands.
+    private var sampled = false
 
-    mutating func reset() { self = Self() }
+    /// Roughly one and a half frames without the selected face, then four.
+    /// Floors keep a fast stream from becoming twitchy; ceilings stop a very
+    /// slow one from holding a stale box forever.
+    private var uncertainAfter: TimeInterval {
+        sampled ? min(max(interval * 1.5, 0.4), 2.0) : 0.75
+    }
+    private var lostAfter: TimeInterval {
+        sampled ? min(max(interval * 3.0, 0.8), 4.0) : 1.5
+    }
+
+    /// Keeps the learned frame interval: it describes the transport, not the
+    /// face, and relearning it from scratch after every reset reintroduces
+    /// exactly the failure above on a slow stream.
+    mutating func reset() {
+        let learned = (interval, sampled)
+        self = Self()
+        (interval, sampled) = learned
+    }
 
     mutating func expire(at now: TimeInterval) {
-        if now - lastSeen >= 0.9 { reset() }
-        else if now - lastSeen >= 0.45, state == .tracking {
+        if now - lastSeen >= lostAfter { reset() }
+        else if now - lastSeen >= uncertainAfter, state == .tracking {
             state = .uncertain
             box = nil
         }
@@ -27,6 +55,12 @@ struct FaceSelection {
 
     mutating func update(_ observations: [FaceBox], at now: TimeInterval) {
         guard now > lastUpdate else { return }
+        // Sample the spacing before expire(), which may reset.
+        if lastUpdate.isFinite {
+            let sample = min(max(now - lastUpdate, 0.02), 2.0)
+            interval += 0.3 * (sample - interval)
+            sampled = true
+        }
         expire(at: now)
         lastUpdate = now
         let valid = observations.filter {
@@ -38,11 +72,17 @@ struct FaceSelection {
         }
         if let previous = candidate {
             let matches = valid.filter { overlap(previous.rect, $0.rect) >= 0.2 }
-            // Ambiguity is not permission to switch to a different person.
             guard matches.count == 1, let match = matches.first else {
                 box = nil
-                if hits >= 3 { state = .uncertain }
-                else { reset() }
+                // Two things used to be conflated here. Several faces overlapping
+                // the selection is real ambiguity, and ambiguity is not permission
+                // to switch to a different person. Simply not seeing the selected
+                // face in one frame is a miss, and a miss must not destroy
+                // progress: expire() above decides when it is genuinely lost,
+                // now in units of missed frames. Discarding partial progress on
+                // any single miss is what kept acquisition permanently at one hit.
+                if matches.count > 1, hits < 3 { reset() }
+                else if hits >= 3 { state = .uncertain }
                 return
             }
             let alpha = 0.65

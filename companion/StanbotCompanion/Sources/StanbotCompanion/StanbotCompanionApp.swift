@@ -35,6 +35,65 @@ struct StanbotCompanionApp: App {
     }
 }
 
+
+/// Drains a serial file descriptor as bytes arrive rather than on a timer.
+///
+/// A polled reader silently loses data. The robot writes each JPEG as a single
+/// burst, so a 21 KB frame lands in about 24 ms, entirely between two 50 ms
+/// polls, and the terminal input buffer is smaller than that: the tail of the
+/// frame is discarded by the kernel before anyone reads it. The decoder then
+/// resyncs and the whole frame is gone. Measured on 2026-09-15, that cost two
+/// thirds of the stream at quality 90 (0.93 of 3.5 frames per second arriving)
+/// while smaller frames mostly survived, which is why it looked like a camera
+/// problem rather than a reader problem.
+///
+/// Reading from a dispatch source removes the window entirely and does not care
+/// how large frames are. It is also the shape a socket transport would want, so
+/// nothing here is specific to USB.
+private final class SerialReader {
+    private let source: DispatchSourceRead
+    private var decoder = FrameDecoder()
+    private var stopped = false
+
+    /// Takes ownership of `fd` and closes it when cancelled.
+    fileprivate init(fd: Int32,
+                     onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+                     onClosed: @escaping @Sendable @MainActor () -> Void) {
+        let queue = DispatchQueue(label: "com.malpern.stanbot.serial", qos: .userInitiated)
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        source.setCancelHandler { Darwin.close(fd) }
+        source.setEventHandler { [weak self] in
+            guard let self, !self.stopped else { return }
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            while !self.stopped {
+                let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+                if count > 0 {
+                    let frames = self.decoder.append(Data(buffer.prefix(count)))
+                    // main.async rather than Task, so frames stay in order.
+                    if !frames.isEmpty {
+                        DispatchQueue.main.async { MainActor.assumeIsolated { onFrames(frames) } }
+                    }
+                } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                    return  // drained for now; the source fires again on more data
+                } else {
+                    self.stopped = true
+                    DispatchQueue.main.async { MainActor.assumeIsolated { onClosed() } }
+                    return
+                }
+            }
+        }
+        source.resume()
+    }
+
+    /// Discards anything buffered mid-frame, without disturbing the connection.
+    func resetDecoder() { stopped ? () : (decoder = FrameDecoder()) }
+
+    func cancel() {
+        stopped = true
+        source.cancel()
+    }
+}
+
 @MainActor
 final class RobotConnection: ObservableObject {
     enum CameraState: Equatable {
@@ -95,7 +154,7 @@ final class RobotConnection: ObservableObject {
     }
     @Published var selectedPort: String?
     private var serialFD: Int32 = -1
-    private var frameDecoder = FrameDecoder()
+    private var reader: SerialReader?
     private var timer: Timer?
     // The camera stream starts by itself on connect and on every automatic
     // reconnect: the feed is the point of the app, so it should not wait for a
@@ -158,6 +217,9 @@ final class RobotConnection: ObservableObject {
             return
         }
         serialFD = fd
+        reader = SerialReader(fd: fd,
+                              onFrames: { [weak self] frames in frames.forEach { self?.analyze($0) } },
+                              onClosed: { [weak self] in self?.disconnected() })
         connection = .connected(selectedPort)
         lastAction = "Connected locally through \(portName). Motion remains locked."
         if wantsCamera { startCamera() }
@@ -172,7 +234,7 @@ final class RobotConnection: ObservableObject {
             return
         }
         generation = UUID()
-        frameDecoder = FrameDecoder()
+        reader?.resetDecoder()
         lastFrameAt = Date()
         cameraState = .waiting
         lastAction = "Waiting for the local StackChan camera stream."
@@ -183,17 +245,19 @@ final class RobotConnection: ObservableObject {
         wantsCamera = false
         _ = send("X\n")
         generation = UUID()
-        frameDecoder = FrameDecoder()
+        reader?.resetDecoder()
         cameraImage = nil
         resetFaces()
         cameraState = .off
     }
 
     private func closeSerial() {
-        if serialFD >= 0 { Darwin.close(serialFD) }
+        // Cancelling closes the descriptor, so drop our copy first: no write can
+        // then race the close, and nothing closes it twice.
         serialFD = -1
+        reader?.cancel()
+        reader = nil
         generation = UUID()
-        frameDecoder = FrameDecoder()
         cameraImage = nil
         resetFaces()
     }
@@ -229,38 +293,21 @@ final class RobotConnection: ObservableObject {
             }
             return
         }
-        var bytes = [UInt8](repeating: 0, count: 16384)
-        // Bound work per UI tick, even for a noisy or malformed serial stream.
-        for _ in 0..<8 {
-            let count = Darwin.read(serialFD, &bytes, bytes.count)
-            if count > 0 {
-                if wantsCamera { receiveCameraBytes(Data(bytes.prefix(count))) }
-            } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-                break
-            } else {
-                disconnected()
-                return
-            }
-        }
+        // Reading happens on the SerialReader's dispatch source, not here: this
+        // timer only ages the face selection and watches for a stalled stream.
         if wantsCamera && Date().timeIntervalSince(lastFrameAt) > 3 {
             cameraImage = nil
             resetFaces()
             cameraState = .waiting
             generation = UUID()
-            frameDecoder = FrameDecoder()
+            reader?.resetDecoder()
             lastFrameAt = Date()
             _ = send("S\n")
         }
     }
 
-    private func receiveCameraBytes(_ bytes: Data) {
-        for frame in frameDecoder.append(bytes) {
-            analyze(frame)
-        }
-    }
-
     private func analyze(_ frame: CameraFrame) {
-        guard !analyzing else { return }
+        guard wantsCamera, !analyzing else { return }
         guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
         if cameraState != .receiving {
@@ -308,7 +355,7 @@ struct FaceBox: Identifiable {
     let confidence: Float
 }
 
-private struct CameraFrame {
+private struct CameraFrame: Sendable {
     let sequence: UInt32
     let jpeg: Data
 }
