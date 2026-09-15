@@ -136,3 +136,58 @@ sops on the Mac. `~/dotfiles/secrets.env` already carries other projects'
 Wi-Fi credentials under a project prefix; follow that. Never commit an SSID
 password, never print one to a log or a transcript, and never echo one back from
 the firmware.
+
+## Wi-Fi transport, as built 2026-09-15
+
+Implemented so the cable can move to the base connector and carry power only.
+Both transports speak the same SBFR packets and newline commands, so the
+companion's decoder and every command are shared and either link works.
+
+- **Credentials live in NVS**, never in this repository, pushed over USB by
+  `companion/provision_wifi.py` which reads them from sops. The firmware never
+  echoes a passphrase, not even in its status line.
+- **Several profiles, tried in order.** Home is a pre-shared key; **Hacker Dojo
+  is WPA2-Enterprise and needs a PEAP identity**, which is a difference in kind,
+  not just in name. The profile order and PEAP setup mirror the KeyPath HID
+  fixture, which already works there. A profile that does not associate within
+  12 seconds rotates to the next, so one image works at both venues.
+- **`W,SCAN` reports what is actually broadcasting.** Use it before trusting an
+  SSID from a note. It found that neither `Alpern-Home` nor `Alpern-Fiber`
+  exists here: the eeros broadcast `Alpern-Home-5G` on 2.4 GHz channels 6 and
+  11, so despite the name that is the network to join.
+- **Modem sleep is disabled.** It is on by default and cost 78-110 ms of round
+  trip on a -38 dBm link, which is invisible for a status poll and ruinous for
+  video. The robot is mains powered, so the trade is free.
+- **mDNS**: the robot answers to `stanbot.local` and advertises `_stanbot._tcp`.
+  Nothing hardcodes an address.
+
+### Two macOS gates that look like an unreachable robot
+
+Both produce the same symptom, a connection that never completes, and neither
+reports anything useful.
+
+**The app must be properly code-signed.** `swift build` leaves a linker ad-hoc
+signature whose identifier is the product name and which does not cover
+`Info.plist`. macOS then cannot attribute the app for permissions: no prompt
+appears, the app never appears under Privacy & Security, and
+`NSLocalNetworkUsageDescription` is ignored. `build-app.sh` now signs the
+assembled bundle with the Developer ID identity and verifies it. Prefer a real
+identity over ad-hoc: an ad-hoc designated requirement is derived from the
+binary, so every rebuild looks like a different app and the permission is asked
+for again.
+
+**`Info.plist` must declare the intent.** `NSLocalNetworkUsageDescription` and
+`NSBonjourServices` (`_stanbot._tcp`) are both required.
+
+**Agent shells on the mini cannot reach LAN peers at all.** This is the known
+Local Network restriction: the gateway answers, every peer fails, and ARP still
+resolves. Verify from the linux box instead, or over Tailscale. It does not
+affect the robot or the app, only what can be checked from a shell here.
+
+## OTA
+
+`ArduinoOTA` is enabled once the network is up, with a passphrase from NVS
+(`STANBOT_OTA_PASSWORD` in sops, generated locally and never displayed). It
+matters most at Hacker Dojo, where an unauthenticated updater on the same
+network could replace the firmware. The partition table already supports this;
+see above.

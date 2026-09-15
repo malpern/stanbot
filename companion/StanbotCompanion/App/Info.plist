@@ -28,5 +28,15 @@
   <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <!-- Shown in the Local Network permission prompt. Without this key macOS
+       will not ask, and the app silently fails to reach the robot. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Stanbot connects to your StackChan robot on this network to show its camera and send display commands. Nothing leaves your network.</string>
+  <!-- The robot advertises itself over Bonjour as _stanbot._tcp; macOS requires
+       the service to be declared here before the app may browse for it. -->
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_stanbot._tcp</string>
+  </array>
 </dict>
 </plist>

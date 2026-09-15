@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import Network
 import SwiftUI
 import Vision
 import Darwin
@@ -94,6 +95,93 @@ private final class SerialReader {
     }
 }
 
+
+/// Carries the same SBFR packets and newline commands as the serial link, over
+/// TCP, so the robot can sit on the far side of the room with only a power
+/// cable. The firmware speaks one protocol on both transports, so the decoder
+/// and every command are shared.
+///
+/// macOS gates this behind the Local Network permission. The app must declare
+/// NSLocalNetworkUsageDescription and NSBonjourServices or the prompt never
+/// appears and the connection simply never completes.
+// @unchecked Sendable is a claim, so here is the invariant behind it: `decoder`
+// and `stopped` are touched only from the single serial queue the connection
+// runs on, and every hand-off to the app hops to the main actor explicitly.
+private final class NetworkReader: @unchecked Sendable {
+    private let connection: NWConnection
+    private var decoder = FrameDecoder()
+    private var stopped = false
+
+    fileprivate init(host: String, port: UInt16,
+                     onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+                     onState: @escaping @Sendable @MainActor (Bool, String) -> Void) {
+        let options = NWProtocolTCP.Options()
+        options.noDelay = true                 // frames are latency sensitive
+        options.connectionTimeout = 5
+        connection = NWConnection(host: NWEndpoint.Host(host),
+                                  port: NWEndpoint.Port(rawValue: port)!,
+                                  using: NWParameters(tls: nil, tcp: options))
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                DispatchQueue.main.async { MainActor.assumeIsolated { onState(true, "connected") } }
+                self?.receive(onFrames: onFrames, onState: onState)
+            case .waiting(let error):
+                // Local Network denial surfaces here rather than as a failure,
+                // so say so plainly instead of looking like an unreachable robot.
+                DispatchQueue.main.async { MainActor.assumeIsolated { onState(false, Self.describe(error)) } }
+            case .failed(let error):
+                DispatchQueue.main.async { MainActor.assumeIsolated { onState(false, Self.describe(error)) } }
+            case .cancelled:
+                DispatchQueue.main.async { MainActor.assumeIsolated { onState(false, "disconnected") } }
+            default:
+                break
+            }
+        }
+        connection.start(queue: DispatchQueue(label: "com.malpern.stanbot.network", qos: .userInitiated))
+    }
+
+    private static func describe(_ error: NWError) -> String {
+        if case .posix(let code) = error, code == .EPERM || code == .EHOSTUNREACH {
+            return "blocked; allow Stanbot under Local Network"
+        }
+        return "\(error)"
+    }
+
+    private func receive(onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+                         onState: @escaping @Sendable @MainActor (Bool, String) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self, !self.stopped else { return }
+            if let data, !data.isEmpty {
+                let frames = self.decoder.append(data)
+                if !frames.isEmpty {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { onFrames(frames) } }
+                }
+            }
+            if isComplete || error != nil {
+                self.stopped = true
+                DispatchQueue.main.async { MainActor.assumeIsolated { onState(false, "disconnected") } }
+                return
+            }
+            self.receive(onFrames: onFrames, onState: onState)
+        }
+    }
+
+    /// Fire and forget: a send failure arrives through the state handler, which
+    /// is the same path an unplugged cable takes on the serial side.
+    fileprivate func send(_ text: String) {
+        guard !stopped else { return }
+        connection.send(content: Data(text.utf8), completion: .idempotent)
+    }
+
+    fileprivate func resetDecoder() { if !stopped { decoder = FrameDecoder() } }
+
+    fileprivate func cancel() {
+        stopped = true
+        connection.cancel()
+    }
+}
+
 @MainActor
 final class RobotConnection: ObservableObject {
     enum CameraState: Equatable {
@@ -112,12 +200,14 @@ final class RobotConnection: ObservableObject {
         }
     }
     enum ConnectionState: Equatable {
+        case connecting
         case disconnected
         case connected(String)
         case unavailable
 
         var title: String {
             switch self {
+            case .connecting: "Connecting over Wi-Fi"
             case .disconnected: "Not connected"
             case .connected: "USB control connected"
             case .unavailable: "StackChan not found"
@@ -127,6 +217,7 @@ final class RobotConnection: ObservableObject {
         var tint: Color {
             switch self {
             case .connected: .green
+            case .connecting: .orange
             case .disconnected: .secondary
             case .unavailable: .orange
             }
@@ -155,12 +246,19 @@ final class RobotConnection: ObservableObject {
     @Published var selectedPort: String?
     private var serialFD: Int32 = -1
     private var reader: SerialReader?
+    private var network: NetworkReader?
+    /// Where the robot is when there is no USB cable. Resolved by mDNS, so
+    /// nothing hardcodes an address that DHCP can change.
+    private let networkHost = "stanbot.local"
+    private let networkPort: UInt16 = 3333
     private var timer: Timer?
     // The camera stream starts by itself on connect and on every automatic
     // reconnect: the feed is the point of the app, so it should not wait for a
     // button. An explicit Stop Camera clears this and stays stopped until the
     // user asks for the feed again.
     private var wantsCamera = true
+    /// True while the Wi-Fi link is the active transport rather than USB.
+    private var usingNetwork = false
     private var generation = UUID()
     private var analyzing = false
     private var lastFrameAt = Date.distantPast
@@ -192,8 +290,10 @@ final class RobotConnection: ObservableObject {
         closeSerial()
         cameraState = wantsCamera ? .waiting : .off
         guard let selectedPort else {
-            connection = .unavailable
-            lastAction = "Connect StackChan by USB-C, then reconnect."
+            // No cable: the robot may be on Wi-Fi with the cable in its base
+            // carrying power only, which is the normal arrangement once
+            // provisioned. Try the network rather than declaring failure.
+            connectNetwork()
             return
         }
         let fd = Darwin.open(selectedPort, O_RDWR | O_NOCTTY | O_NONBLOCK)
@@ -217,12 +317,37 @@ final class RobotConnection: ObservableObject {
             return
         }
         serialFD = fd
+        usingNetwork = false
         reader = SerialReader(fd: fd,
                               onFrames: { [weak self] frames in frames.forEach { self?.analyze($0) } },
                               onClosed: { [weak self] in self?.disconnected() })
         connection = .connected(selectedPort)
         lastAction = "Connected locally through \(portName). Motion remains locked."
         if wantsCamera { startCamera() }
+    }
+
+    private func connectNetwork() {
+        usingNetwork = true
+        connection = .connecting
+        lastAction = "Looking for \(networkHost) on the network."
+        network = NetworkReader(
+            host: networkHost, port: networkPort,
+            onFrames: { [weak self] frames in frames.forEach { self?.analyze($0) } },
+            onState: { [weak self] up, detail in self?.networkStateChanged(up, detail) })
+    }
+
+    private func networkStateChanged(_ up: Bool, _ detail: String) {
+        guard usingNetwork else { return }
+        if up {
+            connection = .connected(networkHost)
+            lastAction = "Connected to \(networkHost) over Wi-Fi. Motion remains locked."
+            if wantsCamera { startCamera() }
+        } else {
+            connection = .unavailable
+            lastAction = "\(networkHost): \(detail)"
+            cameraState = wantsCamera ? .waiting : .off
+            nextReconnect = Date().addingTimeInterval(3)
+        }
     }
 
     func startCamera() {
@@ -234,7 +359,7 @@ final class RobotConnection: ObservableObject {
             return
         }
         generation = UUID()
-        reader?.resetDecoder()
+        reader?.resetDecoder(); network?.resetDecoder()
         lastFrameAt = Date()
         cameraState = .waiting
         lastAction = "Waiting for the local StackChan camera stream."
@@ -245,7 +370,7 @@ final class RobotConnection: ObservableObject {
         wantsCamera = false
         _ = send("X\n")
         generation = UUID()
-        reader?.resetDecoder()
+        reader?.resetDecoder(); network?.resetDecoder()
         cameraImage = nil
         resetFaces()
         cameraState = .off
@@ -257,6 +382,8 @@ final class RobotConnection: ObservableObject {
         serialFD = -1
         reader?.cancel()
         reader = nil
+        network?.cancel()
+        network = nil
         generation = UUID()
         cameraImage = nil
         resetFaces()
@@ -271,6 +398,11 @@ final class RobotConnection: ObservableObject {
     }
 
     private func send(_ command: String) -> Bool {
+        if usingNetwork {
+            guard let network else { return false }
+            network.send(command)
+            return true   // failures surface through the connection state
+        }
         guard serialFD >= 0 else { return false }
         let bytes = Array(command.utf8)
         let count = bytes.withUnsafeBytes { Darwin.write(serialFD, $0.baseAddress, $0.count) }
@@ -284,11 +416,14 @@ final class RobotConnection: ObservableObject {
     func tick() {
         faceSelection.expire(at: ProcessInfo.processInfo.systemUptime)
         publishFaces()
-        guard serialFD >= 0 else {
+        guard serialFD >= 0 || usingNetwork else {
             // Reopen only the selected device; never switch to another USB device.
             if Date() >= nextReconnect, let selectedPort,
                FileManager.default.fileExists(atPath: selectedPort) {
                 nextReconnect = Date().addingTimeInterval(2)
+                connect()
+            } else if Date() >= nextReconnect {
+                nextReconnect = Date().addingTimeInterval(3)
                 connect()
             }
             return
@@ -300,7 +435,7 @@ final class RobotConnection: ObservableObject {
             resetFaces()
             cameraState = .waiting
             generation = UUID()
-            reader?.resetDecoder()
+            reader?.resetDecoder(); network?.resetDecoder()
             lastFrameAt = Date()
             _ = send("S\n")
         }

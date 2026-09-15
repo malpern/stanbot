@@ -21,7 +21,12 @@
 #include <M5StackChan.h>
 #include <drivers/FTServo_Arduino/src/SCSCL.h>
 #include <driver/i2c_master.h>
+#include <WiFi.h>
+#include <ESPmDNS.h>
+#include <ArduinoOTA.h>
+#include <Preferences.h>
 #include "downsample.h"
+#include "boot_screen.h"
 
 namespace {
 
@@ -71,12 +76,342 @@ struct PipelineStats {
   uint64_t captureWaitUs = 0, encodeUs = 0, enqueueUs = 0, jpegBytes = 0;
 } stats;
 StanbotEyes eyes;
+stanbot::BootScreen bootScreen;
+stanbot::DojoSplash dojoSplash;
+uint32_t bootStartedMs = 0;
+bool splashDone = false;
+// The boot screen owns the display until the network question is settled, then
+// hands over to the eyes for good. It never comes back: a mid-session reconnect
+// should not interrupt the face.
+bool bootScreenActive = true;
 M5Canvas eyeFrame(&M5.Display);
 bool eyeFrameReady = false;
-char commandLine[48]{};
+char commandLine[160]{};
 size_t commandLength = 0;
 bool discardCommand = false;
 uint32_t lastCommandByteMs = 0;
+
+/* ---------------------------------------------------------------------------
+ * Wi-Fi transport
+ *
+ * The robot's own USB-C port is the only one on this unit that carries data,
+ * and it is attached to the part that turns. Wi-Fi exists so the cable can move
+ * to the stationary base connector for power alone. See docs/transport.md.
+ *
+ * Several networks are stored and tried in order, because the robot has to work
+ * at home and at Hacker Dojo. Those differ in kind, not just in name: home is a
+ * pre-shared key, Hacker Dojo is WPA2-Enterprise and needs a PEAP identity. The
+ * same distinction is already handled in the KeyPath HID fixture, whose profile
+ * order and PEAP setup this mirrors.
+ *
+ * Credentials live in NVS, never in this repository. They arrive over USB from
+ * `companion/provision_wifi.py`, which reads them from sops. Nothing here ever
+ * prints a passphrase back, not even in a status line.
+ *
+ * The TCP stream carries exactly the same SBFR packets and newline commands as
+ * USB, so the companion's decoder is unchanged and either transport works.
+ * ------------------------------------------------------------------------ */
+constexpr uint16_t kStreamPort = 3333;
+constexpr char kHostname[] = "stanbot";
+constexpr int kMaxProfiles = 4;
+// The radio is 2.4 GHz only, so a 5 GHz SSID can never associate however
+// correct its passphrase. Rotating past a profile that cannot work is the
+// point of the attempt timeout below.
+constexpr uint32_t kJoinAttemptMs = 12000;
+
+Preferences storage;
+WiFiServer streamServer(kStreamPort);
+WiFiClient streamClient;
+std::atomic<bool> wifiJoinRequested{false};
+std::atomic<bool> wifiForgetRequested{false};
+std::atomic<bool> wifiStatusRequested{false};
+std::atomic<bool> wifiScanRequested{false};
+// Read on the camera task, drawn on the main task: one bool, so a stale frame
+// costs nothing worse than the badge lingering for a fraction of a second.
+std::atomic<bool> wifiLinkUp{false};
+std::atomic<bool> otaActive{false};
+bool wifiStarted = false;       // a join has been attempted this boot
+bool servicesStarted = false;   // mDNS, OTA and the listener are up
+int profileCount = 0;
+int profileIndex = 0;
+uint32_t attemptStartedMs = 0;
+char joinedSsid[33]{};
+// Emotion changes arrive from either transport but only the main task owns the
+// display, so they are handed over rather than applied where they are parsed.
+std::atomic<int> pendingEmotion{-1};
+
+String profileKey(const char* prefix, int index) { return String(prefix) + String(index); }
+
+int storedProfileCount() {
+  storage.begin("stanbot", true);
+  const int count = storage.getInt("n", 0);
+  storage.end();
+  return count < 0 ? 0 : (count > kMaxProfiles ? kMaxProfiles : count);
+}
+
+void storeProfileField(const char* prefix, int index, const char* value) {
+  if (index < 0 || index >= kMaxProfiles) return;
+  storage.begin("stanbot", false);
+  storage.putString(profileKey(prefix, index).c_str(), value);
+  storage.end();
+}
+
+void storeProfileCount(int count) {
+  storage.begin("stanbot", false);
+  storage.putInt("n", count < 0 ? 0 : (count > kMaxProfiles ? kMaxProfiles : count));
+  storage.end();
+}
+
+void storeOtaPassword(const char* value) {
+  storage.begin("stanbot", false);
+  storage.putString("ota", value);
+  storage.end();
+}
+
+void forgetCredentials() {
+  storage.begin("stanbot", false);
+  storage.clear();
+  storage.end();
+  WiFi.disconnect(true, true);
+  wifiStarted = false;
+  servicesStarted = false;
+  profileCount = 0;
+  joinedSsid[0] = '\0';
+}
+
+// Non-blocking: WiFi.begin() returns immediately and the camera task watches for
+// the association. A join must never stall the eyes or the servo power cutoff.
+bool attemptProfile(int index) {
+  storage.begin("stanbot", true);
+  String ssid = storage.getString(profileKey("s", index).c_str(), "");
+  String user = storage.getString(profileKey("u", index).c_str(), "");
+  String pass = storage.getString(profileKey("p", index).c_str(), "");
+  storage.end();
+  if (ssid.isEmpty()) return false;
+  WiFi.disconnect(false, false);
+  WiFi.persistent(false);       // NVS above is the single source of truth
+  WiFi.mode(WIFI_STA);
+  // Modem sleep is the default and costs about 100ms of latency per round trip,
+  // measured here as 78-109ms ping against a -38dBm link. That is invisible for
+  // a status poll and ruinous for a video stream, and the robot is mains
+  // powered through the base connector, so trade the power for the latency.
+  WiFi.setSleep(false);
+  WiFi.setHostname(kHostname);
+  if (user.isEmpty()) {
+    WiFi.begin(ssid.c_str(), pass.c_str());
+  } else {
+    // WPA2-Enterprise with PEAP: identity and username are both the account,
+    // matching what already works at Hacker Dojo for the HID fixture.
+    WiFi.begin(ssid.c_str(), WPA2_AUTH_PEAP, user.c_str(), user.c_str(), pass.c_str());
+  }
+  snprintf(joinedSsid, sizeof(joinedSsid), "%s", ssid.c_str());
+  attemptStartedMs = millis();
+  wifiStarted = true;
+  Serial.printf("SBWF {\"joining\":\"%s\",\"profile\":%d,\"enterprise\":%s}\n",
+                ssid.c_str(), index, user.isEmpty() ? "false" : "true");
+  return true;
+}
+
+void beginWifi() {
+  profileCount = storedProfileCount();
+  if (profileCount == 0) { Serial.println("SBWF {\"error\":\"no_profiles\"}"); return; }
+  profileIndex = 0;
+  servicesStarted = false;
+  if (!attemptProfile(profileIndex)) Serial.println("SBWF {\"error\":\"profile_empty\"}");
+}
+
+void reportWifi() {
+  const int count = storedProfileCount();
+  storage.begin("stanbot", true);
+  const bool hasOta = storage.isKey("ota");
+  // Deliberately reports SSIDs and whether a passphrase exists, never its value.
+  String names;
+  for (int i = 0; i < count; ++i) {
+    String ssid = storage.getString(profileKey("s", i).c_str(), "");
+    const bool enterprise = !storage.getString(profileKey("u", i).c_str(), "").isEmpty();
+    if (i) names += ",";
+    names += "{\"ssid\":\"" + ssid + "\",\"enterprise\":" + (enterprise ? "true" : "false") +
+             ",\"passphrase_stored\":" + (storage.isKey(profileKey("p", i).c_str()) ? "true" : "false") + "}";
+  }
+  storage.end();
+  Serial.printf("SBWF {\"profiles\":[%s],\"ota_passphrase_stored\":%s,\"joining\":%s,"
+                "\"connected\":%s,\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,"
+                "\"host\":\"%s.local\",\"port\":%u,\"client\":%s}\n",
+                names.c_str(), hasOta ? "true" : "false", wifiStarted ? "true" : "false",
+                WiFi.status() == WL_CONNECTED ? "true" : "false",
+                WiFi.status() == WL_CONNECTED ? joinedSsid : "",
+                WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "",
+                WiFi.RSSI(), kHostname, kStreamPort,
+                streamClient && streamClient.connected() ? "true" : "false");
+}
+
+// Reports what is actually broadcasting, so a profile list is checked against
+// the air rather than against a possibly stale note. Also the quickest way to
+// confirm a venue's network is present before a demo. 2.4 GHz only: anything
+// 5 GHz simply will not appear, which is itself the answer to "why won't it
+// join". Blocking, so it runs on the camera task between frames.
+void scanWifi() {
+  const bool wasConnected = WiFi.status() == WL_CONNECTED;
+  if (!wifiStarted) WiFi.mode(WIFI_STA);
+  const int found = WiFi.scanNetworks(false, true);
+  if (found <= 0) { Serial.printf("SBWF {\"scan\":[],\"count\":%d}\n", found); return; }
+  Serial.print("SBWF {\"scan\":[");
+  for (int i = 0; i < found && i < 24; ++i) {
+    const int mode = WiFi.encryptionType(i);
+    Serial.printf("%s{\"ssid\":\"%s\",\"rssi\":%d,\"channel\":%d,\"enterprise\":%s,\"open\":%s}",
+                  i ? "," : "", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i),
+                  mode == WIFI_AUTH_WPA2_ENTERPRISE ? "true" : "false",
+                  mode == WIFI_AUTH_OPEN ? "true" : "false");
+  }
+  Serial.printf("],\"count\":%d,\"note\":\"2.4GHz only\"}\n", found);
+  WiFi.scanDelete();
+  if (wasConnected && WiFi.status() != WL_CONNECTED) attemptProfile(profileIndex);
+}
+
+void startNetworkServices() {
+  storage.begin("stanbot", true);
+  String otaPass = storage.getString("ota", "");
+  storage.end();
+  if (MDNS.begin(kHostname)) MDNS.addService("stanbot", "tcp", kStreamPort);
+  ArduinoOTA.setHostname(kHostname);
+  // An unauthenticated updater on a shared network could replace this firmware,
+  // which matters more at Hacker Dojo than at home, so the passphrase is set
+  // whenever one is stored.
+  if (!otaPass.isEmpty()) ArduinoOTA.setPassword(otaPass.c_str());
+  ArduinoOTA.onStart([]() {
+    // Free the link and the CPU for the update, and stop driving anything.
+    otaActive.store(true);
+    streamEnabled.store(false);
+    if (streamClient) streamClient.stop();
+  });
+  ArduinoOTA.onEnd([]() { otaActive.store(false); });
+  ArduinoOTA.onError([](ota_error_t) { otaActive.store(false); });
+  ArduinoOTA.begin();
+  streamServer.begin();
+  streamServer.setNoDelay(true);
+  servicesStarted = true;
+}
+
+// Called from the camera task, which owns frame output, so accept, read and
+// write all happen on one task rather than racing across two.
+void serviceNetwork() {
+  if (!wifiStarted || otaActive.load()) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    // Rotate rather than retry: the next venue's network is a different profile,
+    // and a 5 GHz or out-of-range SSID would otherwise block the list forever.
+    if (profileCount > 1 && millis() - attemptStartedMs > kJoinAttemptMs) {
+      profileIndex = (profileIndex + 1) % profileCount;
+      attemptProfile(profileIndex);
+    }
+    return;
+  }
+  if (!servicesStarted) {
+    startNetworkServices();
+    Serial.printf("SBWF {\"connected\":true,\"ssid\":\"%s\",\"ip\":\"%s\",\"host\":\"%s.local\",\"port\":%u}\n",
+                  joinedSsid, WiFi.localIP().toString().c_str(), kHostname, kStreamPort);
+  }
+  if (!streamClient || !streamClient.connected()) {
+    WiFiClient candidate = streamServer.available();
+    if (candidate) {
+      if (streamClient) streamClient.stop();
+      streamClient = candidate;
+      streamClient.setNoDelay(true);
+      // A new viewer gets a clean stream rather than the tail of an old one.
+      streamEnabled.store(false);
+    }
+  }
+}
+
+// Frame bytes go to the network viewer when there is one, otherwise to USB.
+bool transportWrite(const uint8_t* bytes, size_t length) {
+  const uint32_t deadline = millis() + 1500;
+  size_t offset = 0;
+  while (offset < length && millis() < deadline) {
+    const int written = streamClient.write(bytes + offset, length - offset);
+    if (written <= 0) { delay(1); continue; }
+    offset += static_cast<size_t>(written);
+  }
+  return offset == length;
+}
+
+// Shared by the USB parser (main task) and the TCP parser (camera task).
+// Handlers may only set atomics: nothing here touches the display or the
+// servo bus directly, because the two callers run on different tasks.
+void handleCommand(const char* line) {
+  if (strncmp(line, "W,", 2) == 0) {
+    // Provisioning. Passphrases are stored and never echoed anywhere.
+    // W,S,<i>,<ssid>  W,U,<i>,<identity>  W,P,<i>,<passphrase>  W,N,<count>
+    const char* body = line + 2;
+    if ((body[0] == 'S' || body[0] == 'U' || body[0] == 'P') && body[1] == ',') {
+      const char* rest = body + 2;
+      const char* comma = strchr(rest, ',');
+      if (!comma) return;
+      const int index = atoi(rest);
+      const char* field = body[0] == 'S' ? "s" : body[0] == 'U' ? "u" : "p";
+      storeProfileField(field, index, comma + 1);
+      Serial.printf("SBWF {\"stored\":\"%s\",\"profile\":%d}\n",
+                    body[0] == 'S' ? "ssid" : body[0] == 'U' ? "identity" : "passphrase", index);
+    }
+    else if (strncmp(body, "N,", 2) == 0) { storeProfileCount(atoi(body + 2)); Serial.printf("SBWF {\"profiles\":%d}\n", atoi(body + 2)); }
+    else if (strncmp(body, "O,", 2) == 0) { storeOtaPassword(body + 2); Serial.println("SBWF {\"stored\":\"ota_passphrase\"}"); }
+    else if (strcmp(body, "GO") == 0) wifiJoinRequested.store(true);
+    else if (strcmp(body, "X") == 0) wifiForgetRequested.store(true);
+    else if (strcmp(body, "?") == 0) wifiStatusRequested.store(true);
+    else if (strcmp(body, "SCAN") == 0) wifiScanRequested.store(true);
+    return;
+  }
+  if (strcmp(line, "S") == 0) streamEnabled.store(true);
+  else if (strcmp(line, "X") == 0) streamEnabled.store(false);
+  else if (strcmp(line, "P") == 0) statsRequested.store(true);
+  else if (strcmp(line, "Q") == 0) servoProbeRequested.store(true);
+  else if (strcmp(line, "C,POWERTEST") == 0) powerTestRequested.store(true);
+  else if (strcmp(line, "C,POWEROFF") == 0) powerOffRequested.store(true);
+  else if (strcmp(line, "C,YAWTEST") == 0) yawTestRequested.store(true);
+  else if (strcmp(line, "C,YAWBACK") == 0) yawBackRequested.store(true);
+  else if (strcmp(line, "C,YAWSESSION") == 0) yawSessionRequested.store(true);
+  else if (strcmp(line, "C,YAWRAMP") == 0) yawRampRequested.store(true);
+  else if (strcmp(line, "C,YAWSWEEP") == 0) yawSweepRequested.store(true);
+  else if (strcmp(line, "C,CENTER") == 0) yawCenterRequested.store(true);
+  else if (strcmp(line, "C,PITCHNUDGE") == 0) pitchNudgeRequested.store(true);
+  else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
+  else if (strcmp(line, "Z") == 0) { resetStats.store(true); maxEyeGapMs.store(0); }
+  else if (strcmp(line, "R,750") == 0) frameIntervalMs.store(750);
+  else if (strcmp(line, "R,333") == 0) frameIntervalMs.store(333);
+  else if (strcmp(line, "R,200") == 0) frameIntervalMs.store(200);
+  else if (strcmp(line, "R,100") == 0) frameIntervalMs.store(100);
+  else if (strcmp(line, "M,640") == 0) imageMode.store(0);
+  else if (strcmp(line, "M,320") == 0) imageMode.store(1);
+  else if (strcmp(line, "M,raw320") == 0) imageMode.store(2);
+  else if (strncmp(line, "J,", 2) == 0) {
+    const long value = strtol(line + 2, nullptr, 10);
+    if (value >= 10 && value <= 95) jpegQuality.store(static_cast<uint8_t>(value));
+  }
+  else if (strncmp(line, "E,", 2) == 0) {
+    StanbotEmotion emotion;
+    if (StanbotEyes::emotionFromName(line + 2, emotion)) pendingEmotion.store(static_cast<int>(emotion));
+  }
+}
+
+// Reads newline commands arriving from the network viewer. Its own buffer, so
+// a partial line here cannot interleave with one arriving over USB.
+void pollNetworkCommands() {
+  static char line[160]{};
+  static size_t length = 0;
+  static bool discard = false;
+  if (!streamClient || !streamClient.connected()) { length = 0; discard = false; return; }
+  for (unsigned i = 0; i < 256 && streamClient.available(); ++i) {
+    const char c = static_cast<char>(streamClient.read());
+    if (c == '\n') {
+      line[length] = '\0';
+      if (!discard) handleCommand(line);
+      length = 0;
+      discard = false;
+    } else if (c != '\r' && !discard) {
+      if (length + 1 < sizeof(line)) line[length++] = c;
+      else discard = true;
+    }
+  }
+}
 
 void pollCommands(uint32_t now) {
   if (commandLength && now - lastCommandByteMs > 1000) {
@@ -89,42 +424,7 @@ void pollCommands(uint32_t now) {
     lastCommandByteMs = now;
     if (c == '\n') {
       commandLine[commandLength] = '\0';
-      if (!discardCommand) {
-        if (strcmp(commandLine, "S") == 0) streamEnabled.store(true);
-        else if (strcmp(commandLine, "X") == 0) streamEnabled.store(false);
-        else if (strcmp(commandLine, "P") == 0) statsRequested.store(true);
-        else if (strcmp(commandLine, "Q") == 0) servoProbeRequested.store(true);
-        else if (strcmp(commandLine, "C,POWERTEST") == 0) powerTestRequested.store(true);
-        else if (strcmp(commandLine, "C,POWEROFF") == 0) powerOffRequested.store(true);
-        else if (strcmp(commandLine, "C,YAWTEST") == 0) yawTestRequested.store(true);
-        else if (strcmp(commandLine, "C,YAWBACK") == 0) yawBackRequested.store(true);
-        else if (strcmp(commandLine, "C,YAWSESSION") == 0) yawSessionRequested.store(true);
-        else if (strcmp(commandLine, "C,YAWRAMP") == 0) yawRampRequested.store(true);
-        else if (strcmp(commandLine, "C,YAWSWEEP") == 0) yawSweepRequested.store(true);
-        else if (strcmp(commandLine, "C,CENTER") == 0) yawCenterRequested.store(true);
-        else if (strcmp(commandLine, "C,PITCHNUDGE") == 0) pitchNudgeRequested.store(true);
-        else if (strcmp(commandLine, "C,REBOOT") == 0) rebootRequested.store(true);
-        else if (strcmp(commandLine, "Z") == 0) {
-          resetStats.store(true);
-          maxEyeGapMs.store(0);
-        }
-        else if (strcmp(commandLine, "R,750") == 0) frameIntervalMs.store(750);
-        else if (strcmp(commandLine, "R,333") == 0) frameIntervalMs.store(333);
-        else if (strcmp(commandLine, "R,200") == 0) frameIntervalMs.store(200);
-        else if (strcmp(commandLine, "R,100") == 0) frameIntervalMs.store(100);
-        else if (strcmp(commandLine, "M,640") == 0) imageMode.store(0);
-        else if (strcmp(commandLine, "M,320") == 0) imageMode.store(1);
-        else if (strcmp(commandLine, "M,raw320") == 0) imageMode.store(2);
-        else if (strncmp(commandLine, "J,", 2) == 0) {
-          // Diagnostic sweep of the encoder quality, bounded to sane values.
-          const long value = strtol(commandLine + 2, nullptr, 10);
-          if (value >= 10 && value <= 95) jpegQuality.store(static_cast<uint8_t>(value));
-        }
-        else if (strncmp(commandLine, "E,", 2) == 0) {
-          StanbotEmotion emotion;
-          if (StanbotEyes::emotionFromName(commandLine + 2, emotion)) eyes.setEmotion(emotion);
-        }
-      }
+      if (!discardCommand) handleCommand(commandLine);
       commandLength = 0;
       discardCommand = false;
     } else if (c != '\r' && !discardCommand) {
@@ -134,6 +434,7 @@ void pollCommands(uint32_t now) {
   }
 }
 
+
 void putUInt32LE(uint8_t* bytes, uint32_t value) {
   bytes[0] = static_cast<uint8_t>(value & 0xff);
   bytes[1] = static_cast<uint8_t>((value >> 8) & 0xff);
@@ -142,6 +443,7 @@ void putUInt32LE(uint8_t* bytes, uint32_t value) {
 }
 
 bool writeFully(const uint8_t* bytes, size_t length) {
+  if (streamClient && streamClient.connected()) return transportWrite(bytes, length);
   const uint32_t deadline = millis() + 1500;
   size_t offset = 0;
   while (offset < length && millis() < deadline) {
@@ -908,6 +1210,15 @@ void cameraTask(void*) {
   Serial.println("CAMERA_STREAM_READY protocol=SBFR/jpeg/local-only emotions=18 motion=disabled");
   stats.startedMs = millis();
   for (;;) {
+    // The camera task owns frame output, so it also owns accepting the viewer,
+    // reading its commands and writing to it: one task, no cross-task socket use.
+    wifiLinkUp.store(WiFi.status() == WL_CONNECTED);
+    serviceNetwork();
+    pollNetworkCommands();
+    if (wifiJoinRequested.exchange(false)) beginWifi();
+    if (wifiForgetRequested.exchange(false)) { forgetCredentials(); Serial.println("SBWF {\"forgotten\":true}"); }
+    if (wifiStatusRequested.exchange(false)) reportWifi();
+    if (wifiScanRequested.exchange(false)) scanWifi();
     // Only the camera task writes USB, and diagnostics appear between packets.
     if (powerOffRequested.exchange(false)) testServoDisable();
     if (yawTestRequested.exchange(false)) testServoPower(true);
@@ -969,7 +1280,12 @@ void setup() {
   eyeFrame.setColorDepth(16);
   eyeFrameReady = eyeFrame.createSprite(M5.Display.width(), M5.Display.height());
   eyes.begin(millis() - 34);
-  if (eyeFrameReady && eyes.update(eyeFrame, millis())) eyeFrame.pushSprite(0, 0);
+  // One font load for the whole session: the sprite holds a single font, and
+  // swapping per frame would thrash. Fixed words are pre-rendered instead.
+  if (eyeFrameReady) eyeFrame.loadFont(stanbot::kMontserrat12);
+  bootStartedMs = millis();
+  bootScreen.begin(bootStartedMs);
+  if (eyeFrameReady) { dojoSplash.render(eyeFrame, 0); eyeFrame.pushSprite(0, 0); }
   // Give the video driver sole ownership of the internal SCCB/I2C bus.
   M5.In_I2C.release();
   Serial.begin(921600);
@@ -980,16 +1296,79 @@ void setup() {
   esp_log_level_set("*", ESP_LOG_NONE);
   esp_rom_install_channel_putc(1, nullptr);
   esp_rom_install_channel_putc(2, nullptr);
+  // Join automatically when provisioned, so the robot needs no USB command to
+  // come up on the network after a power cycle at the base connector.
+  if (storedProfileCount() > 0) beginWifi();
   if (xTaskCreatePinnedToCore(cameraTask, "camera", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
     Serial.println("CAMERA_TASK_FAILED");
   }
 }
 
+
+// Runs until the network question is answered, then gives the display to the
+// eyes. Held briefly on the final state so the address is readable, and capped
+// so a missing or unreachable network can never leave the robot faceless.
+void updateBootScreen(uint32_t now) {
+  // The Hacker Dojo opening runs first and to completion: it is the same
+  // sequence the HID fixture shows, and the two should look like one family.
+  if (!splashDone) {
+    if (eyeFrameReady) {
+      splashDone = dojoSplash.render(eyeFrame, now - bootStartedMs);
+      eyeFrame.pushSprite(0, 0);
+      lastEyeMs = millis();
+    } else {
+      splashDone = now - bootStartedMs >= stanbot::kSplashTotalMs;
+    }
+    // The join runs behind the splash, so the network is often already up by
+    // the time the loader appears; that is the point of starting it in setup().
+    bootScreen.begin(now);
+    delay(5);
+    return;
+  }
+  constexpr uint32_t kSettleMs = 1400;   // minimum time on the final state
+  constexpr uint32_t kGiveUpMs = 45000;  // hand over regardless after this
+  char detail[48];
+  const bool provisioned = profileCount > 0 || storedProfileCount() > 0;
+  if (!provisioned) {
+    bootScreen.setPhase(stanbot::BootPhase::LocalOnly, "no Wi-Fi profiles stored", now);
+  } else if (WiFi.status() == WL_CONNECTED) {
+    snprintf(detail, sizeof(detail), "%s  %s", joinedSsid, WiFi.localIP().toString().c_str());
+    bootScreen.setPhase(stanbot::BootPhase::Connected, detail, now);
+  } else if (bootScreen.ageMs(now) > kGiveUpMs) {
+    bootScreen.setPhase(stanbot::BootPhase::Failed, "USB still available", now);
+  } else if (bootScreen.ageMs(now) > 900) {
+    snprintf(detail, sizeof(detail), "%s", joinedSsid[0] ? joinedSsid : "looking for a network");
+    bootScreen.setPhase(stanbot::BootPhase::Joining, detail, now);
+  }
+  if (eyeFrameReady) {
+    bootScreen.render(eyeFrame, now);
+    eyeFrame.pushSprite(0, 0);
+    lastEyeMs = millis();
+  }
+  const auto phase = bootScreen.phase();
+  const bool settled = phase == stanbot::BootPhase::Connected ||
+                       phase == stanbot::BootPhase::LocalOnly ||
+                       phase == stanbot::BootPhase::Failed;
+  if (settled && bootScreen.phaseAgeMs(now) > kSettleMs) {
+    bootScreenActive = false;
+    eyes.begin(millis() - 34);   // start the face cleanly rather than mid-blink
+  }
+  delay(5);
+}
+
 void loop() {
   const uint32_t now = millis();
   pollCommands(now);
+  // Cheap when idle; blocks for the duration of an actual update, during which
+  // the eyes stop. The camera task stands down via the onStart handler.
+  if (servicesStarted) ArduinoOTA.handle();
+  const int emotion = pendingEmotion.exchange(-1);
+  if (emotion >= 0) eyes.setEmotion(static_cast<StanbotEmotion>(emotion));
+  if (bootScreenActive) { updateBootScreen(now); return; }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {
+      // Drawn after the face and before the push, so it costs no extra frame.
+      if (!wifiLinkUp.load()) stanbot::drawNoNetworkBadge(eyeFrame);
       eyeFrame.pushSprite(0, 0);
       const uint32_t presentedMs = millis();
       if (lastEyeMs) {
