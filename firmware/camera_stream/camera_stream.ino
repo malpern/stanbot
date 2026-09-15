@@ -21,6 +21,7 @@
 #include <M5StackChan.h>
 #include <drivers/FTServo_Arduino/src/SCSCL.h>
 #include <driver/i2c_master.h>
+#include "downsample.h"
 
 namespace {
 
@@ -32,7 +33,12 @@ constexpr int kHref = 38;
 constexpr int kPclk = 45;
 constexpr int kExternalXclk = -1;  // Fixed external 20 MHz clock.
 constexpr int kDataPins[] = {39, 40, 41, 42, 15, 16, 48, 47};
-constexpr uint8_t kJpegQuality = 35;
+// Chosen by measurement, not taste: see docs/camera-performance.md. At QVGA
+// every value from 50 to 90 held the same 3.50 fps, because the rate is capped
+// by sensor capture rather than by encoding or the USB link, which sits near
+// 8% utilised even here. 90 triples the bitrate of the old 35 for free. At VGA
+// the same value does cost frame rate, since encode time grows with it.
+constexpr uint8_t kJpegQuality = 90;
 constexpr size_t kMaxJpegBytes = 300000;
 constexpr uint32_t kFrameIntervalMs = 200;  // Requests up to 5 fps; measured ~3.5 fps.
 
@@ -43,6 +49,7 @@ std::atomic<bool> streamEnabled{false};
 std::atomic<uint32_t> frameIntervalMs{kFrameIntervalMs};
 // 0: VGA JPEG; 1: QVGA JPEG; 2: benchmark-only QVGA raw YUYV + CRC32.
 std::atomic<uint8_t> imageMode{1};
+std::atomic<uint8_t> jpegQuality{kJpegQuality};
 uint8_t* smallFrame = nullptr;
 std::atomic<bool> statsRequested{false}, resetStats{false};
 std::atomic<bool> servoProbeRequested{false};
@@ -108,6 +115,11 @@ void pollCommands(uint32_t now) {
         else if (strcmp(commandLine, "M,640") == 0) imageMode.store(0);
         else if (strcmp(commandLine, "M,320") == 0) imageMode.store(1);
         else if (strcmp(commandLine, "M,raw320") == 0) imageMode.store(2);
+        else if (strncmp(commandLine, "J,", 2) == 0) {
+          // Diagnostic sweep of the encoder quality, bounded to sane values.
+          const long value = strtol(commandLine + 2, nullptr, 10);
+          if (value >= 10 && value <= 95) jpegQuality.store(static_cast<uint8_t>(value));
+        }
         else if (strncmp(commandLine, "E,", 2) == 0) {
           StanbotEmotion emotion;
           if (StanbotEyes::emotionFromName(commandLine + 2, emotion)) eyes.setEmotion(emotion);
@@ -213,22 +225,14 @@ void sendFrame(const ESPVideoBufferClass& frame) {
     return;
   }
   if (mode) {
-    // Decimate YUYV by two in both dimensions, retaining paired U/V samples.
-    for (unsigned y = 0; y < 240; ++y) {
-      const uint8_t* src = frame.data() + y * 2 * 640 * 2;
-      uint8_t* dst = smallFrame + y * 320 * 2;
-      for (unsigned x = 0; x < 160; ++x) {
-        dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[4]; dst[3] = src[3];
-        src += 8; dst += 4;
-      }
-    }
+    boxAverageYuyvHalf(frame.data(), smallFrame);
   }
   const bool raw = mode == 2;
   bool encoded = true;
   if (raw) { jpeg = smallFrame; jpegLength = 320 * 240 * 2; }
   else encoded = fmt2jpg(mode ? smallFrame : frame.data(), mode ? 320 * 240 * 2 : frame.size(),
                          mode ? 320 : frame.getWidth(), mode ? 240 : frame.getHeight(),
-                         PIXFORMAT_YUV422, kJpegQuality, &jpeg, &jpegLength);
+                         PIXFORMAT_YUV422, jpegQuality.load(), &jpeg, &jpegLength);
   uint8_t checksum[4]{};
   if (raw) putUInt32LE(checksum, esp_rom_crc32_le(0, jpeg, jpegLength));
   stats.encodeUs += static_cast<uint32_t>(micros() - encodeStart);

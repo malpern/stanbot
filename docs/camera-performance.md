@@ -1,4 +1,61 @@
-# USB camera performance — 2026-09-14
+# USB camera performance
+
+## Bitrate and downsampling — 2026-09-15
+
+Two changes, both aimed at image quality rather than frame rate.
+
+**Encoder quality raised from 35 to 90.** Swept on the connected robot with the
+new `J,<10..95>` diagnostic command, QVGA, 200 ms interval, eight-second samples:
+
+| Quality | Rate | Mean payload | Bits/pixel | Link use |
+| --- | --- | --- | --- | --- |
+| 35 (previous) | 3.38 fps | 6.8 KB | 0.72 | 23 KB/s |
+| 50 | 3.50 fps | 10.9 KB | 1.16 | 38 KB/s |
+| 65 | 3.50 fps | 11.8 KB | 1.26 | 41 KB/s |
+| 80 | 3.50 fps | 13.6 KB | 1.45 | 48 KB/s |
+| **90 (selected)** | **3.50 fps** | **21.7 KB** | **2.32** | **76 KB/s** |
+| 95 | 3.38 fps | 32.9 KB | 3.51 | 111 KB/s |
+
+Frame rate is flat from 50 to 90: at QVGA the rate is capped by sensor capture,
+not by encoding or the link, which even at 90 carries about 76 KB/s against the
+730–900 KB/s this full-speed USB connection was measured to sustain. So roughly
+three times the bitrate cost nothing. 95 was rejected: half again the bytes, a
+measurable rate drop, and little to see for it.
+
+**VGA is different — there the quality number does cost frame rate**, because
+encode time grows with it and already dominates that mode:
+
+| Quality | Rate | Mean payload | Bits/pixel |
+| --- | --- | --- | --- |
+| 35 | 1.90 fps | 21.9 KB | 0.58 |
+| 80 | 1.70 fps | 49.4 KB | 1.32 |
+| 90 | 1.60 fps | 74.6 KB | 1.99 |
+
+One constant serves both modes. QVGA is the default and the live path, so it
+wins; VGA remains a diagnostic mode and gives up about 16% of its rate.
+
+**The QVGA downsample now box-averages instead of point-sampling.** The previous
+code kept one source pixel in four and took both chroma samples from the first
+pair, discarding the rest of every 2x2 block. That aliased edges and passed
+sensor noise straight into the encoder, which then spent bits on it. Every one
+of the eight source pixels behind a pair of output pixels now contributes.
+`firmware/camera_stream/downsample.h` is header-only so it can be checked on the
+host: `companion/test_downsample.cpp` compares it against an independently
+written reference, checks that a flat frame survives exactly, checks that a
+one-pixel checkerboard (pure aliasing energy) resolves to its true local mean,
+and is run under AddressSanitizer and UBSan for bounds.
+
+```sh
+c++ -std=c++17 -O1 -fsanitize=address,undefined -Wall -Wextra \
+    companion/test_downsample.cpp -o /tmp/td && /tmp/td
+```
+
+Not established by any of this: absolute image quality, low-light behaviour,
+whether face detection improves with the extra bitrate, or anything about VGA
+image quality beyond the rates above. Visual confirmation so far is one live
+look at the companion app after the change.
+
+# Earlier measurements — 2026-09-14
 
 Measured on the connected StackChan and Mini, with animated eyes enabled,
 the slower GC0308 pixel clock retained, and no motor initialization or commands.
