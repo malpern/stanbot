@@ -38,6 +38,44 @@ final class DisconnectTests: XCTestCase {
     }
 
     @MainActor
+    func testCameraStreamsWithoutAButtonPress() throws {
+        var master: Int32 = -1
+        var slave: Int32 = -1
+        var name = [CChar](repeating: 0, count: 128)
+        XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
+        defer { Darwin.close(slave); Darwin.close(master) }
+        // Connecting alone must request the stream; nothing calls startCamera().
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        XCTAssertEqual(robot.connection, .connected(String(cString: name)))
+        XCTAssertEqual(robot.cameraState, .waiting)
+        XCTAssertEqual(Self.read(master), "S\n")
+
+        // An explicit stop is honoured and survives a reconnect.
+        robot.stopCamera()
+        XCTAssertEqual(robot.cameraState, .off)
+        XCTAssertEqual(Self.read(master), "X\n")
+        robot.connect()
+        XCTAssertEqual(robot.cameraState, .off)
+        XCTAssertEqual(Self.read(master), "")
+
+        // Asking for it again resumes automatic behaviour on later reconnects.
+        robot.startCamera()
+        XCTAssertEqual(Self.read(master), "S\n")
+        robot.connect()
+        XCTAssertEqual(robot.cameraState, .waiting)
+        XCTAssertEqual(Self.read(master), "S\n")
+    }
+
+    private static func read(_ fd: Int32) -> String {
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        var bytes = [UInt8](repeating: 0, count: 256)
+        let count = bytes.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+        guard count > 0 else { return "" }
+        return String(decoding: bytes[0..<count], as: UTF8.self)
+    }
+
+    @MainActor
     func testUnplugImmediatelyBeforeWrite() throws {
         var master: Int32 = -1
         var slave: Int32 = -1

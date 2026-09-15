@@ -97,7 +97,11 @@ final class RobotConnection: ObservableObject {
     private var serialFD: Int32 = -1
     private var frameDecoder = FrameDecoder()
     private var timer: Timer?
-    private var wantsCamera = false
+    // The camera stream starts by itself on connect and on every automatic
+    // reconnect: the feed is the point of the app, so it should not wait for a
+    // button. An explicit Stop Camera clears this and stays stopped until the
+    // user asks for the feed again.
+    private var wantsCamera = true
     private var generation = UUID()
     private var analyzing = false
     private var lastFrameAt = Date.distantPast
