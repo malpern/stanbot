@@ -74,6 +74,52 @@ Results arrive after cutoff as `SBPD follow_trace` samples every 40 ms, then
 `goal_write_failed`, `position_status_error`, `feedback_outside_envelope`,
 `stall_detected`.
 
+## Session 1, 2026-09-15: what was measured and what broke
+
+Supervised, at Hacker Dojo, with synthetic `T,` targets typed from the host
+rather than real detections, and narrowed limits in a throwaway calibration
+build that set `measured` true. Three results are settled:
+
+- **Yaw `+raw` turns the head to the robot's right.** The operator reported
+  "left" from their own side of the robot, which is the robot's right; the
+  question was asked explicitly because the two readings are opposite and a
+  wrong sign makes the head flee the face.
+- **Pitch `+raw` tilts the head up.** `pitchUpSign = +1` confirmed.
+- **The image is not mirrored.** A frame captured with the operator standing
+  on the robot's right put them on the right of the image, so `observe()`'s x
+  sign is right as written. Checked by looking at a frame, not by reasoning
+  about the sensor.
+
+Pitch rest is still unknown: 642 was reported as tilted up, so level is at or
+below it, and 620 (the BSP's 0 degrees) was never reached to be judged.
+
+### The session never completed, and the reasons are design defects
+
+- **`goal_write_failed` after 9-27 servo commands, twice.** `serviceFrame()`
+  was called every loop iteration, and `captureBuffer()` blocks on the sensor,
+  so the control loop ran 17 times where 165 were due. It now captures only
+  when a frame is actually due, and the bus timeout is 60 ms inside a session
+  rather than the 20 ms the tight sweep loop can assume. Neither fix is
+  verified: the session that followed refused at preflight with both servos
+  reading -1, which is a third failure mode, not a pass.
+- **Diagnostics are corrupted by the frames.** This is the deeper problem. The
+  USB protocol carries binary `SBFR` packets and newline-delimited text on one
+  channel, and every other motion routine keeps them apart by refusing to run
+  while the stream is on. Following cannot do that - without frames there are
+  no faces - so text lines and packets interleave, and a reader splitting on
+  newlines shreds them. A host demultiplexer helps but does not fix it: the
+  text has no framing of its own. Either diagnostics need a packet type, or a
+  session's telemetry must be buffered and emitted with the stream stopped.
+- **A "yaw-only" session moved pitch.** Return-to-rest drives both axes, so
+  while pitch sat away from its rest value every lost target pulled it. Across
+  two sessions the head was tilted about 16 degrees on the least validated
+  axis without anyone deciding to. The preflight checks where the head starts,
+  not where the controller may ask it to go.
+
+The robot was verified healthy afterwards with `C,POWERTEST`: both servos
+answer, torque off, limits 20/1003, gains p15 d15 i0 unchanged, and the head
+was recentred with `C,CENTER`.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in

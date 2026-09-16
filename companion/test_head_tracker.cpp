@@ -10,8 +10,10 @@ using stanbot::HeadTracker;
 
 namespace {
 
-// The shipped guards; `measured` is irrelevant to the pure logic.
-const FollowLimits kLimits = stanbot::kFollowLimits;
+// Fixed limits owned by the tests. Deliberately NOT stanbot::kFollowLimits:
+// that constant is narrowed and re-measured per calibration session, and the
+// logic these tests pin must not appear to change when it does.
+const FollowLimits kLimits = {460 - 144, 460 + 144, 460, 620, 620 + 32, 620, +1, true};
 const FollowConfig kConfig{};
 
 // Tick until the controller stops sending, returning how many goals it

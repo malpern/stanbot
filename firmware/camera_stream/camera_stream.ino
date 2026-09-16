@@ -1170,7 +1170,15 @@ void runBoundedMotion(const MotionPlan& plan) {
 // camera loop calls this every iteration; a follow session calls it too, so
 // the host keeps seeing frames while the head moves — without frames there
 // are no faces and nothing to follow.
-void serviceFrame() {
+void serviceFrame(bool onlyWhenDue = false) {
+  // A follow session ticks every 80 ms and cannot spend hundreds of
+  // milliseconds in captureBuffer() only to discard the frame: measured
+  // 2026-09-15, that starved the control loop to 17 samples where 165 were
+  // due, and the servo writes failed alongside it.
+  if (onlyWhenDue) {
+    if (!streamEnabled.load()) return;
+    if (static_cast<int32_t>(millis() - nextFrameAtMs) < 0) return;
+  }
   const uint32_t captureStart = micros();
   ESPVideoBufferClass frame = capture.captureBuffer();
   stats.captureWaitUs += static_cast<uint32_t>(micros() - captureStart);
@@ -1228,6 +1236,10 @@ void runFollowSession() {
   TaskHandle_t cutoff = nullptr;
   if (!openPowerWindow(device, off, kFollowSessionMs, cutoff)) return;
   servoBus.EnableTorque(0xfe, 0);
+  // The sweep's 20 ms bus timeout assumes its own tight loop. This one shares
+  // a task with camera capture, so a reply can arrive after a longer pause;
+  // 60 ms covers the scheduling jitter without hiding a servo that is silent.
+  servoBus.IOTimeOut = 60;
   const uint32_t started = millis();
   bool enabled = writeBase(device, 0x05, off | 1u);
   const EnableSnapshot immediate = readEnable(device);
@@ -1250,6 +1262,9 @@ void runFollowSession() {
   const char* result = "preflight_refused";
   int positionCommands = 0, observations = 0, rejected = 0;
   int yawPos = -1, pitchPos = -1;
+  // Enough to tell a starved loop from a servo that genuinely refused.
+  int failServo = 0, failAck = -1, failState = -1, failError = -1;
+  uint32_t iterations = 0, worstIterationMs = 0, controlTicks = 0;
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
 
   // Both servos must start inside the follow limits, torque off and still.
@@ -1287,8 +1302,10 @@ void runFollowSession() {
           const uint32_t now = millis();
           if (now - started >= kFollowSessionMs - 500) { result = "session_deadline"; break; }
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
+          const uint32_t iterationStart = now;
+          ++iterations;
           pollNetworkCommands();
-          serviceFrame();
+          serviceFrame(true);
 
           const uint32_t sequence = targetSequence.load();
           if (sequence != lastSequence) {
@@ -1300,18 +1317,23 @@ void runFollowSession() {
           }
           const stanbot::FollowCommand command = tracker.step(now);
           if (command.send) {
+            ++controlTicks;
             bool written = true;
             if (command.yaw != lastYawSent) {
               ++positionCommands;
-              written = servoBus.WritePos(1, command.yaw, kFollowFeedbackMs * 2, 0) == 1 &&
-                servoBus.getState() == 0 && servoBus.getLastError() == 0;
+              const int ack = servoBus.WritePos(1, command.yaw, kFollowFeedbackMs * 2, 0);
+              const int state = servoBus.getState(), error = servoBus.getLastError();
+              written = ack == 1 && state == 0 && error == 0;
               if (written) lastYawSent = command.yaw;
+              else { failServo = 1; failAck = ack; failState = state; failError = error; }
             }
             if (written && command.pitch != lastPitchSent) {
               ++positionCommands;
-              written = servoBus.WritePos(2, command.pitch, kFollowFeedbackMs * 2, 0) == 1 &&
-                servoBus.getState() == 0 && servoBus.getLastError() == 0;
+              const int ack = servoBus.WritePos(2, command.pitch, kFollowFeedbackMs * 2, 0);
+              const int state = servoBus.getState(), error = servoBus.getLastError();
+              written = ack == 1 && state == 0 && error == 0;
               if (written) lastPitchSent = command.pitch;
+              else { failServo = 2; failAck = ack; failState = state; failError = error; }
             }
             if (!written) { result = "goal_write_failed"; break; }
           }
@@ -1336,6 +1358,8 @@ void runFollowSession() {
               trace[traceCount++] = {now - started, lastYawSent, yawPos, lastPitchSent, pitchPos,
                                      static_cast<uint8_t>(command.mode)};
           }
+          const uint32_t iterationMs = millis() - iterationStart;
+          if (iterationMs > worstIterationMs) worstIterationMs = iterationMs;
           vTaskDelay(pdMS_TO_TICKS(5));
         }
       }
@@ -1345,6 +1369,7 @@ void runFollowSession() {
   xTaskNotifyGive(cutoff);
   while (!powerCutoff.done.load()) vTaskDelay(1);
   servoBus.EnableTorque(0xfe, 0);
+  servoBus.IOTimeOut = 20;         // restore the tight-loop timeout
   const EnableSnapshot after = readEnable(device);
   const bool offVerified = powerCutoff.written.load() && after.modeError == ESP_OK &&
     (after.mode & 1) && after.latchError == ESP_OK && !(after.latch & 1);
@@ -1363,6 +1388,9 @@ void runFollowSession() {
   Serial.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
                 result, observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
+  Serial.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
+                (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
+                failServo, failAck, failState, failError);
   Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
                 enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
 }

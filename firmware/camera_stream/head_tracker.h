@@ -32,17 +32,23 @@ struct FollowLimits {
   bool measured;                      // the per-unit calibration checklist is done
 };
 
-// Starting guards, NOT a calibration. Every number here is a bound the
-// firmware refuses to exceed, chosen from what has been observed rather than
-// what the BSP permits, and `measured` stays false until each has been checked
-// on this unit with a person watching:
-//  - yaw: the 2026-09-15 sweep traversed centre +-288 raw (90 degrees each way)
-//    smoothly; following starts at half of that.
-//  - pitch: only +16 raw (5 degrees) from rest has ever moved. The BSP maps
-//    0..90 degrees onto 620..908, so +raw is the only direction inside the
-//    official range from rest and -raw is never commanded.
-//  - pitchUpSign is a guess. Whether +raw nods up or down is for the operator
-//    to observe on the first pitch session, then record here.
+// Directions below are MEASURED on this unit (2026-09-15, supervised, with the
+// operator watching); the travel limits are still guards, and `measured` stays
+// false because the checklist is not finished. See docs/head-following.md.
+//
+//  - yaw: +raw turns the head to the ROBOT's right. Measured, not assumed.
+//  - pitch: +raw tilts the head UP, so pitchUpSign is +1. Measured.
+//  - image orientation: a person standing on the robot's right appears on the
+//    RIGHT of the captured frame, so the image is not mirrored and observe()'s
+//    x sign is correct as written. Measured by capturing a frame with the
+//    operator at a known side, not inferred from a datasheet.
+//  - pitch rest is NOT established. Raw 642 was reported as still tilted up,
+//    so level is at or below it; 620 is the BSP's 0 degrees and the candidate,
+//    but nothing has ever been observed at 620 and it must be confirmed by eye
+//    before it becomes the position a lost target returns to.
+//  - yaw travel starts at half the +-288 the 2026-09-15 sweep traversed.
+//  - gains and hunting remain untested: every follow session so far aborted
+//    before settling, so rawPerUnitX/Y are still guesses.
 constexpr FollowLimits kFollowLimits = {
   460 - 144, 460 + 144, 460,
   620, 620 + 32, 620,
