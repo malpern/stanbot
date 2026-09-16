@@ -5,7 +5,15 @@ script_dir=${0:A:h}
 cd "$script_dir"
 swift build -c release
 
-app_dir="$script_dir/build/Stanbot.app"
+# Assemble and sign in a staging bundle, then swap it into place. Never write
+# into the live bundle: copying over Contents/MacOS/Stanbot rewrites the same
+# inode a running copy is executing, and the next page macOS faults in fails
+# its code-signature check, so the running app is SIGKILLed with "Code
+# Signature Invalid" (seen 2026-09-16, surfacing in NetworkReader.receive).
+# A rename leaves the running process on the old, now-unlinked files.
+final_dir="$script_dir/build/Stanbot.app"
+app_dir="$script_dir/build/Stanbot.app.staging"
+rm -rf "$app_dir" build/AppIcon.iconset
 mkdir -p "$app_dir/Contents/MacOS"
 mkdir -p "$app_dir/Contents/Resources" build/AppIcon.iconset
 for size in 16 32 128 256 512; do
@@ -42,4 +50,13 @@ codesign --force --sign "$identity" \
   "$app_dir"
 codesign --verify --strict "$app_dir"
 codesign -dv "$app_dir" 2>&1 | grep -E "^Identifier|^Authority|^TeamIdentifier" >&2
-echo "$app_dir"
+
+old_dir="$script_dir/build/Stanbot.app.old"
+rm -rf "$old_dir"
+[[ -e "$final_dir" ]] && mv "$final_dir" "$old_dir"
+mv "$app_dir" "$final_dir"
+rm -rf "$old_dir"
+if pgrep -f "$final_dir/Contents/MacOS/Stanbot" >/dev/null; then
+  echo "note: Stanbot is running the previous build; quit and reopen to use this one." >&2
+fi
+echo "$final_dir"
