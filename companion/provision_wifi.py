@@ -143,9 +143,18 @@ def main():
                 print(line)
             return
 
-        chosen = [n for n, on in (("home", args.home), ("dojo", args.dojo),
-                                  ("saturday", args.saturday), ("beach", args.beach),
-                                  ("phone", args.phone)) if on]
+        # Dojo goes last, whatever order the flags were typed in. A PEAP join
+        # leaves enterprise configuration behind in the Wi-Fi driver, and the
+        # firmware's pre-shared-key path does not clear it, so every PSK profile
+        # attempted after dojo fails until a `W,X` wipes the config. Last means
+        # the rotation stops on a working PSK network before it can be poisoned;
+        # at the Dojo the PSK profiles fail on their own and dojo is reached
+        # with a clean driver. This is a mitigation, not the fix: a full wrap
+        # past dojo still poisons the next pass.
+        order = ("home", "saturday", "beach", "phone", "dojo")
+        picked = {"home": args.home, "dojo": args.dojo, "saturday": args.saturday,
+                  "beach": args.beach, "phone": args.phone}
+        chosen = [name for name in order if picked[name]]
         if not chosen:
             raise SystemExit("choose at least one of --home --dojo --saturday "
                              "--beach --phone")
