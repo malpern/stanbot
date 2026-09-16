@@ -23,6 +23,7 @@
 #include <driver/i2c_master.h>
 #include <WiFi.h>
 #include <esp_eap_client.h>   // clearing PEAP state between profiles; see attemptProfile
+#include "head_tracker.h"       // follow controller; see runFollowSession
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include <Preferences.h>
@@ -59,6 +60,14 @@ std::atomic<uint8_t> jpegQuality{kJpegQuality};
 uint8_t* smallFrame = nullptr;
 std::atomic<bool> statsRequested{false}, resetStats{false};
 std::atomic<bool> servoProbeRequested{false};
+// Head following. T,<seq>,<x>,<y>,<confidence> arrives on either transport;
+// handlers may only set atomics, so the observation travels as thousandths
+// with the sequence written last and read first. C,FOLLOW opens a bounded
+// session that consumes it; C,UNFOLLOW ends the session early.
+std::atomic<uint32_t> targetSequence{0};
+std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
+std::atomic<bool> followRequested{false};
+std::atomic<bool> followStopRequested{false};
 std::atomic<bool> powerTestRequested{false};
 std::atomic<bool> powerOffRequested{false};
 std::atomic<bool> yawTestRequested{false};
@@ -405,6 +414,20 @@ void handleCommand(const char* line) {
   else if (strcmp(line, "C,CENTER") == 0) yawCenterRequested.store(true);
   else if (strcmp(line, "C,PITCHNUDGE") == 0) pitchNudgeRequested.store(true);
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
+  else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
+  else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
+  else if (strncmp(line, "T,", 2) == 0) {
+    // Range checks live in HeadTracker::observe; here only the shape matters.
+    unsigned long sequence = 0;
+    float x = 0, y = 0, confidence = 0;
+    if (sscanf(line + 2, "%lu,%f,%f,%f", &sequence, &x, &y, &confidence) == 4 &&
+        x == x && y == y && confidence == confidence) {
+      targetXMilli.store(lroundf(x * 1000.0f));
+      targetYMilli.store(lroundf(y * 1000.0f));
+      targetConfidenceMilli.store(lroundf(confidence * 1000.0f));
+      targetSequence.store(static_cast<uint32_t>(sequence));
+    }
+  }
   else if (strcmp(line, "Z") == 0) { resetStats.store(true); maxEyeGapMs.store(0); }
   else if (strcmp(line, "R,750") == 0) frameIntervalMs.store(750);
   else if (strcmp(line, "R,333") == 0) frameIntervalMs.store(333);
@@ -1143,6 +1166,207 @@ void runBoundedMotion(const MotionPlan& plan) {
                 enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
 }
 
+// One capture and, when a frame is due and the stream is on, one send. The
+// camera loop calls this every iteration; a follow session calls it too, so
+// the host keeps seeing frames while the head moves — without frames there
+// are no faces and nothing to follow.
+void serviceFrame() {
+  const uint32_t captureStart = micros();
+  ESPVideoBufferClass frame = capture.captureBuffer();
+  stats.captureWaitUs += static_cast<uint32_t>(micros() - captureStart);
+  if (!frame.valid()) return;
+  ++stats.captures;
+  const uint32_t now = millis();
+  if (streamEnabled.load() && static_cast<int32_t>(now - nextFrameAtMs) >= 0) {
+    nextFrameAtMs = now + frameIntervalMs.load();
+    sendFrame(frame);
+  }
+}
+
+// Continuous head following for one bounded session, on both servos, driven
+// by T, targets from the host. Groundwork, 2026-09-15: everything below is
+// compiled and reviewable, and it refuses to enable motor power until
+// stanbot::kFollowLimits.measured is true — which only the per-unit
+// calibration checklist may set. Until then C,FOLLOW answers with a refusal
+// and moves nothing.
+//
+// What differs from the plan-driven motion above, deliberately:
+//  - the stream stays ON. The host cannot produce targets without frames, so
+//    serviceFrame() runs in the loop. Diagnostics are still held until after
+//    the cutoff; frames are the transport, not a diagnostic.
+//  - the window is longer (kFollowSessionMs) but still armed once, never
+//    extended in flight, and the independent cutoff task removes power at
+//    its deadline whatever this loop is doing.
+//  - goals come from HeadTracker, which owns the rate limit and both
+//    deadbands; feedback is read only to guard the envelope and catch a stall.
+constexpr uint32_t kFollowSessionMs = 20000;
+constexpr uint32_t kFollowFeedbackMs = 40;
+constexpr int kFollowEnvelopeMargin = 16;
+constexpr int kFollowStallDistance = 16;
+constexpr uint32_t kFollowStallMs = 800;
+
+void runFollowSession() {
+  const auto& limits = stanbot::kFollowLimits;
+  if (!limits.measured) {
+    Serial.println("SBMV {\"result\":\"follow_refused_limits_unmeasured\",\"plan\":\"follow\"}");
+    return;
+  }
+  if (disableOnlyLatched || powerWindowUsed) {
+    Serial.println("SBPW {\"error\":\"requires_unused_boot\"}");
+    return;
+  }
+  if (!streamEnabled.load()) {
+    // The opposite condition from every other motion routine, for the reason
+    // in the header comment: no frames, no faces, nothing to follow.
+    Serial.println("SBPW {\"error\":\"follow_requires_stream_on\"}");
+    return;
+  }
+  powerWindowUsed = true;
+  followStopRequested.store(false);
+  i2c_master_dev_handle_t device = nullptr;
+  uint8_t off = 0;
+  TaskHandle_t cutoff = nullptr;
+  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff)) return;
+  servoBus.EnableTorque(0xfe, 0);
+  const uint32_t started = millis();
+  bool enabled = writeBase(device, 0x05, off | 1u);
+  const EnableSnapshot immediate = readEnable(device);
+  const uint32_t settleStarted = millis();
+  while (enabled && !powerCutoff.done.load() && millis() - settleStarted < 200) {
+    servoBus.EnableTorque(0xfe, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+  const EnableSnapshot settled = readEnable(device);
+  const bool onVerified = enabled && !powerCutoff.done.load() && settled.outputHigh();
+  ServoReading readings[2];
+  if (onVerified) readStartupReadiness(readings, started);
+  const auto& yaw = readings[0];
+  const auto& pitch = readings[1];
+
+  stanbot::HeadTracker tracker(limits, stanbot::FollowConfig{});
+  struct TracePoint { uint32_t elapsed; int yawGoal, yawPos, pitchGoal, pitchPos; uint8_t mode; };
+  static TracePoint trace[400];
+  unsigned traceCount = 0;
+  const char* result = "preflight_refused";
+  int positionCommands = 0, observations = 0, rejected = 0;
+  int yawPos = -1, pitchPos = -1;
+  uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
+
+  // Both servos must start inside the follow limits, torque off and still.
+  const bool safe = onVerified && !powerCutoff.done.load() && millis() - started < 1300 &&
+    yaw.torque == 0 && pitch.torque == 0 && yaw.moving == 0 && pitch.moving == 0 &&
+    yaw.minimum == 20 && yaw.maximum == 1003 && pitch.minimum == 20 && pitch.maximum == 1003 &&
+    yaw.position >= limits.yawMin && yaw.position <= limits.yawMax &&
+    pitch.position >= limits.pitchMin && pitch.position <= limits.pitchMax;
+  if (safe) {
+    yawPos = yaw.position;
+    pitchPos = pitch.position;
+    tracker.begin(yawPos, pitchPos, millis());
+    // Hold each servo exactly where it is before torque, so enabling cannot
+    // move anything; then verify torque on both.
+    positionCommands += 2;
+    bool held = servoBus.WritePos(1, yawPos, kFollowFeedbackMs, 0) == 1 && servoBus.getState() == 0 &&
+      servoBus.readWord(1, SCSCL_GOAL_POSITION_L) == yawPos && servoBus.getState() == 0;
+    held = held && servoBus.WritePos(2, pitchPos, kFollowFeedbackMs, 0) == 1 && servoBus.getState() == 0 &&
+      servoBus.readWord(2, SCSCL_GOAL_POSITION_L) == pitchPos && servoBus.getState() == 0;
+    result = "hold_goal_unverified";
+    if (held && !powerCutoff.done.load()) {
+      bool armed = true;
+      for (int id = 1; id <= 2 && armed; ++id)
+        armed = servoBus.EnableTorque(id, 1) == 1 && servoBus.getState() == 0 &&
+          servoBus.readByte(id, SCSCL_TORQUE_ENABLE) == 1 && servoBus.getState() == 0;
+      result = "torque_enable_unverified";
+      if (armed && !powerCutoff.done.load()) {
+        result = "session_complete";
+        int lastYawSent = yawPos, lastPitchSent = pitchPos;
+        int progressYaw = yawPos, progressPitch = pitchPos;
+        uint32_t nextFeedbackAt = millis();
+        uint32_t lastProgressAt = millis();
+        for (;;) {
+          if (powerCutoff.done.load()) { result = "cutoff_before_completion"; break; }
+          const uint32_t now = millis();
+          if (now - started >= kFollowSessionMs - 500) { result = "session_deadline"; break; }
+          if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
+          pollNetworkCommands();
+          serviceFrame();
+
+          const uint32_t sequence = targetSequence.load();
+          if (sequence != lastSequence) {
+            lastSequence = sequence;
+            const bool taken = tracker.observe(sequence,
+              targetXMilli.load() / 1000.0f, targetYMilli.load() / 1000.0f,
+              targetConfidenceMilli.load() / 1000.0f, now);
+            if (taken) ++observations; else ++rejected;
+          }
+          const stanbot::FollowCommand command = tracker.step(now);
+          if (command.send) {
+            bool written = true;
+            if (command.yaw != lastYawSent) {
+              ++positionCommands;
+              written = servoBus.WritePos(1, command.yaw, kFollowFeedbackMs * 2, 0) == 1 &&
+                servoBus.getState() == 0 && servoBus.getLastError() == 0;
+              if (written) lastYawSent = command.yaw;
+            }
+            if (written && command.pitch != lastPitchSent) {
+              ++positionCommands;
+              written = servoBus.WritePos(2, command.pitch, kFollowFeedbackMs * 2, 0) == 1 &&
+                servoBus.getState() == 0 && servoBus.getLastError() == 0;
+              if (written) lastPitchSent = command.pitch;
+            }
+            if (!written) { result = "goal_write_failed"; break; }
+          }
+
+          if (now >= nextFeedbackAt) {
+            nextFeedbackAt = now + kFollowFeedbackMs;
+            yawPos = servoBus.ReadPos(1);
+            if (servoBus.getState() != 0 || servoBus.getLastError() != 0 || yawPos < 0) { result = "position_status_error"; break; }
+            pitchPos = servoBus.ReadPos(2);
+            if (servoBus.getState() != 0 || servoBus.getLastError() != 0 || pitchPos < 0) { result = "position_status_error"; break; }
+            if (yawPos < limits.yawMin - kFollowEnvelopeMargin || yawPos > limits.yawMax + kFollowEnvelopeMargin ||
+                pitchPos < limits.pitchMin - kFollowEnvelopeMargin || pitchPos > limits.pitchMax + kFollowEnvelopeMargin) {
+              result = "feedback_outside_envelope"; break;
+            }
+            if (abs(yawPos - progressYaw) >= 3 || abs(pitchPos - progressPitch) >= 3) {
+              progressYaw = yawPos; progressPitch = pitchPos; lastProgressAt = now;
+            }
+            const bool farFromGoal = abs(lastYawSent - yawPos) > kFollowStallDistance ||
+                                     abs(lastPitchSent - pitchPos) > kFollowStallDistance;
+            if (farFromGoal && now - lastProgressAt > kFollowStallMs) { result = "stall_detected"; break; }
+            if (traceCount < 400)
+              trace[traceCount++] = {now - started, lastYawSent, yawPos, lastPitchSent, pitchPos,
+                                     static_cast<uint8_t>(command.mode)};
+          }
+          vTaskDelay(pdMS_TO_TICKS(5));
+        }
+      }
+    }
+  }
+  servoBus.EnableTorque(0xfe, 0);
+  xTaskNotifyGive(cutoff);
+  while (!powerCutoff.done.load()) vTaskDelay(1);
+  servoBus.EnableTorque(0xfe, 0);
+  const EnableSnapshot after = readEnable(device);
+  const bool offVerified = powerCutoff.written.load() && after.modeError == ESP_OK &&
+    (after.mode & 1) && after.latchError == ESP_OK && !(after.latch & 1);
+  i2c_master_bus_rm_device(device);
+  powerCutoff.release.store(true);
+  vTaskDelay(pdMS_TO_TICKS(250));
+  const int offVoltage[] = {servoBus.ReadVoltage(1), servoBus.ReadVoltage(2)};
+  // Diagnostics only now that power is verified off, as everywhere else.
+  for (unsigned i = 0; i < traceCount; ++i)
+    Serial.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u}\n",
+                  (unsigned long)trace[i].elapsed, trace[i].yawGoal, trace[i].yawPos, trace[i].pitchGoal, trace[i].pitchPos, trace[i].mode);
+  printEnable("immediate", immediate);
+  printEnable("settled", settled);
+  printEnable("after_cutoff", after);
+  printReadiness(readings, offVoltage);
+  Serial.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
+                result, observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
+                static_cast<unsigned>(tracker.mode()));
+  Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
+                enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
+}
+
 void testServoDisable() {
   if (disableOnlyLatched || streamEnabled.load()) {
     Serial.println("SBOF {\"error\":\"requires_stopped_stream_and_unused_disable_test\"}");
@@ -1259,6 +1483,7 @@ void cameraTask(void*) {
     if (yawSweepRequested.exchange(false)) runBoundedMotion(kYawSweepPlan);
     if (yawCenterRequested.exchange(false)) runBoundedMotion(kYawCenterPlan);
     if (pitchNudgeRequested.exchange(false)) runBoundedMotion(kPitchNudgePlan);
+    if (followRequested.exchange(false)) runFollowSession();
     if (rebootRequested.exchange(false)) {
       // Software restart so a fresh once-per-boot power window is available
       // without a physical RST. Motor power is already off (latch verified)
@@ -1279,17 +1504,7 @@ void cameraTask(void*) {
         (unsigned long long)stats.enqueueUs, (unsigned long long)stats.jpegBytes,
         (unsigned long)maxEyeGapMs.load());
     }
-    const uint32_t captureStart = micros();
-    ESPVideoBufferClass frame = capture.captureBuffer();
-    stats.captureWaitUs += static_cast<uint32_t>(micros() - captureStart);
-    if (frame.valid()) {
-      ++stats.captures;
-      const uint32_t now = millis();
-      if (streamEnabled.load() && static_cast<int32_t>(now - nextFrameAtMs) >= 0) {
-        nextFrameAtMs = now + frameIntervalMs.load();
-        sendFrame(frame);
-      }
-    }
+    serviceFrame();
     vTaskDelay(1);
   }
 }

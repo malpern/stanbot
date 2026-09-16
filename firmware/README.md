@@ -58,6 +58,14 @@ the horizontal tearing observed at the default sensor rate. Correct packet
 framing alone does not establish image quality; see hardware coverage for the
 limited live visual checks and remaining validation.
 
+`T,<sequence>,<x>,<y>,<confidence>` carries a face target from the host over
+either transport (`x`/`y` normalized to `[-1, 1]`, `-1` left/top). It is only
+consumed inside a `C,FOLLOW` session, which asks for one bounded head-following
+window on both servos with the stream left on; `C,UNFOLLOW` ends it early.
+Groundwork only: `C,FOLLOW` answers `follow_refused_limits_unmeasured` and
+enables nothing until the per-unit limits in `head_tracker.h` are marked
+measured. See [head following](../docs/head-following.md).
+
 ## Historical avatar-only slice
 
 `stanbot/stanbot.ino` is the first, deliberately safe firmware slice. It uses
