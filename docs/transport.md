@@ -305,22 +305,34 @@ port. The upload took 19.9 s, the robot answered `V` 6 s later, and it reported
 `69cee81ecd61`, `dirty:false`, `follow_limits_measured:false`, replacing
 79da869. OTA works end to end, and `V` is how each update is confirmed.
 
-**The robot accepted the upload without a passphrase.** espota received `OK` to
-its invitation instead of an `AUTH` challenge, so no passphrase is stored in
-NVS and `ArduinoOTA.setPassword()` was never called. `provision_wifi.py` sets
-one only with `--ota-password`, which evidently was never used. Anyone on the
-same network can currently replace the firmware.
+**Closed the same day.** That first upload was accepted without a passphrase,
+and storing one would not have helped: every TCP line reached the same
+`handleCommand()` as USB, so anyone who could reach port 3333 could set a new
+OTA passphrase with `W,O`, rewrite Wi-Fi profiles, reboot, or run the
+supervised motion commands. Commit 63d5add fixed both halves:
 
-**Storing a passphrase would not fix that on its own.** `pollNetworkCommands()`
-passes every TCP line to the same `handleCommand()` as USB, unfiltered. Over
-Wi-Fi, anyone who can reach port 3333 can send `W,O,<new passphrase>` to set
-the OTA passphrase, `W,S`/`W,P`/`W,X` to rewrite or forget Wi-Fi profiles,
-`C,REBOOT`, and the supervised motion commands (`C,YAWSWEEP`, `C,CENTER`,
-`C,PITCHNUDGE`), whose once-per-boot power window a remote `C,REBOOT` also
-resets. Closing this needs both halves: the network parser must refuse `W,`
-and `C,` lines, keeping them USB-only, and then an OTA passphrase must be
-provisioned over USB. At home this is a household risk. On a shared network
-such as Hacker Dojo it is not acceptable.
+- **Wi-Fi viewers get an allowlist** (`firmware/camera_stream/network_policy.h`):
+  `S`, `X`, `V`, `P`, `Z`, and the `E,` `T,` `R,` `M,` `J,` prefixes. Everything
+  else, including every `W,` and `C,` command and `Q`, is USB-only and answered
+  with `SBNR {"refused":"usb_only"}`. The refusal never echoes the line, since
+  a refused `W,O` carries a passphrase. A command added later is USB-only until
+  someone adds it to the allowlist on purpose.
+- **No passphrase, no OTA.** `ArduinoOTA` starts only when a passphrase is
+  stored in NVS; otherwise the robot prints
+  `SBWF {"ota":"disabled_no_passphrase"}` and ignores update invitations.
+- **The passphrase is set over USB only**, with
+  `companion/provision_wifi.py <port> --ota-password`, which on its own leaves
+  the Wi-Fi profiles alone. It takes effect at the next boot.
+- **`firmware/ota.py` fails any upload the robot did not authenticate.**
+  `--allow-unauthenticated` exists for the single migration upload from older
+  firmware, which is how 63d5add was installed.
+
+Security that remains out of scope: authentication protects starting an update,
+not the image in transit. The firmware travels unencrypted and unsigned, so an
+attacker able to intercept traffic on the same network during an update could
+substitute one. Avoid updating on shared networks such as Hacker Dojo, or use a
+phone hotspot. Signed images would close this; Espressif's secure boot does so
+by burning eFuses permanently, which is a separate decision.
 
 The original section follows.
 

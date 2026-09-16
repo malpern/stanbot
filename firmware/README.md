@@ -59,6 +59,20 @@ still works but the robot then reports commit `unknown`. See
 time, protocol version, and whether head-following limits are marked measured.
 The reply goes to USB and to the Wi-Fi viewer when there is one.
 
+## Updating over Wi-Fi
+
+```sh
+python3 companion/provision_wifi.py /dev/cu.usbmodem31201 --ota-password   # once, over USB
+firmware/build.sh                                                          # from a committed tree
+python3 firmware/ota.py                                                    # quit Stanbot first
+```
+
+`ota.py` uploads with the passphrase from sops and passes only if the robot
+demanded it and then reports the commit it was sent. OTA stays disabled on a
+robot with no passphrase stored. Over Wi-Fi the robot accepts only stream and
+display commands; Wi-Fi provisioning, the passphrase, reboot and motion are
+USB-only. See [transport](../docs/transport.md#ota).
+
 Use the recovery notes for flashing. A normal physical power cycle may be
 needed after upload: watchdog reset has not been reliable on this board.
 The camera now sets and verifies a slower GC0308 pixel-clock divider to avoid
