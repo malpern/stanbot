@@ -63,7 +63,7 @@ Distinguishing these prevents chasing the wrong one.
 | --- | --- | --- |
 | 640×480 of detail | The GC0308 sensor, 0.3 MP | No. Hard cap wherever processing happens |
 | Compression artifacts | The ESP32's software JPEG encoder | Yes, by not compressing |
-| About 5.2 fps | The deliberately slowed pixel clock | Only by revisiting the tearing fix |
+| About 5.2 fps | The slowed pixel clock, and ~136 ms of work per frame | Faster clock gives 7.8 fps but tears (re-tested 2026-09-16, see camera-performance) |
 
 Encode is the ESP32's own wall and it is large: VGA JPEG spends about 498 ms per
 frame compressing, which is why VGA runs at 1.9 fps and falls to 1.6 at quality

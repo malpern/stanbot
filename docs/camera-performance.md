@@ -44,6 +44,53 @@ Two independent defects, both fixed:
 Verified on the robot: the app locks on within about a second and holds.
 
 
+## Pixel clock re-tested: 7.8 fps is available, but it tears — 2026-09-16
+
+The 2026-09-14 tearing fix (GC0308 page 0 register 0x28, divider bits 6:4 set
+to 2) was made while the Mac's reader was still dropping two thirds of the
+stream, so it was re-tested with today's pipeline. `D,<n>` now changes the
+divider at runtime and `Y,<page>,<reg>[,<value>]` reads or writes any sensor
+register, both USB only; `companion/pclk_sweep.py` runs the comparison.
+
+**Sensor rate, stream off** (the camera task only dequeues):
+
+| Divider | Camera fps |
+| --- | --- |
+| 2 (default) | 5.21 |
+| 1 | 7.82 |
+| 0 | 7.76 |
+
+The driver's only compiled format is `640x480_yuv422_yuyv_16fps`, and divider
+0 should reach it. It does not, and **exposure is not why**: auto exposure was
+using 250 rows, and with AEC off (register 0xd2 bit 7) at 400, 200 and 100 rows
+the rate stayed at 7.7-7.8. At divider 0 the capture path keeps only every
+other frame.
+
+**Both faster settings tear.** Divider 0 produced frames rolled and sliced
+vertically, the picture wrapping inside the frame, in every frame checked.
+Divider 1 is subtler: a band partway down slips or repeats rows (the sofa
+appears doubled), counted in 38 of 70 raw frames across two alternating runs
+against 2 of 65 at divider 2, and those 2 were an arm moving through the
+region the check watches, not tears. Saved JPEGs at divider 1 showed the same
+seams. So the 2026-09-14 tearing was real, not a transport artifact.
+
+**Even untorn, the extra frames would not arrive.** With the stream on at
+divider 1 the robot delivered 5.2 fps: each frame costs about 48 ms to shrink,
+48 ms to encode and 40 ms to write, about 136 ms, on the core that also
+services the capture driver.
+
+What would be needed to go faster, none of it done:
+
+- **Find why capture corrupts at a faster pixel bus.** Signal integrity on the
+  camera flex, PCLK sampling edge, or the LCD_CAM/DMA path overrunning are all
+  plausible; none was tested.
+- **Have the sensor send 320x240.** It would remove the 48 ms shrink and
+  quarter the bus data, but the prebuilt driver has only the 640x480 format.
+- **Cut per-frame work**, for example a larger USB transmit buffer so writes
+  do not block, or esp_new_jpeg's dual-task mode.
+
+The default stays at divider 2.
+
 ## Faster encoder and frame pacing — 2026-09-16
 
 **Espressif's `esp_new_jpeg` replaced the esp32-camera jpge encoder.** Both stay

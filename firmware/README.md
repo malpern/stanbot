@@ -17,7 +17,10 @@ See [camera performance](../docs/camera-performance.md) for measurements and lim
 Diagnostic newline commands are `P` (timing stats), `Z` (reset stats),
 `R,750|333|200|100` (choose one interval in ms), `M,640|320|raw320`
 (choose one output mode), `J,<10..95>` (encoder quality, for sweeping), and
-`K,0|1` (USB only: 0 selects the old esp32-camera jpge encoder, 1 esp_new_jpeg). Raw mode is benchmark-only, not supported by the app.
+`K,0|1` (USB only: 0 selects the old esp32-camera jpge encoder, 1 esp_new_jpeg),
+`D,<0..7>` (USB only: GC0308 pixel-clock divider, reported as `SBCM`; boot value 2,
+faster settings tear), and `Y,<page>,<reg>[,<value>]` (USB only: read or write a
+sensor register in hex, reported as `SBRG`). Raw mode is benchmark-only, not supported by the app.
 JPEG uses SBFR version 1; raw uses version 2 with 153600 YUYV bytes followed by a
 little-endian CRC32. Stats use a separate `SBST ` JSON line between packets.
 

@@ -85,6 +85,11 @@ uint8_t* smallFrame = nullptr;
 // kept selectable with the USB-only K,0 / K,1 commands so the two can be
 // compared on the same build, camera and scene.
 std::atomic<uint8_t> jpegEncoder{1};
+constexpr uint8_t kPclkDivider = 2;              // boot value; see setPixelClockDivider
+std::atomic<uint8_t> pclkDivider{kPclkDivider};  // what the sensor is set to now
+std::atomic<int8_t> pclkDividerRequest{-1};      // D,<n>, applied by the camera task
+// Y, register request: page<<16 | reg<<8 | value, with bit 24 = write, bit 25 = pending.
+std::atomic<uint32_t> registerRequest{0};
 std::atomic<bool> statsRequested{false}, resetStats{false};
 std::atomic<bool> versionRequested{false};
 // Bump when a command, a reply line, or the SBFR packet format changes in a way
@@ -497,6 +502,16 @@ void handleCommand(const char* line) {
   else if (strcmp(line, "M,raw320") == 0) imageMode.store(2);
   else if (strcmp(line, "K,0") == 0) jpegEncoder.store(0);
   else if (strcmp(line, "K,1") == 0) jpegEncoder.store(1);
+  else if (strncmp(line, "Y,", 2) == 0) {
+    unsigned page = 0, reg = 0, value = 0;
+    const int fields = sscanf(line + 2, "%x,%x,%x", &page, &reg, &value);
+    if ((fields == 2 || fields == 3) && page <= 1 && reg <= 0xff && value <= 0xff) {
+      registerRequest.store((1u << 25) | (fields == 3 ? 1u << 24 : 0) | (page << 16) | (reg << 8) | value);
+    }
+  }
+  else if (strncmp(line, "D,", 2) == 0 && line[2] >= '0' && line[2] <= '7' && line[3] == '\0') {
+    pclkDividerRequest.store(static_cast<int8_t>(line[2] - '0'));
+  }
   else if (strncmp(line, "J,", 2) == 0) {
     const long value = strtol(line + 2, nullptr, 10);
     if (value >= 10 && value <= 95) jpegQuality.store(static_cast<uint8_t>(value));
@@ -579,6 +594,75 @@ bool writeFully(const uint8_t* bytes, size_t length) {
   return offset == length;
 }
 
+// GC0308 PCLK divider, documented by Espressif's esp32-camera GC0308 driver:
+// page 0, register 0x28, bits 6:4. Slows the actual pixel bus, not merely the
+// rate at which completed frames are forwarded. Preserves all other bits and
+// verifies the readback. Reports the register before and after when asked.
+//
+// 2 (divide by three) was chosen on 2026-09-14 to stop horizontal tearing and
+// caps the sensor at about 5.2 fps. The D,<0..7> command (USB only) changes it
+// at runtime so faster settings can be re-tested under today's pipeline.
+bool setPixelClockDivider(uint8_t bits, uint8_t* before, uint8_t* after) {
+  if (bits > 7) return false;
+  const int controlFD = open(ESP_VIDEO_DVP_DEVICE_NAME, O_RDWR);
+  if (controlFD < 0) return false;
+  auto sensorRegister = [&](uint32_t command, esp_cam_sensor_reg_val_t& reg) {
+    v4l2_ext_control control{};
+    control.id = command;
+    control.size = sizeof(reg);
+    control.p_u8 = reinterpret_cast<uint8_t*>(&reg);
+    v4l2_ext_controls controls{};
+    controls.ctrl_class = V4L2_CTRL_CLASS_ESP_CAM_IOCTL;
+    controls.count = 1;
+    controls.controls = &control;
+    return ioctl(controlFD, VIDIOC_S_EXT_CTRLS, &controls) == 0;
+  };
+  esp_cam_sensor_reg_val_t page{0xfe, 0};
+  esp_cam_sensor_reg_val_t divider{0x28, 0};
+  bool ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, page) &&
+            sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider);
+  if (ok) {
+    if (before) *before = static_cast<uint8_t>(divider.value);
+    divider.value = (divider.value & ~0x70u) | (static_cast<unsigned>(bits) << 4);
+    ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, divider);
+    divider.value = 0;
+    ok = ok && sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider) &&
+         ((divider.value >> 4) & 0x7u) == bits;
+    if (after) *after = static_cast<uint8_t>(divider.value);
+  }
+  close(controlFD);
+  return ok;
+}
+
+// Read, or write then read back, one GC0308 register on a given page. For
+// supervised experiments over USB only (Y, is not on the Wi-Fi allowlist):
+//   Y,<page>,<reg>          read        Y,<page>,<reg>,<value>   write
+// Values are hex. Leaves the sensor on the requested page.
+bool sensorRegisterAccess(uint8_t page, uint8_t reg, int writeValue, uint8_t* value) {
+  const int controlFD = open(ESP_VIDEO_DVP_DEVICE_NAME, O_RDWR);
+  if (controlFD < 0) return false;
+  auto ioctlReg = [&](uint32_t command, esp_cam_sensor_reg_val_t& r) {
+    v4l2_ext_control control{};
+    control.id = command;
+    control.size = sizeof(r);
+    control.p_u8 = reinterpret_cast<uint8_t*>(&r);
+    v4l2_ext_controls controls{};
+    controls.ctrl_class = V4L2_CTRL_CLASS_ESP_CAM_IOCTL;
+    controls.count = 1;
+    controls.controls = &control;
+    return ioctl(controlFD, VIDIOC_S_EXT_CTRLS, &controls) == 0;
+  };
+  esp_cam_sensor_reg_val_t pageReg{0xfe, page};
+  esp_cam_sensor_reg_val_t target{reg, writeValue < 0 ? 0u : static_cast<uint32_t>(writeValue)};
+  bool ok = ioctlReg(ESP_CAM_SENSOR_IOC_S_REG, pageReg);
+  if (ok && writeValue >= 0) ok = ioctlReg(ESP_CAM_SENSOR_IOC_S_REG, target);
+  target.value = 0;
+  ok = ok && ioctlReg(ESP_CAM_SENSOR_IOC_G_REG, target);
+  if (value) *value = static_cast<uint8_t>(target.value);
+  close(controlFD);
+  return ok;
+}
+
 bool beginCamera() {
   static esp_cam_ctlr_dvp_pin_config_t pins = {
       .data_width = CAM_CTLR_DATA_WIDTH_8,
@@ -606,35 +690,7 @@ bool beginCamera() {
   if (esp_video_init_with_flags(&videoConfig, ESP_VIDEO_INIT_FLAGS_DVP) != ESP_OK) return false;
   if (!capture.begin(ESP_VIDEO_DVP_DEVICE_NAME, 2)) return false;
 
-  // GC0308 PCLK divider, documented by Espressif's esp32-camera GC0308
-  // driver: register 0x28, bits 6:4. Slow the actual pixel bus, not merely
-  // the rate at which we forward completed frames. Preserve all other bits.
-  const int controlFD = open(ESP_VIDEO_DVP_DEVICE_NAME, O_RDWR);
-  if (controlFD < 0) return false;
-  auto sensorRegister = [&](uint32_t command, esp_cam_sensor_reg_val_t& reg) {
-    v4l2_ext_control control{};
-    control.id = command;
-    control.size = sizeof(reg);
-    control.p_u8 = reinterpret_cast<uint8_t*>(&reg);
-    v4l2_ext_controls controls{};
-    controls.ctrl_class = V4L2_CTRL_CLASS_ESP_CAM_IOCTL;
-    controls.count = 1;
-    controls.controls = &control;
-    return ioctl(controlFD, VIDIOC_S_EXT_CTRLS, &controls) == 0;
-  };
-  esp_cam_sensor_reg_val_t page{0xfe, 0};
-  esp_cam_sensor_reg_val_t divider{0x28, 0};
-  bool ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, page) &&
-            sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider);
-  if (ok) {
-    divider.value = (divider.value & ~0x70u) | 0x20u;
-    ok = sensorRegister(ESP_CAM_SENSOR_IOC_S_REG, divider);
-    divider.value = 0;
-    ok = ok && sensorRegister(ESP_CAM_SENSOR_IOC_G_REG, divider) &&
-         (divider.value & 0x70u) == 0x20u;
-  }
-  close(controlFD);
-  if (!ok) return false;
+  if (!setPixelClockDivider(pclkDivider.load(), nullptr, nullptr)) return false;
   return capture.startCapture();
 }
 
@@ -1698,14 +1754,35 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
+    {
+      const uint32_t request = registerRequest.exchange(0);
+      if (request & (1u << 25)) {
+        const uint8_t page = (request >> 16) & 0xff, reg = (request >> 8) & 0xff;
+        const bool write = request & (1u << 24);
+        uint8_t value = 0;
+        const bool ok = sensorRegisterAccess(page, reg, write ? static_cast<int>(request & 0xff) : -1, &value);
+        Serial.printf("SBRG {\"page\":%u,\"reg\":%u,\"write\":%s,\"value\":%u,\"ok\":%s}\n",
+                      page, reg, write ? "true" : "false", value, ok ? "true" : "false");
+      }
+    }
+    {
+      const int8_t requested = pclkDividerRequest.exchange(-1);
+      if (requested >= 0) {
+        uint8_t before = 0, after = 0;
+        const bool ok = setPixelClockDivider(static_cast<uint8_t>(requested), &before, &after);
+        if (ok) pclkDivider.store(static_cast<uint8_t>(requested));
+        Serial.printf("SBCM {\"pclk_divider\":%d,\"ok\":%s,\"register_before\":%u,\"register_after\":%u}\n",
+                      requested, ok ? "true" : "false", before, after);
+      }
+    }
     if (statsRequested.exchange(false)) {
-      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu,\"scale_us\":%llu,\"encoder\":\"%s\"}\n",
+      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu,\"scale_us\":%llu,\"encoder\":\"%s\",\"pclk_divider\":%u}\n",
         (unsigned long)(millis() - stats.startedMs), (unsigned long)stats.captures,
         (unsigned long)stats.sent, (unsigned long)stats.failures,
         (unsigned long long)stats.captureWaitUs, (unsigned long long)stats.encodeUs,
         (unsigned long long)stats.enqueueUs, (unsigned long long)stats.jpegBytes,
         (unsigned long)maxEyeGapMs.load(), (unsigned long long)stats.scaleUs,
-        jpegEncoder.load() == 1 ? "esp_new_jpeg" : "jpge");
+        jpegEncoder.load() == 1 ? "esp_new_jpeg" : "jpge", pclkDivider.load());
     }
     serviceFrame();
     vTaskDelay(1);
