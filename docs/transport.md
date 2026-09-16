@@ -198,6 +198,36 @@ Local Network restriction: the gateway answers, every peer fails, and ARP still
 resolves. Verify from the linux box instead, or over Tailscale. It does not
 affect the robot or the app, only what can be checked from a shell here.
 
+### A third cause, which is not macOS at all
+
+An access point that isolates its clients produces exactly the fingerprint
+above — the gateway answers, every peer fails — and no permission granted on
+the laptop will change it. Hacker Dojo does this. Measured there on 2026-09-15
+from a Mac with Local Network allowed: the robot reported itself associated and
+holding `10.43.10.43` over USB, while from the laptop on that same SSID it
+dropped every ping and refused port 3333, and a sweep of the whole `/23` found
+only the gateway and the laptop itself.
+
+**The test that separates them** is whether anything *else* on the network
+answers. A permission problem is per-app and specific to your traffic; other
+hosts still populate the ARP table. Isolation is network-wide: nothing answers,
+including devices that have nothing to do with this project, and every ARP
+entry stays `(incomplete)`. Sweep the subnet before blaming the laptop.
+
+Ask the robot over USB what it thinks its address is before concluding anything
+from the laptop's side. It reports `connected`, `ssid` and `ip` in its `W,?`
+status, and at the Dojo it was on the network the whole time and simply
+unreachable.
+
+The app cannot tell these apart either: `describe(_:)` collapses `EPERM` and
+`EHOSTUNREACH` into one "blocked; allow Stanbot under Local Network" message,
+which names the wrong cause half the time. Worth splitting when it next gets
+touched.
+
+Where this leaves Wi-Fi at the Dojo: it does not work, and USB is the transport
+there. A phone hotspot puts both ends on a network we control and sidesteps
+isolation, which is what the `--phone` profile is for.
+
 ## OTA
 
 `ArduinoOTA` is enabled once the network is up, with a passphrase from NVS
