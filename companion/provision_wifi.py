@@ -52,10 +52,10 @@ def profiles(chosen, store):
         # Hacker Dojo is WPA2-Enterprise (PEAP), not a pre-shared key: the
         # identity is the account, which is why it needs its own shape here.
         "dojo": (None, "KEYPATH_HACKER_DOJO_USERNAME", "KEYPATH_HACKER_DOJO_PASSWORD"),
-        # SATURDAY-5G is named for the 5 GHz band, but the robot's radio is
-        # 2.4 GHz only. Provision it and check `--scan`: if the router also
-        # broadcasts this SSID on 2.4 GHz, as the eeros do at home, the join
-        # works; if it is genuinely 5 GHz-only, no passphrase can help.
+        # "Saturday", on 2.4 GHz channel 2 and joined 2026-09-15. It was first
+        # provisioned as "SATURDAY" from a note, which never associated: SSIDs
+        # are case-sensitive and the radio was matching a name nothing
+        # broadcast. `--scan` prints the exact spelling; trust it over a note.
         "saturday": ("KEYPATH_WIFI_SSID_5", None, "KEYPATH_WIFI_PASSWORD_5"),
         "beach": ("KEYPATH_WIFI_SSID_4", None, "KEYPATH_WIFI_PASSWORD_4"),
         "phone": ("KEYPATH_WIFI_SSID_3", None, "KEYPATH_WIFI_PASSWORD_3"),
