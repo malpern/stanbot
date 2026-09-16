@@ -77,7 +77,11 @@ struct FaceSelection {
             // head's own turn slid the face far enough between frames (~5 fps)
             // that the smoothed box stopped overlapping, the lock dropped, and no
             // targets were sent for up to 10 s.
-            let gate = 1.2 * previous.rect.width
+            // Floored at a fifth of the frame: session 3 kept dropping the lock
+            // with exactly one face in 94 of 98 frames, most likely because a
+            // face a few metres away is under 0.1 wide and 1.2 widths of it is
+            // less than the face moves between frames while the head turns.
+            let gate = max(1.2 * previous.rect.width, 0.2)
             let near = valid
                 .map { (box: $0, distance: centreDistance(previous.rect, $0.rect)) }
                 .filter { overlap(previous.rect, $0.box.rect) >= 0.2 || $0.distance <= gate }

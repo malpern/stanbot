@@ -653,9 +653,10 @@ final class RobotConnection: ObservableObject {
     /// found, what the selection made of them, and whether a target went out.
     /// Session 2 could not tell a face leaving the frame from the selection
     /// dropping it; these lines can.
-    private func logFollowFrame(faces: Int, sent: FaceBox?, receivedAt: TimeInterval) {
+    private func logFollowFrame(faces: [FaceBox], sent: FaceBox?, receivedAt: TimeInterval) {
         guard case .following = follow, let followLog, Date() < followLogUntil else { return }
-        var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces),\"state\":\"\(faceSelection.state)\""
+        let detected = faces.map { String(format: "[%.3f,%.3f,%.3f,%.2f]", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.confidence) }
+        var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces.count),\"detections\":[\(detected.joined(separator: ","))],\"state\":\"\(faceSelection.state)\""
         if let sent {
             fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1))"
         }
@@ -794,7 +795,7 @@ final class RobotConnection: ObservableObject {
                     self.sendFollowTarget(box)
                     sent = box
                 }
-                self.logFollowFrame(faces: boxes.count, sent: sent, receivedAt: receivedAt)
+                self.logFollowFrame(faces: boxes, sent: sent, receivedAt: receivedAt)
                 self.display(image, receivedAt: receivedAt, session: session)
             }
         }
