@@ -1428,6 +1428,48 @@ constexpr int kFollowEnvelopeMargin = 16;
 constexpr int kFollowStallDistance = 16;
 constexpr uint32_t kFollowStallMs = 800;
 
+// During a follow session, frames are captured and sent by this separate task
+// so the control loop no longer waits on the camera. In session 2
+// (2026-09-16) the loop called serviceFrame() itself, each call blocked on the
+// next sensor frame, and control ran every ~192 ms instead of every 80. The
+// task runs at the camera task's normal priority on the same core; the session
+// loop raises itself above it, so an encode never delays a servo tick. Only
+// this task touches the capture device, frame pacing and the Wi-Fi viewer while
+// it runs, as the camera task does otherwise.
+std::atomic<bool> sessionCaptureRun{false};
+std::atomic<bool> sessionCaptureDone{true};
+
+void sessionCaptureTask(void*) {
+  while (sessionCaptureRun.load()) {
+    pollNetworkCommands();
+    serviceFrame();
+    vTaskDelay(1);
+  }
+  sessionCaptureDone.store(true);
+  vTaskDelete(nullptr);
+}
+
+bool startSessionCapture(UBaseType_t basePriority) {
+  sessionCaptureDone.store(false);
+  sessionCaptureRun.store(true);
+  if (xTaskCreatePinnedToCore(sessionCaptureTask, "session-capture", 8192, nullptr, basePriority, nullptr, 0) != pdPASS) {
+    sessionCaptureRun.store(false);
+    sessionCaptureDone.store(true);
+    return false;
+  }
+  vTaskPrioritySet(nullptr, basePriority + 2);
+  return true;
+}
+
+// Returns how long the capture task took to finish its current frame and exit.
+uint32_t stopSessionCapture(UBaseType_t basePriority) {
+  const uint32_t started = millis();
+  sessionCaptureRun.store(false);
+  while (!sessionCaptureDone.load() && millis() - started < 2000) vTaskDelay(pdMS_TO_TICKS(10));
+  vTaskPrioritySet(nullptr, basePriority);
+  return millis() - started;
+}
+
 void runFollowSession() {
   const auto& limits = stanbot::kFollowLimits;
   if (!limits.measured) {
@@ -1487,6 +1529,9 @@ void runFollowSession() {
   // Enough to tell a starved loop from a servo that genuinely refused.
   int failServo = 0, failAck = -1, failState = -1, failError = -1;
   uint32_t iterations = 0, worstIterationMs = 0, controlTicks = 0;
+  const UBaseType_t basePriority = uxTaskPriorityGet(nullptr);
+  bool captureDecoupled = false;
+  uint32_t captureStopMs = 0, sessionFrames = 0;
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
 
   // Both servos must start inside the follow limits, torque off and still.
@@ -1522,6 +1567,8 @@ void runFollowSession() {
         int progressYaw = yawPos, progressPitch = pitchPos;
         uint32_t nextFeedbackAt = millis();
         uint32_t lastProgressAt = millis();
+        const uint32_t framesBefore = stats.sent;
+        captureDecoupled = startSessionCapture(basePriority);
         for (;;) {
           if (powerCutoff.done.load()) { result = "cutoff_before_completion"; break; }
           const uint32_t now = millis();
@@ -1529,8 +1576,10 @@ void runFollowSession() {
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
           ++iterations;
-          pollNetworkCommands();
-          serviceFrame(true);
+          if (!captureDecoupled) {   // task creation failed: the old, slower path
+            pollNetworkCommands();
+            serviceFrame(true);
+          }
 
           const uint32_t sequence = targetSequence.load();
           if (sequence != lastSequence) {
@@ -1590,6 +1639,8 @@ void runFollowSession() {
           if (iterationMs > worstIterationMs) worstIterationMs = iterationMs;
           vTaskDelay(pdMS_TO_TICKS(5));
         }
+        if (captureDecoupled) captureStopMs = stopSessionCapture(basePriority);
+        sessionFrames = stats.sent - framesBefore;
       }
     }
   }
@@ -1627,8 +1678,9 @@ void runFollowSession() {
   Serial.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
                 result, pitchOn ? "true" : "false", observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
-  Serial.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
+  Serial.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
+                captureDecoupled ? "true" : "false", (unsigned long)sessionFrames, (unsigned long)captureStopMs,
                 failServo, failAck, failState, failError);
   endTelemetry(wasStreaming);
   Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",

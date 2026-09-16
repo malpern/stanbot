@@ -649,6 +649,19 @@ final class RobotConnection: ObservableObject {
         followLogURL = url
     }
 
+    /// One APP line per analysed frame during a session: how many faces Vision
+    /// found, what the selection made of them, and whether a target went out.
+    /// Session 2 could not tell a face leaving the frame from the selection
+    /// dropping it; these lines can.
+    private func logFollowFrame(faces: Int, sent: FaceBox?, receivedAt: TimeInterval) {
+        guard case .following = follow, let followLog, Date() < followLogUntil else { return }
+        var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces),\"state\":\"\(faceSelection.state)\""
+        if let sent {
+            fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1))"
+        }
+        followLog.write(Data("APP {\(fields)}\n".utf8))
+    }
+
     func stopFollowing() {
         guard case .following = follow else { return }
         // USB only, like the start; the robot also ends the session by itself.
@@ -776,9 +789,12 @@ final class RobotConnection: ObservableObject {
                 // is enhanced. Boxes are normalized, so they fit an upscaled frame.
                 self.faceSelection.update(boxes, at: receivedAt)
                 self.publishFaces()
+                var sent: FaceBox?
                 if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
                     self.sendFollowTarget(box)
+                    sent = box
                 }
+                self.logFollowFrame(faces: boxes.count, sent: sent, receivedAt: receivedAt)
                 self.display(image, receivedAt: receivedAt, session: session)
             }
         }

@@ -71,7 +71,21 @@ struct FaceSelection {
                 r.maxX <= 1 && r.maxY <= 1
         }
         if let previous = candidate {
-            let matches = valid.filter { overlap(previous.rect, $0.rect) >= 0.2 }
+            // A detection continues the selection if it overlaps it, or if its
+            // centre is within 1.2 face widths. Overlap alone broke whenever the
+            // face moved in the frame: during head following on 2026-09-16 the
+            // head's own turn slid the face far enough between frames (~5 fps)
+            // that the smoothed box stopped overlapping, the lock dropped, and no
+            // targets were sent for up to 10 s.
+            let gate = 1.2 * previous.rect.width
+            let near = valid
+                .map { (box: $0, distance: centreDistance(previous.rect, $0.rect)) }
+                .filter { overlap(previous.rect, $0.box.rect) >= 0.2 || $0.distance <= gate }
+                .sorted { $0.distance < $1.distance }
+            // Two faces near the selection are ambiguous unless one is clearly
+            // nearer; ambiguity is never permission to switch people.
+            let unambiguous = near.count == 1 || (near.count > 1 && near[1].distance >= 2 * near[0].distance + 0.02)
+            let matches = unambiguous ? [near[0].box] : near.map(\.box)
             guard matches.count == 1, let match = matches.first else {
                 box = nil
                 // Two things used to be conflated here. Several faces overlapping
@@ -85,7 +99,7 @@ struct FaceSelection {
                 else if hits >= 3 { state = .uncertain }
                 return
             }
-            let alpha = 0.65
+            let alpha = 0.8   // follows a moving face closely; 0.65 lagged enough to break the match
             let old = previous.rect, new = match.rect
             let smooth = CGRect(x: old.minX + alpha * (new.minX - old.minX),
                                 y: old.minY + alpha * (new.minY - old.minY),
@@ -106,6 +120,10 @@ struct FaceSelection {
         lastSeen = now
         state = hits >= 3 ? .tracking : .acquiring
         box = hits >= 3 ? candidate : nil
+    }
+
+    private func centreDistance(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        hypot(a.midX - b.midX, a.midY - b.midY)
     }
 
     private func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {

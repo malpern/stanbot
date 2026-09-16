@@ -106,6 +106,10 @@ final class HeadFollowingTests: XCTestCase {
 
         robot.stopFollowing()
         XCTAssertEqual(usb.read(), "C,UNFOLLOW\n")
+        let log = try? String(contentsOf: XCTUnwrap(robot.followLogURL), encoding: .utf8)
+        XCTAssertNotNil(log, "a session log is opened when following starts")
+        XCTAssertTrue(robot.followLogURL?.path.hasPrefix(FileManager.default.temporaryDirectory.path) ?? false,
+                      "tests never write into ~/Library/Logs")
 
         usb.line(#"SBTB {"telemetry":"begin","plan":"follow"}"#)
         usb.line(#"SBMV {"result":"stopped_by_host","plan":"follow","pitch_enabled":false,"observations":2,"rejected":0,"yaw_final":470,"pitch_final":630,"yaw_commanded":472,"pitch_commanded":630,"mode":1}"#)

@@ -116,4 +116,45 @@ final class FaceSelectionTests: XCTestCase {
         tracker.expire(at: 1.5)               // about three frames missed
         XCTAssertEqual(tracker.state, .searching)
     }
+
+    /// Head following, 2026-09-16: the head's own turn slides the face across
+    /// the frame between frames. A face moving 0.15 of the frame per frame at
+    /// 5 fps must stay selected, with one identity, the whole way.
+    func testFaceMovingAcrossTheFrameStaysSelected() {
+        var tracker = FaceSelection()
+        var t = 0.0
+        for _ in 0..<3 { tracker.update([face(0.05)], at: t); t += 0.2 }
+        XCTAssertEqual(tracker.state, .tracking)
+        let id = tracker.box?.id
+        var x = 0.05
+        for _ in 0..<5 {
+            x += 0.15
+            tracker.update([face(x)], at: t)
+            XCTAssertEqual(tracker.state, .tracking, "lost at x = \(x)")
+            XCTAssertEqual(tracker.box?.id, id)
+            t += 0.2
+        }
+    }
+
+    /// The wider gate must still not hand the selection to someone else: a
+    /// second person clearly away from the selected face is not adopted.
+    func testWiderGateDoesNotAdoptADistantPerson() {
+        var tracker = FaceSelection()
+        for t in [0.0, 0.2, 0.4] { tracker.update([face(0.1)], at: t) }
+        let id = tracker.box?.id
+        tracker.update([face(0.45)], at: 0.6)     // 0.35 away, gate is 0.24
+        XCTAssertNil(tracker.box)
+        tracker.update([face(0.1), face(0.45)], at: 0.8)
+        XCTAssertEqual(tracker.box?.id, id)
+        XCTAssertLessThan(tracker.box!.rect.minX, 0.2)
+    }
+
+    /// Two faces both inside the gate and about equally near stay ambiguous.
+    func testTwoNearbyFacesStayAmbiguous() {
+        var tracker = FaceSelection()
+        for t in [0.0, 0.2, 0.4] { tracker.update([face(0.3)], at: t) }
+        tracker.update([face(0.2), face(0.4)], at: 0.6)
+        XCTAssertEqual(tracker.state, .uncertain)
+        XCTAssertNil(tracker.box)
+    }
 }
