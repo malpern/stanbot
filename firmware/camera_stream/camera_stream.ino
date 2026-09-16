@@ -24,6 +24,7 @@
 #include <WiFi.h>
 #include <esp_eap_client.h>   // clearing PEAP state between profiles; see attemptProfile
 #include "head_tracker.h"       // follow controller; see runFollowSession
+#include "network_policy.h"     // which commands a Wi-Fi viewer may send
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include <Preferences.h>
@@ -161,6 +162,7 @@ std::atomic<bool> wifiScanRequested{false};
 // costs nothing worse than the badge lingering for a fraction of a second.
 std::atomic<bool> wifiLinkUp{false};
 std::atomic<bool> otaActive{false};
+std::atomic<bool> otaEnabled{false};  // ArduinoOTA started, which requires a stored passphrase
 bool wifiStarted = false;       // a join has been attempted this boot
 bool servicesStarted = false;   // mDNS, OTA and the listener are up
 int profileCount = 0;
@@ -335,19 +337,25 @@ void startNetworkServices() {
   storage.end();
   if (MDNS.begin(kHostname)) MDNS.addService("stanbot", "tcp", kStreamPort);
   ArduinoOTA.setHostname(kHostname);
-  // An unauthenticated updater on a shared network could replace this firmware,
-  // which matters more at Hacker Dojo than at home, so the passphrase is set
-  // whenever one is stored.
-  if (!otaPass.isEmpty()) ArduinoOTA.setPassword(otaPass.c_str());
-  ArduinoOTA.onStart([]() {
-    // Free the link and the CPU for the update, and stop driving anything.
-    otaActive.store(true);
-    streamEnabled.store(false);
-    if (streamClient) streamClient.stop();
-  });
-  ArduinoOTA.onEnd([]() { otaActive.store(false); });
-  ArduinoOTA.onError([](ota_error_t) { otaActive.store(false); });
-  ArduinoOTA.begin();
+  // No passphrase, no OTA. An unauthenticated updater lets anyone on the
+  // network replace this firmware; on 2026-09-16 that is exactly what an
+  // unprovisioned robot allowed. The passphrase can only be set over USB
+  // (network_policy.h), so the first secure update needs one USB session.
+  if (otaPass.isEmpty()) {
+    Serial.println("SBWF {\"ota\":\"disabled_no_passphrase\"}");
+  } else {
+    ArduinoOTA.setPassword(otaPass.c_str());
+    ArduinoOTA.onStart([]() {
+      // Free the link and the CPU for the update, and stop driving anything.
+      otaActive.store(true);
+      streamEnabled.store(false);
+      if (streamClient) streamClient.stop();
+    });
+    ArduinoOTA.onEnd([]() { otaActive.store(false); });
+    ArduinoOTA.onError([](ota_error_t) { otaActive.store(false); });
+    ArduinoOTA.begin();
+    otaEnabled.store(true);
+  }
   streamServer.begin();
   streamServer.setNoDelay(true);
   servicesStarted = true;
@@ -498,7 +506,14 @@ void pollNetworkCommands() {
     const char c = static_cast<char>(streamClient.read());
     if (c == '\n') {
       line[length] = '\0';
-      if (!discard) handleCommand(line);
+      if (!discard && stanbot::networkCommandAllowed(line)) {
+        handleCommand(line);
+      } else if (!discard && length > 0) {
+        // Never echo the line: a refused W, command may carry a passphrase.
+        static const char kRefused[] = "SBNR {\"refused\":\"usb_only\"}\n";
+        Serial.print(kRefused);
+        transportWrite(reinterpret_cast<const uint8_t*>(kRefused), sizeof kRefused - 1);
+      }
       length = 0;
       discard = false;
     } else if (c != '\r' && !discard) {
@@ -1717,7 +1732,7 @@ void loop() {
   pollCommands(now);
   // Cheap when idle; blocks for the duration of an actual update, during which
   // the eyes stop. The camera task stands down via the onStart handler.
-  if (servicesStarted) ArduinoOTA.handle();
+  if (servicesStarted && otaEnabled.load()) ArduinoOTA.handle();
   const int emotion = pendingEmotion.exchange(-1);
   if (emotion >= 0) eyes.setEmotion(static_cast<StanbotEmotion>(emotion));
   if (bootScreenActive) { updateBootScreen(now); return; }

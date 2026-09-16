@@ -23,7 +23,7 @@ MAGIC = b"SBFR"
 HEADER = 13                # magic(4) + version(1) + sequence(4) + length(4)
 MAX_JPEG = 300000          # the firmware's own bound; a bigger length is noise
 TEXT_PREFIXES = (b"SBFR", b"SBFL", b"SBMV", b"SBPW", b"SBPD", b"SBSC", b"SBST",
-                 b"SBWF", b"SBLG", b"SBOF", b"SBRB", b"SBTB", b"SBTE", b"SBVR")
+                 b"SBWF", b"SBLG", b"SBOF", b"SBRB", b"SBTB", b"SBTE", b"SBVR", b"SBNR")
 
 
 class Demuxer:

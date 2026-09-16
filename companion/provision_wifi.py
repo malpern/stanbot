@@ -116,7 +116,9 @@ def main():
     parser.add_argument("--beach", action="store_true")
     parser.add_argument("--phone", action="store_true", help="phone hotspot, last resort")
     parser.add_argument("--ota-password", action="store_true",
-                        help="also set an OTA passphrase, read from STANBOT_OTA_PASSWORD")
+                        help="set the OTA passphrase from STANBOT_OTA_PASSWORD; alone, it "
+                             "leaves stored Wi-Fi profiles untouched. Takes effect on reboot, "
+                             "and firmware refuses OTA until one is stored")
     parser.add_argument("--scan", action="store_true", help="report visible networks and exit")
     parser.add_argument("--status", action="store_true", help="report stored profiles and exit")
     parser.add_argument("--forget", action="store_true", help="erase every stored credential")
@@ -155,29 +157,34 @@ def main():
         picked = {"home": args.home, "dojo": args.dojo, "saturday": args.saturday,
                   "beach": args.beach, "phone": args.phone}
         chosen = [name for name in order if picked[name]]
-        if not chosen:
+        if not chosen and not args.ota_password:
             raise SystemExit("choose at least one of --home --dojo --saturday "
-                             "--beach --phone")
+                             "--beach --phone, or --ota-password alone")
         if len(chosen) > MAX_PROFILES:
             raise SystemExit(f"the robot stores at most {MAX_PROFILES} profiles; "
                              f"{len(chosen)} were chosen")
         store = secrets()
-        selected = profiles(chosen, store)
-        for index, (name, ssid, identity, password) in enumerate(selected):
-            link.send(f"W,S,{index},{ssid}")
-            link.send(f"W,U,{index},{identity}")
-            link.send(f"W,P,{index},{password}")   # value never printed
-            kind = "enterprise" if identity else "pre-shared key"
-            print(f"profile {index}: {name} -> {ssid} ({kind})")
-        link.send(f"W,N,{len(selected)}")
+        # With no profiles chosen this is a passphrase-only run: sending
+        # W,N,0 would erase the stored profile count, so send nothing here.
+        if chosen:
+            selected = profiles(chosen, store)
+            for index, (name, ssid, identity, password) in enumerate(selected):
+                link.send(f"W,S,{index},{ssid}")
+                link.send(f"W,U,{index},{identity}")
+                link.send(f"W,P,{index},{password}")   # value never printed
+                kind = "enterprise" if identity else "pre-shared key"
+                print(f"profile {index}: {name} -> {ssid} ({kind})")
+            link.send(f"W,N,{len(selected)}")
         if args.ota_password:
             ota = store.get("STANBOT_OTA_PASSWORD", "")
             if not ota:
                 raise SystemExit("STANBOT_OTA_PASSWORD is not in secrets.env; "
                                  'add it with: open -W -n "/Applications/Add Secret.app" '
                                  "--args --key STANBOT_OTA_PASSWORD")
+            if len(ota) > 100:
+                raise SystemExit("STANBOT_OTA_PASSWORD is too long for the command line buffer")
             link.send(f"W,O,{ota}")
-            print("ota passphrase stored")
+            print("ota passphrase sent")
         for line in link.collect(2):
             print(line)
         if args.join:

@@ -8,9 +8,11 @@
    dirty build unless --allow-dirty.
 2. Reads the OTA passphrase from STANBOT_OTA_PASSWORD, else decrypts it from
    ~/dotfiles/secrets.env with sops. It is never printed or put in argv.
-3. Uploads with Espressif's espota, and reports whether the robot actually
-   demanded the passphrase. An upload the robot accepted without one means no
-   passphrase is stored in its NVS, so anyone on the network could flash it.
+3. Uploads with Espressif's espota and fails if the robot did not demand the
+   passphrase: that means the firmware on it accepts unauthenticated updates,
+   so anyone on the network could flash it. Firmware from 2026-09-16 on
+   refuses OTA without a stored passphrase; --allow-unauthenticated exists only
+   for the one upload that replaces an older image.
 4. Waits for the reboot and asks V over TCP, passing only if the reported
    commit matches the build.
 
@@ -92,6 +94,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="stanbot.local")
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--allow-unauthenticated", action="store_true",
+                        help="accept a robot that did not ask for the passphrase (migration only)")
     args = parser.parse_args()
 
     with open(os.path.join(BUILD, "build_info.json")) as f:
@@ -132,6 +136,8 @@ def main():
                       "verified": ok}), flush=True)
     if not demanded["auth"]:
         print("WARNING: the robot accepted this upload without a passphrase", file=sys.stderr)
+        if not args.allow_unauthenticated:
+            sys.exit(1)
     sys.exit(0 if ok else 1)
 
 
