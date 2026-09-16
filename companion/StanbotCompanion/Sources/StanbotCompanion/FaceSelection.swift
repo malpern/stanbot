@@ -63,12 +63,23 @@ struct FaceSelection {
         }
         expire(at: now)
         lastUpdate = now
-        let valid = observations.filter {
+        // A face near an edge usually has a box that runs past it: Vision
+        // returns the whole head, including the part outside the image. Those
+        // detections used to be discarded, which is worst exactly when it
+        // matters, since a face at the edge is what the head should turn
+        // toward. Measured on 2026-09-16: a face high in the frame was
+        // detected every frame for 3.5 s at confidence 0.8 and reported as
+        // "no stable face" throughout. They are now clipped to the frame, and
+        // kept when enough of the face is still inside.
+        let valid: [FaceBox] = observations.compactMap {
             let r = $0.rect
-            return $0.confidence.isFinite && $0.confidence >= 0.7 &&
-                [r.origin.x, r.origin.y, r.width, r.height].allSatisfy(\.isFinite) &&
-                r.width >= 0.03 && r.height >= 0.03 && r.minX >= 0 && r.minY >= 0 &&
-                r.maxX <= 1 && r.maxY <= 1
+            guard $0.confidence.isFinite, $0.confidence >= 0.7,
+                  [r.origin.x, r.origin.y, r.width, r.height].allSatisfy(\.isFinite),
+                  r.width >= 0.03, r.height >= 0.03 else { return nil }
+            let clipped = r.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard !clipped.isNull, clipped.width >= 0.03, clipped.height >= 0.03,
+                  clipped.width * clipped.height >= 0.5 * r.width * r.height else { return nil }
+            return FaceBox(id: $0.id, rect: clipped, confidence: $0.confidence)
         }
         if let previous = candidate {
             // A detection continues the selection if it overlaps it, or if its

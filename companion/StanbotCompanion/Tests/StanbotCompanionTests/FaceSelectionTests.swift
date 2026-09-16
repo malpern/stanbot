@@ -157,4 +157,27 @@ final class FaceSelectionTests: XCTestCase {
         XCTAssertEqual(tracker.state, .uncertain)
         XCTAssertNil(tracker.box)
     }
+
+    /// Session 4: a face high in the frame, detected every frame at confidence
+    /// 0.8, was reported as "no stable face" for 3.5 s because its box ran past
+    /// the top edge. Such a detection is now clipped and used.
+    func testFaceAtTheFrameEdgeIsClippedNotDiscarded() {
+        var tracker = FaceSelection()
+        // Centre y 0.88, height 0.28: the top quarter of the box is outside.
+        let high = FaceBox(rect: CGRect(x: 0.7, y: 0.74, width: 0.2, height: 0.28), confidence: 0.8)
+        for t in [0.0, 0.2, 0.4] { tracker.update([high], at: t) }
+        XCTAssertEqual(tracker.state, .tracking)
+        let box = try! XCTUnwrap(tracker.box)
+        XCTAssertLessThanOrEqual(box.rect.maxY, 1.0, "clipped to the frame")
+        XCTAssertGreaterThan(box.rect.height, 0.15, "most of the face is still there")
+    }
+
+    /// A sliver at the edge is not a face worth following.
+    func testMostlyOutsideDetectionIsStillRejected() {
+        var tracker = FaceSelection()
+        let sliver = FaceBox(rect: CGRect(x: 0.4, y: 0.95, width: 0.2, height: 0.28), confidence: 0.9)
+        tracker.update([sliver], at: 0)
+        XCTAssertEqual(tracker.state, .searching)
+        XCTAssertNil(tracker.box)
+    }
 }

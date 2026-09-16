@@ -742,7 +742,7 @@ final class RobotConnection: ObservableObject {
     /// dropping it; these lines can.
     private func logFollowFrame(faces: [FaceBox], sent: FaceBox?, receivedAt: TimeInterval) {
         guard case .following = follow, let followLog, Date() < followLogUntil else { return }
-        let detected = faces.map { String(format: "[%.3f,%.3f,%.3f,%.2f]", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.confidence) }
+        let detected = faces.map { String(format: "[%.3f,%.3f,%.3f,%.3f,%.2f]", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.rect.height, $0.confidence) }
         var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces.count),\"detections\":[\(detected.joined(separator: ","))],\"state\":\"\(faceSelection.state)\""
         if let sent {
             fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1))"
