@@ -6,6 +6,24 @@ the link really is, and what the partition table allows — live in
 **head** port on this unit, and the flashed partition table already supports OTA
 (otadata plus two 3 MB app slots), so flashing over Wi-Fi needs no repartitioning.
 
+## Version command installed, 2026-09-16
+
+One application-only write at 0x10000 on the known device (head USB, MAC
+`68:EE:8F:D8:4F:04` reconfirmed), hash-verified, no erase, no
+partition/bootloader/NVS change. Image built by `firmware/build.sh` from commit
+79da869 with a clean tree: 1,416,784 bytes, SHA-256
+`8c2e7bebc6179b1cdcaf431a90fee79ff573a965879aec638b4be0f498d3f679`.
+`--after hard-reset` brought the application up without a physical RST this
+time, and `V` answered `commit 79da869729e6, dirty false,
+follow_limits_measured false` both with the stream off and while streaming
+(23 frames, zero dropped bytes through `sbstream.Demuxer`).
+
+No app-partition backup was taken: the `read-flash` attempt failed with "No
+more data to read from the serial port" and the write went ahead anyway. The
+replaced image was the committed `camera_stream` at 3aaa2f9 (confirmed that
+morning by its `C,FOLLOW` refusal format), so rebuilding that commit is the
+rollback. From now on, `V` identifies the image before any flash.
+
 ## Yaw sweep diagnostic installed, 2026-09-15
 
 Two application-only writes at 0x10000 on the known device (head USB), both
