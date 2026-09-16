@@ -30,6 +30,23 @@
 #include "downsample.h"
 #include "boot_screen.h"
 
+// Build identity, reported by the V command. firmware/build.sh generates
+// build_info.h from git just before compiling and deletes it afterwards, so a
+// compile that bypasses the script reports "unknown" rather than a commit it
+// was not built from. See docs/firmware-version.md.
+#if __has_include("build_info.h")
+#include "build_info.h"
+#endif
+#ifndef STANBOT_GIT_COMMIT
+#define STANBOT_GIT_COMMIT "unknown"
+#endif
+#ifndef STANBOT_GIT_DIRTY
+#define STANBOT_GIT_DIRTY "unknown"   // "true" or "false" when known; emitted as JSON, null if unknown
+#endif
+#ifndef STANBOT_BUILD_TIME
+#define STANBOT_BUILD_TIME __DATE__ " " __TIME__
+#endif
+
 namespace {
 
 constexpr int kSccbPort = 0;
@@ -59,6 +76,10 @@ std::atomic<uint8_t> imageMode{1};
 std::atomic<uint8_t> jpegQuality{kJpegQuality};
 uint8_t* smallFrame = nullptr;
 std::atomic<bool> statsRequested{false}, resetStats{false};
+std::atomic<bool> versionRequested{false};
+// Bump when a command, a reply line, or the SBFR packet format changes in a way
+// the companion app must know about. The app compares this to its own value.
+constexpr int kProtocolVersion = 1;
 std::atomic<bool> servoProbeRequested{false};
 // Head following. T,<seq>,<x>,<y>,<confidence> arrives on either transport;
 // handlers may only set atomics, so the observation travels as thousandths
@@ -374,6 +395,25 @@ bool transportWrite(const uint8_t* bytes, size_t length) {
   return offset == length;
 }
 
+// One SBVR line to USB and, when there is one, to the Wi-Fi viewer, so the
+// reply returns over whichever transport asked. Called only from the camera
+// task, which also writes every frame, so the line can never land inside a
+// packet on either transport.
+void emitVersion() {
+  const bool dirtyKnown = strcmp(STANBOT_GIT_DIRTY, "unknown") != 0;
+  char line[320];
+  const int n = snprintf(line, sizeof line,
+      "SBVR {\"sketch\":\"camera_stream\",\"commit\":\"%s\",\"dirty\":%s,\"built\":\"%s\","
+      "\"protocol\":%d,\"follow_limits_measured\":%s}\n",
+      STANBOT_GIT_COMMIT, dirtyKnown ? STANBOT_GIT_DIRTY : "null", STANBOT_BUILD_TIME,
+      kProtocolVersion, stanbot::kFollowLimits.measured ? "true" : "false");
+  if (n <= 0 || n >= static_cast<int>(sizeof line)) return;
+  Serial.print(line);
+  if (streamClient && streamClient.connected()) {
+    transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
+  }
+}
+
 // Shared by the USB parser (main task) and the TCP parser (camera task).
 // Handlers may only set atomics: nothing here touches the display or the
 // servo bus directly, because the two callers run on different tasks.
@@ -403,6 +443,7 @@ void handleCommand(const char* line) {
   if (strcmp(line, "S") == 0) streamEnabled.store(true);
   else if (strcmp(line, "X") == 0) streamEnabled.store(false);
   else if (strcmp(line, "P") == 0) statsRequested.store(true);
+  else if (strcmp(line, "V") == 0) versionRequested.store(true);
   else if (strcmp(line, "Q") == 0) servoProbeRequested.store(true);
   else if (strcmp(line, "C,POWERTEST") == 0) powerTestRequested.store(true);
   else if (strcmp(line, "C,POWEROFF") == 0) powerOffRequested.store(true);
@@ -1564,6 +1605,7 @@ void cameraTask(void*) {
     if (powerTestRequested.exchange(false)) testServoPower();
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); nextFrameAtMs = 0; }
+    if (versionRequested.exchange(false)) emitVersion();
     if (statsRequested.exchange(false)) {
       Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu}\n",
         (unsigned long)(millis() - stats.startedMs), (unsigned long)stats.captures,

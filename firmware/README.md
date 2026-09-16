@@ -46,10 +46,18 @@ handing the internal I2C bus to the video driver; do not call `M5.update()` whil
 the video driver owns that bus.
 
 ```sh
-arduino-cli compile \
-  --fqbn 'esp32:esp32:m5stack_cores3:PSRAM=enabled,USBMode=hwcdc,CDCOnBoot=cdc' \
-  --libraries firmware/lib firmware/camera_stream
+firmware/build.sh
 ```
+
+Build with the script, not a bare `arduino-cli compile`. It stamps the git
+commit and dirty state into the image so `V` can report them, and writes
+`build_info.json` with the binary's SHA-256 beside the exports. A bare compile
+still works but the robot then reports commit `unknown`. See
+[firmware version](../docs/firmware-version.md).
+
+`V` answers one `SBVR` JSON line with the sketch, commit, dirty flag, build
+time, protocol version, and whether head-following limits are marked measured.
+The reply goes to USB and to the Wi-Fi viewer when there is one.
 
 Use the recovery notes for flashing. A normal physical power cycle may be
 needed after upload: watchdog reset has not been reliable on this board.

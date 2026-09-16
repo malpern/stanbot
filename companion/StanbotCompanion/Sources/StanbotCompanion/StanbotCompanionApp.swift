@@ -58,7 +58,7 @@ private final class SerialReader {
 
     /// Takes ownership of `fd` and closes it when cancelled.
     fileprivate init(fd: Int32,
-                     onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+                     onChunk: @escaping @Sendable @MainActor (DecodedChunk) -> Void,
                      onClosed: @escaping @Sendable @MainActor () -> Void) {
         let queue = DispatchQueue(label: "com.malpern.stanbot.serial", qos: .userInitiated)
         source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
@@ -69,10 +69,10 @@ private final class SerialReader {
             while !self.stopped {
                 let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
                 if count > 0 {
-                    let frames = self.decoder.append(Data(buffer.prefix(count)))
+                    let chunk = self.decoder.append(Data(buffer.prefix(count)))
                     // main.async rather than Task, so frames stay in order.
-                    if !frames.isEmpty {
-                        DispatchQueue.main.async { MainActor.assumeIsolated { onFrames(frames) } }
+                    if !chunk.isEmpty {
+                        DispatchQueue.main.async { MainActor.assumeIsolated { onChunk(chunk) } }
                     }
                 } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
                     return  // drained for now; the source fires again on more data
@@ -113,7 +113,7 @@ private final class NetworkReader: @unchecked Sendable {
     private var stopped = false
 
     fileprivate init(host: String, port: UInt16,
-                     onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+                     onChunk: @escaping @Sendable @MainActor (DecodedChunk) -> Void,
                      onState: @escaping @Sendable @MainActor (Bool, String) -> Void) {
         let options = NWProtocolTCP.Options()
         options.noDelay = true                 // frames are latency sensitive
@@ -125,7 +125,7 @@ private final class NetworkReader: @unchecked Sendable {
             switch state {
             case .ready:
                 DispatchQueue.main.async { MainActor.assumeIsolated { onState(true, "connected") } }
-                self?.receive(onFrames: onFrames, onState: onState)
+                self?.receive(onChunk: onChunk, onState: onState)
             case .waiting(let error):
                 // Local Network denial surfaces here rather than as a failure,
                 // so say so plainly instead of looking like an unreachable robot.
@@ -148,14 +148,14 @@ private final class NetworkReader: @unchecked Sendable {
         return "\(error)"
     }
 
-    private func receive(onFrames: @escaping @Sendable @MainActor ([CameraFrame]) -> Void,
+    private func receive(onChunk: @escaping @Sendable @MainActor (DecodedChunk) -> Void,
                          onState: @escaping @Sendable @MainActor (Bool, String) -> Void) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self, !self.stopped else { return }
             if let data, !data.isEmpty {
-                let frames = self.decoder.append(data)
-                if !frames.isEmpty {
-                    DispatchQueue.main.async { MainActor.assumeIsolated { onFrames(frames) } }
+                let chunk = self.decoder.append(data)
+                if !chunk.isEmpty {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { onChunk(chunk) } }
                 }
             }
             if isComplete || error != nil {
@@ -163,7 +163,7 @@ private final class NetworkReader: @unchecked Sendable {
                 DispatchQueue.main.async { MainActor.assumeIsolated { onState(false, "disconnected") } }
                 return
             }
-            self.receive(onFrames: onFrames, onState: onState)
+            self.receive(onChunk: onChunk, onState: onState)
         }
     }
 
@@ -231,6 +231,11 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var cameraImage: NSImage?
     @Published private(set) var faceBoxes: [FaceBox] = []
     @Published private(set) var faceState: FaceSelection.State = .searching
+    @Published private(set) var firmware: FirmwareStatus = .unknown
+    private var versionAttempts = 0
+    private var versionAskedAt = Date.distantPast
+    private static let versionRetryInterval: TimeInterval = 2
+    private static let versionMaxAttempts = 3
     private var faceSelection = FaceSelection()
 
     private func resetFaces() {
@@ -319,10 +324,11 @@ final class RobotConnection: ObservableObject {
         serialFD = fd
         usingNetwork = false
         reader = SerialReader(fd: fd,
-                              onFrames: { [weak self] frames in frames.forEach { self?.analyze($0) } },
+                              onChunk: { [weak self] chunk in self?.handle(chunk) },
                               onClosed: { [weak self] in self?.disconnected() })
         connection = .connected(selectedPort)
         lastAction = "Connected locally through \(portName). Motion remains locked."
+        requestVersion()
         if wantsCamera { startCamera() }
     }
 
@@ -332,7 +338,7 @@ final class RobotConnection: ObservableObject {
         lastAction = "Looking for \(networkHost) on the network."
         network = NetworkReader(
             host: networkHost, port: networkPort,
-            onFrames: { [weak self] frames in frames.forEach { self?.analyze($0) } },
+            onChunk: { [weak self] chunk in self?.handle(chunk) },
             onState: { [weak self] up, detail in self?.networkStateChanged(up, detail) })
     }
 
@@ -341,9 +347,11 @@ final class RobotConnection: ObservableObject {
         if up {
             connection = .connected(networkHost)
             lastAction = "Connected to \(networkHost) over Wi-Fi. Motion remains locked."
+            requestVersion()
             if wantsCamera { startCamera() }
         } else {
             connection = .unavailable
+            firmware = .unknown
             lastAction = "\(networkHost): \(detail)"
             cameraState = wantsCamera ? .waiting : .off
             nextReconnect = Date().addingTimeInterval(3)
@@ -386,7 +394,28 @@ final class RobotConnection: ObservableObject {
         network = nil
         generation = UUID()
         cameraImage = nil
+        firmware = .unknown
         resetFaces()
+    }
+
+    /// Asks the robot what it is running. Sent on every connect, because a
+    /// reconnect is often a reflash, and retried a few times since a reply can
+    /// be lost to a decoder reset while the stream is starting.
+    private func requestVersion() {
+        versionAttempts = 1
+        versionAskedAt = Date()
+        firmware = .asking
+        _ = send("V\n")
+    }
+
+    private func handle(_ chunk: DecodedChunk) {
+        chunk.lines.forEach(handleLine)
+        chunk.frames.forEach(analyze)
+    }
+
+    private func handleLine(_ line: String) {
+        guard let info = FirmwareInfo.parse(line) else { return }
+        firmware = .reported(info)
     }
 
     private func disconnected() {
@@ -427,6 +456,15 @@ final class RobotConnection: ObservableObject {
                 connect()
             }
             return
+        }
+        if firmware == .asking, Date().timeIntervalSince(versionAskedAt) > Self.versionRetryInterval {
+            if versionAttempts < Self.versionMaxAttempts {
+                versionAttempts += 1
+                versionAskedAt = Date()
+                _ = send("V\n")
+            } else {
+                firmware = .silent
+            }
         }
         // Reading happens on the SerialReader's dispatch source, not here: this
         // timer only ages the face selection and watches for a stalled stream.
@@ -490,25 +528,53 @@ struct FaceBox: Identifiable {
     let confidence: Float
 }
 
-private struct CameraFrame: Sendable {
+struct CameraFrame: Sendable {
     let sequence: UInt32
     let jpeg: Data
 }
 
-private final class FrameDecoder {
+/// Frames and text lines decoded from one read.
+struct DecodedChunk: Sendable {
+    var frames: [CameraFrame] = []
+    /// `SB__ {json}` lines, without the newline.
+    var lines: [String] = []
+    var isEmpty: Bool { frames.isEmpty && lines.isEmpty }
+}
+
+/// Splits the link into SBFR packets and `SB__ {json}` text lines.
+///
+/// Text is only ever looked for in bytes outside a packet: a complete packet is
+/// skipped by its length, and an incomplete one stops decoding until the rest
+/// arrives, so JPEG payload is never scanned for lines. The firmware writes
+/// frames and replies from one task, which keeps lines between packets.
+final class FrameDecoder {
     private let magic: [UInt8] = [0x53, 0x42, 0x46, 0x52] // SBFR
     private let headerLength = 13
     private let maximumJPEGBytes = 300_000
+    /// Longer than any line the firmware prints; past this, "SB" is noise.
+    private let maximumLineBytes = 512
     private var buffer = Data()
 
-    func append(_ bytes: Data) -> [CameraFrame] {
+    func append(_ bytes: Data) -> DecodedChunk {
         buffer.append(bytes)
-        var frames: [CameraFrame] = []
+        var chunk = DecodedChunk()
         while buffer.count >= headerLength {
             // Data's integer indices need not begin at zero after removeFirst.
             // Normalize each small packet header before indexed inspection.
             let raw = Array(buffer)
             guard Array(raw.prefix(4)) == magic else {
+                if raw[0] == 0x53, raw[1] == 0x42 { // "SB": possibly a text line
+                    if let newline = raw.prefix(maximumLineBytes).firstIndex(of: 0x0a) {
+                        if let line = String(bytes: raw[..<newline], encoding: .utf8),
+                           Self.isTextLine(line) {
+                            chunk.lines.append(line)
+                            buffer.removeFirst(newline + 1)
+                            continue
+                        }
+                    } else if raw.count < maximumLineBytes {
+                        break // the rest of the line has not arrived yet
+                    }
+                }
                 buffer.removeFirst()
                 continue
             }
@@ -531,10 +597,17 @@ private final class FrameDecoder {
                 buffer.removeFirst(4)
                 continue
             }
-            frames.append(CameraFrame(sequence: sequence, jpeg: jpeg))
+            chunk.frames.append(CameraFrame(sequence: sequence, jpeg: jpeg))
             buffer.removeFirst(headerLength + length)
         }
-        return frames
+        return chunk
+    }
+
+    /// `SB` + two capitals + space + a JSON object, e.g. `SBVR {...}`.
+    static func isTextLine(_ line: String) -> Bool {
+        let bytes = Array(line.utf8)
+        guard bytes.count >= 7, bytes[4] == 0x20, bytes[5] == 0x7b, bytes.last == 0x7d else { return false }
+        return bytes[2...3].allSatisfy { (0x41...0x5a).contains($0) }
     }
 
     private func uint32(_ bytes: [UInt8], at offset: Int) -> UInt32 {
@@ -655,7 +728,38 @@ private struct CompanionView: View {
                 StatusCard(title: "Head movement", value: "Locked",
                            detail: "Calibration required before motion can be enabled", symbol: "lock.fill")
             }
+            GridRow {
+                StatusCard(title: "Firmware", value: firmwareValue, detail: firmwareDetail,
+                           symbol: firmwareWarnings.isEmpty ? "cpu" : "exclamationmark.triangle.fill",
+                           tint: firmwareWarnings.isEmpty ? nil : .orange)
+                    .gridCellColumns(2)
+            }
         }
+    }
+
+    private var firmwareWarnings: [String] {
+        switch robot.firmware {
+        case .reported(let info): info.warnings
+        case .silent: ["No reply to V; firmware predates the version command"]
+        default: []
+        }
+    }
+
+    private var firmwareValue: String {
+        switch robot.firmware {
+        case .unknown: "Not connected"
+        case .asking: "Asking…"
+        case .reported(let info): "\(info.sketch) · \(info.shortCommit)"
+        case .silent: "Unidentified"
+        }
+    }
+
+    private var firmwareDetail: String {
+        guard case .reported(let info) = robot.firmware else {
+            return firmwareWarnings.first ?? "Reported by the robot on each connect"
+        }
+        let built = "Built \(info.built), protocol \(info.protocolVersion)"
+        return ([built] + firmwareWarnings).joined(separator: " · ")
     }
 
     private var cameraPanel: some View {
@@ -823,12 +927,13 @@ private struct StatusCard: View {
     let value: String
     let detail: String
     let symbol: String
+    var tint: Color? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(.tint)
+                .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.tint))
             Text(title).font(.subheadline).foregroundStyle(.secondary)
             Text(value).font(.headline)
             Text(detail).font(.caption).foregroundStyle(.secondary)

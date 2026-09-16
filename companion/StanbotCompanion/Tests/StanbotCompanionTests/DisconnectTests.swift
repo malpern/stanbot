@@ -60,7 +60,8 @@ final class DisconnectTests: XCTestCase {
         let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
         XCTAssertEqual(robot.connection, .connected(String(cString: name)))
         XCTAssertEqual(robot.cameraState, .waiting)
-        XCTAssertEqual(Self.read(master), "S\n")
+        // Every connect asks for the firmware version before the stream.
+        XCTAssertEqual(Self.read(master), "V\nS\n")
 
         // An explicit stop is honoured and survives a reconnect.
         robot.stopCamera()
@@ -68,14 +69,33 @@ final class DisconnectTests: XCTestCase {
         XCTAssertEqual(Self.read(master), "X\n")
         robot.connect()
         XCTAssertEqual(robot.cameraState, .off)
-        XCTAssertEqual(Self.read(master), "")
+        XCTAssertEqual(Self.read(master), "V\n")
 
         // Asking for it again resumes automatic behaviour on later reconnects.
         robot.startCamera()
         XCTAssertEqual(Self.read(master), "S\n")
         robot.connect()
         XCTAssertEqual(robot.cameraState, .waiting)
-        XCTAssertEqual(Self.read(master), "S\n")
+        XCTAssertEqual(Self.read(master), "V\nS\n")
+    }
+
+    @MainActor
+    func testFirmwareVersionIsReportedAndClearedOnDisconnect() throws {
+        var master: Int32 = -1
+        var slave: Int32 = -1
+        var name = [CChar](repeating: 0, count: 128)
+        XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        XCTAssertEqual(robot.firmware, .asking)
+        let reply = #"SBVR {"sketch":"camera_stream","commit":"abcdef123456","dirty":false,"built":"2026-09-16T18:00:00Z","protocol":1,"follow_limits_measured":false}"# + "\n"
+        _ = Array(reply.utf8).withUnsafeBytes { Darwin.write(master, $0.baseAddress, $0.count) }
+        wait(upTo: 2) { if case .reported = robot.firmware { true } else { false } }
+        guard case .reported(let info) = robot.firmware else { return XCTFail("no version reported") }
+        XCTAssertEqual(info.shortCommit, "abcdef1")
+        Darwin.close(slave)
+        Darwin.close(master)
+        wait(upTo: 2) { robot.connection == .unavailable }
+        XCTAssertEqual(robot.firmware, .unknown)
     }
 
     private static func read(_ fd: Int32) -> String {
