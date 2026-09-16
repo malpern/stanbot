@@ -214,6 +214,17 @@ hosts still populate the ARP table. Isolation is network-wide: nothing answers,
 including devices that have nothing to do with this project, and every ARP
 entry stays `(incomplete)`. Sweep the subnet before blaming the laptop.
 
+**It isolates unicast, not multicast.** Calling it "client isolation" without
+that qualifier overstates it, which the first version of this note did. An
+mDNS browse left running through the same evening saw `stanbot` advertise
+`_arduino._tcp` repeatedly, appearing and disappearing as the robot rebooted,
+while unicast to its address stayed dead throughout. So discovery works and
+the connection does not: the robot can be *seen* at the Dojo and still not be
+*reached*, and finding it by Bonjour proves nothing about whether a socket
+will open. `stanbot.local` failing to resolve there was a consequence of the
+laptop never completing the unicast exchange behind the name, not of the
+advertisement being blocked.
+
 Ask the robot over USB what it thinks its address is before concluding anything
 from the laptop's side. It reports `connected`, `ssid` and `ip` in its `W,?`
 status, and at the Dojo it was on the network the whole time and simply
@@ -224,9 +235,9 @@ The app cannot tell these apart either: `describe(_:)` collapses `EPERM` and
 which names the wrong cause half the time. Worth splitting when it next gets
 touched.
 
-Where this leaves Wi-Fi at the Dojo: it does not work, and USB is the transport
-there. A phone hotspot puts both ends on a network we control and sidesteps
-isolation, which is what the `--phone` profile is for.
+Where this leaves Wi-Fi at the Dojo: the video socket does not open, so USB is
+the transport there. A phone hotspot puts both ends on a network we control
+and sidesteps the isolation, which is what the `--phone` profile is for.
 
 ## OTA
 
