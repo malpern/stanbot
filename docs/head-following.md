@@ -160,6 +160,46 @@ Everything that does not need the head to move is now in place.
    (about 135 ms a frame). Motion will be slower than `maxStepRaw` suggests,
    which is acceptable for a first session and worth measuring from the trace.
 
+## Session 2, 2026-09-16: it follows
+
+Supervised at home, operator in front of the robot, calibration build 27092a9
+(yaw centre +-48, pitch unpowered), started from the app over USB with real
+face detections. Log: `~/Library/Logs/Stanbot/follow-20260916-153339.log`.
+
+**Result `session_deadline`: the full 20 s, and the head turned toward the
+operator** (reported by the operator, and in the trace). Settled from session 1:
+
+- **No `goal_write_failed`** in 28 position commands, and **no preflight
+  refusal**: yaw started at 446, pitch at 601, both answering, torque off.
+- **Pitch stayed put:** 601 to 603 unpowered across the session.
+- **No hunting:** 27 commanded moves with one direction reversal; the gap
+  between commanded and actual yaw had median 0 and maximum 12 raw.
+
+What the trace shows:
+
+| Time | Yaw commanded / actual | Mode |
+| --- | --- | --- |
+| 1.0 s | 446 / 446 | idle |
+| 3.3 s | 506 / 496 | attending, at the +48 limit |
+| 5.5 s | 498 / 503 | returning (target lost) |
+| 7.8-17.0 s | 466 / 466 | idle, no targets |
+| 19.4 s | 424 / 434 | attending, turning the other way |
+
+**Open problems, in order of effect:**
+
+1. **Targets were sparse:** 21 observations in 20 s, with a 10 s stretch of
+   none. Unknown whether the face left the frame at the yaw limit, or the app's
+   selection dropped out of "Face selected" while the head moved. Needs app-side
+   logging of what was detected versus sent.
+2. **Motion is slow:** the loop ran every ~192 ms (97 iterations; worst 295 ms)
+   because each iteration waits for a camera frame, so a 6-raw step lands about
+   five times a second, roughly 10 degrees per second.
+3. **The +-48 limit was reached within 2.5 s.** Step 4 (widen) is next once
+   1-2 are understood.
+4. **One byte was lost on USB in the telemetry**: the result line arrived as
+   `yaw_fnal`. The firmware prints `yaw_final`. Rare, but telemetry is not yet
+   trustworthy byte for byte.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in

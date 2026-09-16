@@ -252,6 +252,9 @@ final class RobotConnection: ObservableObject {
     /// survive while the app holds the serial port.
     @Published private(set) var followLogURL: URL?
     private var followLog: FileHandle?
+    /// Where session logs go. Tests pass a temporary directory so they never
+    /// write into the user's Logs folder, as they did on 2026-09-16.
+    private let followLogDirectory: URL
     private var followLogUntil = Date.distantPast
     /// Longer than the robot's 20 s session plus its telemetry, so a missing
     /// result is reported rather than leaving the Stop button up forever.
@@ -329,7 +332,9 @@ final class RobotConnection: ObservableObject {
 
     init(port: String? = nil, automaticPolling: Bool = true,
          networkHost: String = "stanbot.local", networkPort: UInt16 = 3333,
-         transport: TransportPreference? = nil, wifiRetryInterval: TimeInterval = 30) {
+         transport: TransportPreference? = nil, wifiRetryInterval: TimeInterval = 30,
+         followLogDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot")) {
+        self.followLogDirectory = followLogDirectory
         self.networkHost = networkHost
         self.networkPort = networkPort
         self.transport = transport ?? .stored
@@ -632,7 +637,7 @@ final class RobotConnection: ObservableObject {
     }
 
     private func openFollowLog() {
-        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot")
+        let directory = followLogDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"

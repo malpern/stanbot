@@ -55,7 +55,8 @@ final class HeadFollowingTests: XCTestCase {
     @MainActor
     private func connected(measured: Bool) -> (RobotConnection, FakeUSB) {
         let usb = FakeUSB()
-        let robot = RobotConnection(port: usb.path, automaticPolling: false, transport: .usb)
+        let robot = RobotConnection(port: usb.path, automaticPolling: false, transport: .usb,
+                                    followLogDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("stanbot-test-logs"))
         robot.enhancement = .off
         usb.line(version(measured: measured))
         for sequence in UInt32(1)...3 { usb.write(frame(sequence)) }
