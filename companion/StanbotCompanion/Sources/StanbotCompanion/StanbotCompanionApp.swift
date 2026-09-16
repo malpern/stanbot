@@ -245,6 +245,11 @@ final class RobotConnection: ObservableObject {
         }
     }
     private let enhancer = VideoEnhancer()
+    @Published private(set) var follow: FollowState = .idle
+    private var targetSequence: UInt32 = 0
+    /// Longer than the robot's 20 s session plus its telemetry, so a missing
+    /// result is reported rather than leaving the Stop button up forever.
+    private static let followResultTimeout: TimeInterval = 30
     private var enhancerSession: UUID?
     private var lastDisplayedAt: TimeInterval?
     private var displayToken = UUID()
@@ -555,6 +560,7 @@ final class RobotConnection: ObservableObject {
         generation = UUID()
         cameraImage = nil
         firmware = .unknown
+        if case .following = follow { follow = .finished(FollowResult(code: "no_result")) }
         resetFaces()
     }
 
@@ -574,8 +580,68 @@ final class RobotConnection: ObservableObject {
     }
 
     private func handleLine(_ line: String) {
-        guard let info = FirmwareInfo.parse(line) else { return }
-        firmware = .reported(info)
+        if let info = FirmwareInfo.parse(line) {
+            firmware = .reported(info)
+            return
+        }
+        guard case .following = follow, line.hasPrefix("SBMV ") || line.hasPrefix("SBPW "),
+              let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
+        else { return }
+        // The result line, or a refusal the robot reports before a session opens.
+        let code = line.hasPrefix("SBMV ") && object["plan"] as? String == "follow"
+            ? object["result"] as? String
+            : object["error"] as? String
+        guard let code else { return }
+        follow = .finished(FollowResult(code: code))
+        lastAction = "Head following: \(FollowResult(code: code).summary)"
+    }
+
+    var connectedOverUSB: Bool { serialFD >= 0 && !usingNetwork }
+
+    /// Why a session cannot start now, or nil when it can.
+    var followUnavailableReason: String? {
+        guard connectedOverUSB else {
+            return "Starts over USB only, since it moves the head. Choose USB only in Settings, with the cable in the side port."
+        }
+        guard case .reported(let info) = firmware else { return "Waiting for the robot to report its firmware." }
+        guard info.followLimitsMeasured else {
+            return "This firmware has following disabled. It needs a calibration build (STANBOT_FOLLOW_CALIBRATION=1)."
+        }
+        guard cameraState == .receiving else { return "Needs the camera stream, to find a face." }
+        return nil
+    }
+
+    func startFollowing() {
+        guard followUnavailableReason == nil else { return }
+        if case .following = follow { return }
+        guard send("C,FOLLOW\n") else { return }
+        targetSequence = 0
+        follow = .following(since: Date())
+        lastAction = "Head following started. Stay at the robot."
+    }
+
+    func stopFollowing() {
+        guard case .following = follow else { return }
+        // USB only, like the start; the robot also ends the session by itself.
+        _ = send("C,UNFOLLOW\n")
+        lastAction = "Asked the robot to stop following."
+    }
+
+    func rebootRobot() {
+        guard connectedOverUSB else { return }
+        _ = send("C,REBOOT\n")
+        follow = .idle
+        lastAction = "Rebooting the robot for a fresh motion session."
+    }
+
+    /// Feeds the selected face to a running session. Only a face the selection
+    /// logic has confirmed is sent; with none, the robot's own timeout returns
+    /// the head to rest.
+    func sendFollowTarget(_ box: FaceBox) {
+        guard case .following = follow else { return }
+        targetSequence &+= 1
+        if targetSequence == 0 { targetSequence = 1 }
+        _ = send(FollowTarget.line(for: box, sequence: targetSequence))
     }
 
     private func disconnected() {
@@ -628,6 +694,9 @@ final class RobotConnection: ObservableObject {
                 endProbe()
             }
         }
+        if case .following(let since) = follow, Date().timeIntervalSince(since) > Self.followResultTimeout {
+            follow = .finished(FollowResult(code: "no_result"))
+        }
         if firmware == .asking, Date().timeIntervalSince(versionAskedAt) > Self.versionRetryInterval {
             if versionAttempts < Self.versionMaxAttempts {
                 versionAttempts += 1
@@ -678,6 +747,9 @@ final class RobotConnection: ObservableObject {
                 // is enhanced. Boxes are normalized, so they fit an upscaled frame.
                 self.faceSelection.update(boxes, at: receivedAt)
                 self.publishFaces()
+                if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
+                    self.sendFollowTarget(box)
+                }
                 self.display(image, receivedAt: receivedAt, session: session)
             }
         }
@@ -859,6 +931,7 @@ private struct CompanionView: View {
                     header
                     cameraPanel
                     statusGrid
+                    HeadFollowingPanel()
                     expressionPicker
                     activity
                 }
@@ -925,8 +998,8 @@ private struct CompanionView: View {
             GridRow {
                 StatusCard(title: "Person detection", value: personDetectionValue,
                            detail: "Visual indication only; it does not claim eye contact", symbol: "person.crop.circle")
-                StatusCard(title: "Head movement", value: "Locked",
-                           detail: "Calibration required before motion can be enabled", symbol: "lock.fill")
+                StatusCard(title: "Head movement", value: headMovementValue,
+                           detail: headMovementDetail, symbol: headMovementEnabled ? "scope" : "lock.fill")
             }
             GridRow {
                 StatusCard(title: "Firmware", value: firmwareValue, detail: firmwareDetail,
@@ -935,6 +1008,22 @@ private struct CompanionView: View {
                     .gridCellColumns(2)
             }
         }
+    }
+
+    private var headMovementEnabled: Bool {
+        if case .reported(let info) = robot.firmware { return info.followLimitsMeasured }
+        return false
+    }
+
+    private var headMovementValue: String {
+        if case .following = robot.follow { return "Following" }
+        return headMovementEnabled ? "Calibration build" : "Locked"
+    }
+
+    private var headMovementDetail: String {
+        headMovementEnabled
+            ? "Following can move the head, yaw only, within narrowed limits"
+            : "Calibration required before motion can be enabled"
     }
 
     private var firmwareWarnings: [String] {

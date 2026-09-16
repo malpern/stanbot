@@ -49,10 +49,28 @@ struct FollowLimits {
 //  - yaw travel starts at half the +-288 the 2026-09-15 sweep traversed.
 //  - gains and hunting remain untested: every follow session so far aborted
 //    before settling, so rawPerUnitX/Y are still guesses.
+//
+// A calibration build (STANBOT_FOLLOW_CALIBRATION=1 firmware/build.sh) is the
+// only way `measured` becomes true before the checklist is done. It narrows yaw
+// to centre +-48 per checklist step 1 and comes from a committed tree, so V
+// reports its commit and follow_limits_measured:true, and the app flags it.
+#if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
+constexpr FollowLimits kFollowLimits = {
+  460 - 48, 460 + 48, 460,
+  620, 620 + 32, 620,
+  +1, true};
+#else
 constexpr FollowLimits kFollowLimits = {
   460 - 144, 460 + 144, 460,
   620, 620 + 32, 620,
   +1, false};
+#endif
+
+// Pitch stays out of following until its rest position is confirmed by eye.
+// On 2026-09-15 a "yaw-only" session still drove pitch, because return-to-rest
+// moved both axes; with this false the pitch servo is never commanded, never
+// clamped and never given torque, so it stays exactly as it is at rest.
+constexpr bool kFollowPitchEnabled = false;
 
 struct FollowConfig {
   float confidenceToAttend = 0.70f;  // face-detection.md's starting threshold
@@ -64,6 +82,7 @@ struct FollowConfig {
   int deadbandRaw = 8;               // never chase less than this: above the standing error
   int maxStepRaw = 6;                // per tick while attending (~23 deg/s at 80 ms)
   int restStepRaw = 4;               // per tick while returning (~16 deg/s)
+  bool pitchEnabled = true;          // false: yaw only, pitch never commanded (kFollowPitchEnabled)
 };
 
 enum class FollowMode { Idle, Attending, Returning };
@@ -84,7 +103,9 @@ class HeadTracker {
   // yanks the head from wherever it was resting.
   void begin(int yawNow, int pitchNow, uint32_t nowMs) {
     yaw_ = goalYaw_ = clamp(yawNow, limits_.yawMin, limits_.yawMax);
-    pitch_ = goalPitch_ = clamp(pitchNow, limits_.pitchMin, limits_.pitchMax);
+    // A disabled pitch is left exactly where it is: clamping it would make the
+    // commanded position differ from the real one, which is itself a move.
+    pitch_ = goalPitch_ = config_.pitchEnabled ? clamp(pitchNow, limits_.pitchMin, limits_.pitchMax) : pitchNow;
     mode_ = FollowMode::Idle;
     lastControlMs_ = nowMs - config_.controlPeriodMs;
     lastTargetMs_ = 0;
@@ -106,10 +127,10 @@ class HeadTracker {
     // -1 is the top of the image, so the head tilts up for negative y.
     const int dx = (x > config_.centreDeadband || x < -config_.centreDeadband)
                        ? roundToInt(x * config_.rawPerUnitX) : 0;
-    const int dy = (y > config_.centreDeadband || y < -config_.centreDeadband)
+    const int dy = config_.pitchEnabled && (y > config_.centreDeadband || y < -config_.centreDeadband)
                        ? roundToInt(-y * config_.rawPerUnitY) * limits_.pitchUpSign : 0;
     goalYaw_ = clamp(yaw_ + dx, limits_.yawMin, limits_.yawMax);
-    goalPitch_ = clamp(pitch_ + dy, limits_.pitchMin, limits_.pitchMax);
+    goalPitch_ = config_.pitchEnabled ? clamp(pitch_ + dy, limits_.pitchMin, limits_.pitchMax) : pitch_;
     haveGoal_ = true;
     mode_ = FollowMode::Attending;
     return true;
@@ -122,14 +143,14 @@ class HeadTracker {
     if (mode_ == FollowMode::Attending && nowMs - lastTargetMs_ >= config_.targetTimeoutMs) {
       mode_ = FollowMode::Returning;
       goalYaw_ = limits_.yawRest;
-      goalPitch_ = limits_.pitchRest;
+      goalPitch_ = config_.pitchEnabled ? limits_.pitchRest : pitch_;
       haveGoal_ = true;
     }
     if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
     if (mode_ == FollowMode::Idle || !haveGoal_) return {false, yaw_, pitch_, mode_};
 
     int dy = goalYaw_ - yaw_;
-    int dp = goalPitch_ - pitch_;
+    int dp = config_.pitchEnabled ? goalPitch_ - pitch_ : 0;
     // A residual inside the raw deadband is accepted as arrived rather than
     // re-issued; this is the rule that stops the loop hunting on I = 0.
     if (dy > -config_.deadbandRaw && dy < config_.deadbandRaw) dy = 0;

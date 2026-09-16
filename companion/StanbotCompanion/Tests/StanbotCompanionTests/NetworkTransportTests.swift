@@ -297,4 +297,17 @@ final class NetworkTransportTests: XCTestCase {
         var rect = CGRect.zero
         return image?.cgImage(forProposedRect: &rect, context: nil, hints: nil)?.width ?? 0
     }
+
+    @MainActor
+    func testHeadFollowingNeverStartsOverWiFi() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = RobotConnection(port: nil, automaticPolling: false, networkHost: "127.0.0.1",
+                                    networkPort: fake.port, transport: .wifi)
+        wait(upTo: 5) { robot.cameraState == .receiving }
+        XCTAssertTrue(robot.followUnavailableReason?.contains("USB only") ?? false)
+        robot.startFollowing()
+        XCTAssertEqual(robot.follow, .idle)
+        XCTAssertFalse(fake.commands.contains("C,FOLLOW"))
+    }
 }

@@ -10,6 +10,11 @@
 # identity. The exported binaries land in firmware/camera_stream/build/, with a
 # build_info.json beside them recording what they were built from.
 #
+# STANBOT_FOLLOW_CALIBRATION=1 builds the calibration image: head following
+# enabled with narrowed limits (head_tracker.h). It still needs a committed
+# tree, and the robot then reports follow_limits_measured:true so it cannot be
+# mistaken for the normal build.
+#
 # "dirty" covers everything under firmware/, submodules and untracked files
 # included. Commit before building anything that will be flashed: a dirty
 # build is exactly the kind the app warns about.
@@ -25,6 +30,7 @@ cd "$repo"
 commit=$(git rev-parse --short=12 HEAD)
 if [[ -n "$(git status --porcelain -- firmware)" ]]; then dirty=true; else dirty=false; fi
 built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+if [[ "${STANBOT_FOLLOW_CALIBRATION:-0}" == 1 ]]; then calibration=1; else calibration=0; fi
 
 info="$sketch_dir/build_info.h"
 trap 'rm -f "$info"' EXIT
@@ -34,6 +40,7 @@ cat > "$info" <<HEADER
 #define STANBOT_GIT_COMMIT "$commit"
 #define STANBOT_GIT_DIRTY "$dirty"
 #define STANBOT_BUILD_TIME "$built"
+#define STANBOT_FOLLOW_CALIBRATION $calibration
 HEADER
 
 # Remove old exports first, so a failed compile cannot leave a previous
@@ -45,9 +52,12 @@ bin="$out_dir/$sketch.ino.bin"
 sha=$(shasum -a 256 "$bin" | cut -d' ' -f1)
 bytes=$(stat -f %z "$bin")
 cat > "$out_dir/build_info.json" <<JSON
-{"sketch":"$sketch","commit":"$commit","dirty":$dirty,"built":"$built","app_bin":"$sketch.ino.bin","app_bytes":$bytes,"app_sha256":"$sha"}
+{"sketch":"$sketch","commit":"$commit","dirty":$dirty,"follow_calibration":$( [[ $calibration == 1 ]] && echo true || echo false ),"built":"$built","app_bin":"$sketch.ino.bin","app_bytes":$bytes,"app_sha256":"$sha"}
 JSON
 cat "$out_dir/build_info.json"
+if [[ $calibration == 1 ]]; then
+  echo "warning: CALIBRATION build: head following can move the head when C,FOLLOW is sent over USB" >&2
+fi
 if [[ $dirty == true ]]; then
   echo "warning: built from uncommitted changes under firmware/; the robot will report dirty:true" >&2
 fi

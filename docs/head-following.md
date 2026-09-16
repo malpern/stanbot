@@ -120,6 +120,46 @@ The robot was verified healthy afterwards with `C,POWERTEST`: both servos
 answer, torque off, limits 20/1003, gains p15 d15 i0 unchanged, and the head
 was recentred with `C,CENTER`.
 
+## Ready for session 2, 2026-09-16
+
+Everything that does not need the head to move is now in place.
+
+- **Yaw only.** `kFollowPitchEnabled` is false. The tracker never commands,
+  clamps or returns pitch, and the session never writes a goal or enables
+  torque on servo 2; it only reads pitch and aborts with
+  `feedback_outside_envelope` if the unpowered head moves more than 16 raw from
+  where it started. This closes the defect where a "yaw-only" session tilted
+  the head 16 degrees. `pitchDisabledNeverMovesPitch` in
+  `companion/test_head_tracker.cpp` pins it and fails against the old
+  return-to-rest code. Preflight still requires pitch to answer.
+- **Calibration builds without editing source.** `STANBOT_FOLLOW_CALIBRATION=1
+  firmware/build.sh` builds limits of centre +-48 yaw with `measured` true, from
+  a committed tree. `V` then reports `follow_limits_measured:true`, the app's
+  Firmware card turns orange, and `build_info.json` records
+  `"follow_calibration": true`.
+- **The companion sends targets (checklist step 5).** Head following in the app
+  starts a session over USB only (`C,FOLLOW` is USB-only on the Wi-Fi
+  allowlist), after a confirmation, and then sends one `T,` line per analysed
+  frame for the face the selection logic has confirmed, sequence from 1. Stop
+  sends `C,UNFOLLOW`. The robot's `SBMV` result, or an `SBPW` refusal, ends the
+  session in the app; `requires_unused_boot` offers Reboot Robot (`C,REBOOT`).
+  Vision coordinates convert to the robot's convention: x = 2·midX − 1,
+  y = 1 − 2·midY.
+
+**Before the session, the operator should know:**
+
+1. Use Settings → USB only, cable in the side (head) port. Quit and reopen
+   nothing else on the serial port.
+2. Yaw must rest between 412 and 508 raw or preflight refuses
+   (`preflight_refused`). Unpowered servos read -1 over `Q`, so position is only
+   known inside a power window; `C,CENTER` recentres yaw if needed, then
+   `C,REBOOT` frees the window again.
+3. Still unverified from session 1: the `goal_write_failed` fixes, and why
+   preflight once read both servos as -1.
+4. Control runs on the camera task, so a tick waits behind capture and encoding
+   (about 135 ms a frame). Motion will be slower than `maxStepRaw` suggests,
+   which is acceptable for a first session and worth measuring from the trace.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in

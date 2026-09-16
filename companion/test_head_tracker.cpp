@@ -212,7 +212,45 @@ void beginAdoptsCurrentPosition() {
 
 }  // namespace
 
+// Yaw only: pitch is never commanded, even when the target is far above or
+// below centre, when it times out and returns to rest, or when it starts
+// outside the pitch limits. The 2026-09-15 session moved pitch by exactly
+// that return-to-rest path.
+void pitchDisabledNeverMovesPitch() {
+  FollowConfig config;
+  config.pitchEnabled = false;
+  for (int startPitch : {620, 700, 560}) {       // inside, above and below the limits
+    HeadTracker tracker(kLimits, config);
+    uint32_t now = 1000;
+    tracker.begin(460, startPitch, now);
+    assert(tracker.commandedPitch() == startPitch);
+    assert(tracker.observe(1, 0.6f, -0.9f, 0.95f, now));   // right and high
+    int sent = 0;
+    for (int i = 0; i < 300; ++i) {
+      now += config.controlPeriodMs;
+      const FollowCommand command = tracker.step(now);
+      assert(command.pitch == startPitch);
+      if (command.send) ++sent;
+    }
+    assert(sent > 0);                                       // yaw did follow
+    assert(tracker.mode() == FollowMode::Idle);             // timed out and returned
+    assert(std::abs(tracker.commandedYaw() - kLimits.yawRest) < config.deadbandRaw);  // settles within the deadband
+    assert(tracker.commandedPitch() == startPitch);
+  }
+  // Yaw still honours its limits with pitch disabled.
+  HeadTracker tracker(kLimits, config);
+  uint32_t now = 1000;
+  tracker.begin(kLimits.yawMax - 4, 620, now);
+  assert(tracker.observe(1, 1.0f, 0.0f, 0.95f, now));
+  for (int i = 0; i < 50; ++i) {
+    now += config.controlPeriodMs;
+    const FollowCommand command = tracker.step(now);
+    assert(command.yaw <= kLimits.yawMax);
+  }
+}
+
 int main() {
+  pitchDisabledNeverMovesPitch();
   protocolValidation();
   idleUntilObserved();
   observationAppliedOnce();
