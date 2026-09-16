@@ -297,6 +297,34 @@ and sidesteps the isolation, which is what the `--phone` profile is for.
 
 ## OTA
 
+### Tested over Wi-Fi, 2026-09-16
+
+`firmware/ota.py` flashed commit 69cee81 (clean, 1,416,784 bytes) from the mini,
+run through `ssh malpern@openclaw.local`, with the cable in the power-only base
+port. The upload took 19.9 s, the robot answered `V` 6 s later, and it reported
+`69cee81ecd61`, `dirty:false`, `follow_limits_measured:false`, replacing
+79da869. OTA works end to end, and `V` is how each update is confirmed.
+
+**The robot accepted the upload without a passphrase.** espota received `OK` to
+its invitation instead of an `AUTH` challenge, so no passphrase is stored in
+NVS and `ArduinoOTA.setPassword()` was never called. `provision_wifi.py` sets
+one only with `--ota-password`, which evidently was never used. Anyone on the
+same network can currently replace the firmware.
+
+**Storing a passphrase would not fix that on its own.** `pollNetworkCommands()`
+passes every TCP line to the same `handleCommand()` as USB, unfiltered. Over
+Wi-Fi, anyone who can reach port 3333 can send `W,O,<new passphrase>` to set
+the OTA passphrase, `W,S`/`W,P`/`W,X` to rewrite or forget Wi-Fi profiles,
+`C,REBOOT`, and the supervised motion commands (`C,YAWSWEEP`, `C,CENTER`,
+`C,PITCHNUDGE`), whose once-per-boot power window a remote `C,REBOOT` also
+resets. Closing this needs both halves: the network parser must refuse `W,`
+and `C,` lines, keeping them USB-only, and then an OTA passphrase must be
+provisioned over USB. At home this is a household risk. On a shared network
+such as Hacker Dojo it is not acceptable.
+
+The original section follows.
+
+
 `ArduinoOTA` is enabled once the network is up, with a passphrase from NVS
 (`STANBOT_OTA_PASSWORD` in sops, generated locally and never displayed). It
 matters most at Hacker Dojo, where an unauthenticated updater on the same
