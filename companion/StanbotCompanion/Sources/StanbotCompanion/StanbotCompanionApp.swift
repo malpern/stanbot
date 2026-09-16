@@ -247,6 +247,12 @@ final class RobotConnection: ObservableObject {
     private let enhancer = VideoEnhancer()
     @Published private(set) var follow: FollowState = .idle
     private var targetSequence: UInt32 = 0
+    /// Every text line from the robot during a session and shortly after, so the
+    /// trace (SBPD), result (SBMV), loop stats (SBFL) and power summary (SBPW)
+    /// survive while the app holds the serial port.
+    @Published private(set) var followLogURL: URL?
+    private var followLog: FileHandle?
+    private var followLogUntil = Date.distantPast
     /// Longer than the robot's 20 s session plus its telemetry, so a missing
     /// result is reported rather than leaving the Stop button up forever.
     private static let followResultTimeout: TimeInterval = 30
@@ -580,6 +586,9 @@ final class RobotConnection: ObservableObject {
     }
 
     private func handleLine(_ line: String) {
+        if let followLog, Date() < followLogUntil {
+            followLog.write(Data((line + "\n").utf8))
+        }
         if let info = FirmwareInfo.parse(line) {
             firmware = .reported(info)
             return
@@ -594,6 +603,7 @@ final class RobotConnection: ObservableObject {
         guard let code else { return }
         follow = .finished(FollowResult(code: code))
         lastAction = "Head following: \(FollowResult(code: code).summary)"
+        followLogUntil = Date().addingTimeInterval(5)   // the power summary follows the result
     }
 
     var connectedOverUSB: Bool { serialFD >= 0 && !usingNetwork }
@@ -616,8 +626,22 @@ final class RobotConnection: ObservableObject {
         if case .following = follow { return }
         guard send("C,FOLLOW\n") else { return }
         targetSequence = 0
+        openFollowLog()
         follow = .following(since: Date())
         lastAction = "Head following started. Stay at the robot."
+    }
+
+    private func openFollowLog() {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let url = directory.appendingPathComponent("follow-\(formatter.string(from: Date())).log")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        try? followLog?.close()
+        followLog = try? FileHandle(forWritingTo: url)
+        followLogUntil = Date().addingTimeInterval(Self.followResultTimeout + 10)
+        followLogURL = url
     }
 
     func stopFollowing() {

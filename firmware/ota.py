@@ -134,7 +134,9 @@ def main():
         sys.exit(1)
 
     after = ask_version(ip, 60)
-    ok = after is not None and after["commit"] == info["commit"] and not after["follow_limits_measured"]
+    # A calibration build is meant to report following enabled; any other must not.
+    expect_measured = bool(info.get("follow_calibration", False))
+    ok = after is not None and after["commit"] == info["commit"] and after["follow_limits_measured"] == expect_measured
     print(json.dumps({"after": after, "reboot_to_answer_seconds": round(time.monotonic() - started - upload_s, 1),
                       "verified": ok}), flush=True)
     if not demanded["auth"]:
