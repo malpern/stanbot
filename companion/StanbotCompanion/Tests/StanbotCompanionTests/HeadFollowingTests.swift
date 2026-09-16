@@ -142,4 +142,47 @@ final class HeadFollowingTests: XCTestCase {
                                                 passphrase: "correct horse battery staple"),
                        "ddefdb5a5ae93875b5911d6e3dd6bff073c70007431ff2d71f8b84b8ece41f76")
     }
+
+    // MARK: automatic following
+
+    private let now = Date()
+
+    func testAutomaticFollowingStartsOnlyWhenEverythingIsReady() {
+        func shouldStart(enabled: Bool = true, reason: String? = nil, state: FollowState = .idle,
+                         face: Bool = true, lastEnded: Date? = nil) -> Bool {
+            AutoFollow.shouldStart(enabled: enabled, unavailableReason: reason, state: state,
+                                   faceTracked: face, lastEnded: lastEnded, now: now)
+        }
+        XCTAssertTrue(shouldStart())
+        XCTAssertFalse(shouldStart(enabled: false), "the toggle is off")
+        XCTAssertFalse(shouldStart(reason: "Connect to the robot first."), "following is unavailable")
+        XCTAssertFalse(shouldStart(face: false), "no confirmed face")
+        XCTAssertFalse(shouldStart(state: .following(since: now)), "a session is already running")
+    }
+
+    func testAutomaticFollowingRestartsAfterAGapButNotAfterARefusal() {
+        func shouldStart(state: FollowState, lastEnded: Date?) -> Bool {
+            AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: state,
+                                   faceTracked: true, lastEnded: lastEnded, now: now)
+        }
+        let ended = FollowState.finished(FollowResult(code: "session_deadline"))
+        XCTAssertFalse(shouldStart(state: ended, lastEnded: now.addingTimeInterval(-1)), "too soon after the last session")
+        XCTAssertTrue(shouldStart(state: ended, lastEnded: now.addingTimeInterval(-AutoFollow.restartGap - 0.1)))
+        XCTAssertTrue(shouldStart(state: .finished(FollowResult(code: "stopped_by_host")), lastEnded: nil))
+        // Refusals that would only repeat.
+        for code in ["auth_bad_mac", "follow_refused_limits_unmeasured", "preflight_refused", "power_latched"] {
+            XCTAssertFalse(shouldStart(state: .finished(FollowResult(code: code)), lastEnded: nil), "retried \(code)")
+        }
+    }
+
+    @MainActor
+    func testStopTurnsAutomaticFollowingOff() {
+        let (robot, usb) = connected(measured: true)
+        defer { usb.close() }
+        robot.followAutomatically = true
+        robot.startFollowing()
+        _ = usb.read()
+        robot.stopFollowing()
+        XCTAssertFalse(robot.followAutomatically, "Stop means stop, not start again in four seconds")
+    }
 }

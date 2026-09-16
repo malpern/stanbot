@@ -17,12 +17,20 @@ struct FollowResult: Equatable {
 
     var needsReboot: Bool { code == "requires_unused_boot" }
 
+    /// Whether starting again straight away makes sense. Refusals about the
+    /// firmware, the passphrase or the servos would only repeat.
+    var retryable: Bool {
+        ["session_complete", "session_deadline", "stopped_by_host", "follow_cooldown", "no_result"].contains(code)
+    }
+
     var summary: String {
         switch code {
         case "session_complete", "session_deadline": "Session finished. The head is powered off."
         case "stopped_by_host": "Stopped. The head is powered off."
         case "follow_refused_limits_unmeasured": "Refused: this firmware has following disabled."
         case "requires_unused_boot": "Refused: one motion session per boot. Reboot the robot to run another."
+        case "follow_cooldown": "The robot is between sessions."
+        case "power_latched": "Refused: the robot's motor power is latched off. Reboot it."
         case "follow_requires_stream_on": "Refused: the camera stream must be on."
         case "preflight_refused": "Refused before moving: the servos were not where the robot expects."
         case "no_result": "No result arrived from the robot."
@@ -33,6 +41,28 @@ struct FollowResult: Equatable {
         case let other where other.hasPrefix("auth_"): "Authorization failed (\(other.dropFirst(5)))."
         default: "Ended early (\(code)). The head is powered off; see the robot's telemetry."
         }
+    }
+}
+
+/// When a session should start by itself. Pure, so the rule is testable without
+/// a robot: only with the toggle on, following available, a confirmed face, no
+/// session in flight, and a gap after the last one (the robot enforces its own
+/// cooldown between sessions).
+enum AutoFollow {
+    static let restartGap: TimeInterval = 4
+
+    static func shouldStart(enabled: Bool, unavailableReason: String?, state: FollowState,
+                            faceTracked: Bool, lastEnded: Date?, now: Date) -> Bool {
+        guard enabled, unavailableReason == nil, faceTracked else { return false }
+        switch state {
+        case .following: return false
+        case .idle: break
+        case .finished(let result):
+            // A refusal that will just repeat is not retried; an ordinary end is.
+            guard result.retryable else { return false }
+        }
+        if let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
+        return true
     }
 }
 
@@ -62,6 +92,9 @@ struct HeadFollowingPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
+                Toggle("Automatic", isOn: $robot.followAutomatically)
+                    .toggleStyle(.switch)
+                    .help("Start a session whenever a face is selected")
                 switch robot.follow {
                 case .following:
                     Button("Stop", systemImage: "stop.fill", role: .destructive) { robot.stopFollowing() }

@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import Security
 
 /// The answer to the robot's challenge: HMAC-SHA256 keyed with the robot's OTA
 /// passphrase over "COMMAND:nonce", as lowercase hex. Must match
@@ -14,44 +13,47 @@ enum CommandAuthorization {
     }
 }
 
-/// The robot's passphrase on this Mac, kept in the login Keychain. It never
-/// leaves the Mac: only answers to one-time challenges are sent.
+/// The robot's passphrase, read from ~/dotfiles/secrets.env with sops when
+/// first needed and kept in memory for the life of the process. Deliberately
+/// not the Keychain: a Keychain item raises a macOS permission dialog whenever
+/// a different binary (the test runner, a rebuilt app) reads it, which is
+/// exactly the interruption this is meant to avoid. It never leaves the Mac;
+/// only answers to one-time challenges are sent.
 enum RobotPassphrase {
-    private static let service = "com.malpern.stanbot-companion.robot-passphrase"
-    private static let account = "stanbot"
+    /// Cache and status behind one lock; `nonisolated(unsafe)` is the claim, and
+    /// the invariant is that nothing touches either outside `state.withLock`.
+    private struct State { var cached: String?; var status = "Not read yet." }
+    private nonisolated(unsafe) static var state = State()
+    private static let lock = NSLock()
 
+    private static func withState<T>(_ body: (inout State) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&state)
+    }
+
+    /// The passphrase, or nil with the reason in `status`.
     static func read() -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account,
-                                    kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data, let value = String(data: data, encoding: .utf8), !value.isEmpty
-        else { return nil }
-        return value
+        withState { state in
+            if let cached = state.cached { return cached }
+            let (value, message) = decrypt()
+            state.cached = value
+            state.status = message
+            return value
+        }
     }
 
-    @discardableResult
-    static func store(_ passphrase: String) -> Bool {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                   kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        guard !passphrase.isEmpty else { return true }
-        var add = base
-        add[kSecValueData as String] = Data(passphrase.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
-    }
+    /// A short, non-secret description of the last read.
+    static var status: String { withState { $0.status } }
 
-    /// Reads STANBOT_OTA_PASSWORD from ~/dotfiles/secrets.env with sops and
-    /// stores it. Returns a short, non-secret description of what happened.
-    static func loadFromSecrets() -> String {
+    /// Forgets the cached value, so the next use decrypts again.
+    static func forget() { withState { $0.cached = nil } }
+
+    private static func decrypt() -> (String?, String) {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let sops = ["/opt/homebrew/bin/sops", "/usr/local/bin/sops"].first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let sops else { return "sops is not installed." }
+        guard let sops = ["/opt/homebrew/bin/sops", "/usr/local/bin/sops"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            return (nil, "sops is not installed.")
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: sops)
         process.arguments = ["-d", "\(home)/dotfiles/secrets.env"]
@@ -61,16 +63,16 @@ enum RobotPassphrase {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = Pipe()
-        do { try process.run() } catch { return "Could not run sops." }
+        do { try process.run() } catch { return (nil, "Could not run sops.") }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else {
-            return "sops could not decrypt the secrets file."
+            return (nil, "sops could not decrypt ~/dotfiles/secrets.env.")
         }
         let prefix = "STANBOT_OTA_PASSWORD="
         guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix(prefix) }) else {
-            return "STANBOT_OTA_PASSWORD is not in the secrets file."
+            return (nil, "STANBOT_OTA_PASSWORD is not in the secrets file.")
         }
-        return store(String(line.dropFirst(prefix.count))) ? "Loaded from secrets." : "Could not save to the Keychain."
+        return (String(line.dropFirst(prefix.count)), "Read from secrets.env.")
     }
 }

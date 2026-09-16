@@ -1482,6 +1482,8 @@ void endTelemetry(bool wasStreaming) {
 }
 
 constexpr uint32_t kFollowSessionMs = 20000;
+constexpr uint32_t kFollowCooldownMs = 3000;  // between sessions; see runFollowSession
+uint32_t followEndedMs = 0;
 constexpr uint32_t kFollowFeedbackMs = 40;
 constexpr int kFollowEnvelopeMargin = 16;
 constexpr int kFollowStallDistance = 16;
@@ -1537,9 +1539,16 @@ void runFollowSession() {
     endTelemetry(wasStreaming);
     return;
   }
-  if (disableOnlyLatched || powerWindowUsed) {
+  // Unlike the one-shot routines, following may run again without a reboot:
+  // each session opens its own power window with its own 20 s cutoff armed
+  // once, verifies power off at the end, and the app follows continuously.
+  // A latched enable fault still blocks it, and sessions are spaced by
+  // kFollowCooldownMs so a fault cannot be retried in a tight loop. Following
+  // deliberately does not consume powerWindowUsed, which still gates the
+  // one-shot sweeps and power tests to one per boot.
+  if (disableOnlyLatched || (followEndedMs != 0 && millis() - followEndedMs < kFollowCooldownMs)) {
     const bool wasStreaming = beginTelemetry();
-    Telemetry.println("SBPW {\"error\":\"requires_unused_boot\"}");
+    Telemetry.printf("SBPW {\"error\":\"%s\"}\n", disableOnlyLatched ? "power_latched" : "follow_cooldown");
     endTelemetry(wasStreaming);
     return;
   }
@@ -1549,7 +1558,6 @@ void runFollowSession() {
     Telemetry.println("SBPW {\"error\":\"follow_requires_stream_on\"}");
     return;
   }
-  powerWindowUsed = true;
   followStopRequested.store(false);
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
@@ -1742,6 +1750,7 @@ void runFollowSession() {
                 captureDecoupled ? "true" : "false", (unsigned long)sessionFrames, (unsigned long)captureStopMs,
                 failServo, failAck, failState, failError);
   endTelemetry(wasStreaming);
+  followEndedMs = millis();
   Telemetry.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
                 enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
 }

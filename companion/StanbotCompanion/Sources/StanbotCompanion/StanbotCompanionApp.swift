@@ -246,6 +246,11 @@ final class RobotConnection: ObservableObject {
     }
     private let enhancer = VideoEnhancer()
     @Published private(set) var follow: FollowState = .idle
+    /// Start a session whenever a face is confirmed, without pressing Follow.
+    @Published var followAutomatically: Bool = UserDefaults.standard.object(forKey: "StanbotFollowAutomatically") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(followAutomatically, forKey: "StanbotFollowAutomatically") }
+    }
+    private var lastFollowEnded: Date?
     private var targetSequence: UInt32 = 0
     /// Every text line from the robot during a session and shortly after, so the
     /// trace (SBPD), result (SBMV), loop stats (SBFL) and power summary (SBPW)
@@ -346,7 +351,8 @@ final class RobotConnection: ObservableObject {
         // The Keychain item belongs to the signed app. Reading it from the test
         // runner would raise a macOS permission dialog mid-run, so under XCTest
         // the default is no passphrase and tests that need one inject it.
-        let underTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        // Tests never shell out to sops; they inject what they need.
+        let underTests = NSClassFromString("XCTestCase") != nil
         self.passphrase = passphrase ?? (underTests ? { nil } : { RobotPassphrase.read() })
         self.networkHost = networkHost
         self.networkPort = networkPort
@@ -625,6 +631,7 @@ final class RobotConnection: ObservableObject {
             : object["error"] as? String
         guard let code else { return }
         follow = .finished(FollowResult(code: code))
+        lastFollowEnded = Date()
         lastAction = "Head following: \(FollowResult(code: code).summary)"
         followLogUntil = Date().addingTimeInterval(5)   // the power summary follows the result
     }
@@ -730,6 +737,9 @@ final class RobotConnection: ObservableObject {
     }
 
     func stopFollowing() {
+        // An explicit stop also turns automatic following off: otherwise it
+        // would start again a few seconds later, which is not what Stop means.
+        followAutomatically = false
         guard case .following = follow else { return }
         // Allowed on either link without authorization: stopping only makes the
         // robot safer. The robot also ends the session by itself.
@@ -870,6 +880,11 @@ final class RobotConnection: ObservableObject {
                 if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
                     self.sendFollowTarget(box)
                     sent = box
+                }
+                if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
+                                          state: self.follow, faceTracked: self.faceSelection.state == .tracking,
+                                          lastEnded: self.lastFollowEnded, now: Date()) {
+                    self.startFollowing()
                 }
                 self.logFollowFrame(faces: boxes, sent: sent, receivedAt: receivedAt)
                 self.display(image, receivedAt: receivedAt, session: session)
@@ -1051,9 +1066,9 @@ private struct CompanionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
+                    HeadFollowingPanel()
                     cameraPanel
                     statusGrid
-                    HeadFollowingPanel()
                     expressionPicker
                     activity
                 }

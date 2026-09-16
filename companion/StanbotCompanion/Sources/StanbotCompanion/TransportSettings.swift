@@ -41,7 +41,6 @@ enum TransportPreference: String, CaseIterable, Identifiable, Sendable {
 
 struct TransportSettingsView: View {
     @EnvironmentObject private var robot: RobotConnection
-    @State private var typedPassphrase = ""
     @State private var passphraseStatus: String?
 
     var body: some View {
@@ -63,23 +62,18 @@ struct TransportSettingsView: View {
             Divider().padding(.vertical, 6)
 
             Section {
-                LabeledContent("Robot passphrase", value: robot.passphraseAvailable ? "Stored in Keychain" : "Not set")
+                LabeledContent("Robot passphrase", value: robot.passphraseAvailable ? "Available" : "Not available")
                 HStack {
-                    Button("Load from Secrets") {
-                        passphraseStatus = RobotPassphrase.loadFromSecrets()
+                    Button("Re-read from Secrets") {
+                        RobotPassphrase.forget()
                         robot.refreshPassphrase()
+                        passphraseStatus = RobotPassphrase.status
                     }
-                    SecureField("Or enter it", text: $typedPassphrase)
-                        .onSubmit {
-                            passphraseStatus = RobotPassphrase.store(typedPassphrase) ? "Saved." : "Could not save."
-                            typedPassphrase = ""
-                            robot.refreshPassphrase()
-                        }
+                    if let passphraseStatus {
+                        Text(passphraseStatus).font(.callout).foregroundStyle(.secondary)
+                    }
                 }
-                if let passphraseStatus {
-                    Text(passphraseStatus).font(.callout).foregroundStyle(.secondary)
-                }
-                Text("Lets head following start and the robot reboot over Wi-Fi. The passphrase stays on this Mac; the robot sends a one-time challenge and checks the answer.")
+                Text("Read from ~/dotfiles/secrets.env with sops when needed, and kept only in memory. It lets head following start and the robot reboot over Wi-Fi: the passphrase stays on this Mac, and the robot checks a one-time challenge.")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
