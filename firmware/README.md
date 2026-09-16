@@ -8,14 +8,16 @@ renderer with USB camera streaming. It starts in Normal, blinks about every
 and `E,<name>` for all eighteen expressions. Input lines are bounded and unknown
 commands are ignored. No target or motor commands are accepted.
 
-The default stream is 320×240 JPEG at quality 90 and a 200 ms minimum interval
-(measured about 3.5 fps). The sensor remains VGA; a 2x2 box average downsamples
-before JPEG compression. Quality 90 was chosen by sweeping on hardware: at QVGA
-the frame rate is capped by sensor capture, so bitrate is effectively free.
+The default stream is 320×240 JPEG at quality 90, encoded with Espressif's
+`esp_new_jpeg` (vendored in `lib/EspNewJpeg`), and a 100 ms interval, which asks
+for every sensor frame: measured 5.2 fps over USB, against 3.5 fps with the
+previous encoder. The sensor remains VGA; a 2x2 box average downsamples before
+compression. `frame_pacer.h` decides which captured frames to send.
 See [camera performance](../docs/camera-performance.md) for measurements and limits.
 Diagnostic newline commands are `P` (timing stats), `Z` (reset stats),
 `R,750|333|200|100` (choose one interval in ms), `M,640|320|raw320`
-(choose one output mode), and `J,<10..95>` (encoder quality, for sweeping). Raw mode is benchmark-only, not supported by the app.
+(choose one output mode), `J,<10..95>` (encoder quality, for sweeping), and
+`K,0|1` (USB only: 0 selects the old esp32-camera jpge encoder, 1 esp_new_jpeg). Raw mode is benchmark-only, not supported by the app.
 JPEG uses SBFR version 1; raw uses version 2 with 153600 YUYV bytes followed by a
 little-endian CRC32. Stats use a separate `SBST ` JSON line between packets.
 

@@ -44,6 +44,51 @@ Two independent defects, both fixed:
 Verified on the robot: the app locks on within about a second and holds.
 
 
+## Faster encoder and frame pacing — 2026-09-16
+
+**Espressif's `esp_new_jpeg` replaced the esp32-camera jpge encoder.** Both stay
+in the build; `K,0` and `K,1` switch between them over USB, so the comparison
+ran on one image, one camera and one scene. `companion/benchmark_transport.py`,
+20 s per row, over USB, quality 90:
+
+| Setting | Encoder | fps | Interval p95 / max ms | Interval spread ms | Encode ms/frame |
+| --- | --- | --- | --- | --- | --- |
+| QVGA, 100 ms | jpge | 3.49 | 394 / 400 | 94.6 | ~190 (46 shrink) |
+| QVGA, 100 ms | esp_new_jpeg | **5.23** | **203 / 215** | **7.5** | ~95 (48 shrink) |
+| QVGA, 200 ms | jpge | 3.48 | 395 / 399 | 92.3 | ~193 |
+| QVGA, 200 ms | esp_new_jpeg | 4.93 | 217 / 391 | 43.3 | ~91 |
+| VGA, 100 ms | jpge | 1.55 | 650 / 748 | 23.9 | ~484 |
+| VGA, 100 ms | esp_new_jpeg | **3.49** | 386 / 388 | 87.3 | ~158 |
+
+The encode column is per captured frame and includes the 2x2 shrink, so JPEG
+itself fell from roughly 145 ms to roughly 48 ms at QVGA, and from 484 to 158 at
+VGA. Frame sizes are within about 10% at the same quality number. The eyes'
+worst stall was unchanged (67 ms against 69), and saved frames from both encoders
+were checked by eye: no artifacts, same colour. Espressif's README claims about
+22 ms for QVGA; the difference is unexplained, possibly because frames live in
+PSRAM.
+
+**At QVGA the stream now runs at the sensor's own rate,** about 5.2 fps with the
+pixel clock slowed for the tearing fix. The next ceiling is that clock, not
+compression.
+
+**The faster encoder exposed a scheduling bug that halved the rate.** The loop
+dequeues every sensor frame (about every 192 ms) and used to send one only if
+it arrived at least `interval` after the last send. At 200 ms each frame came
+about 8 ms early, so every other one was dropped: 2.59 fps, worse than the old
+encoder. The old encoder hid this, because after ~190 ms of encoding the
+deadline had always passed. `frame_pacer.h` now keeps a cadence and accepts a
+frame up to half an interval (at most 100 ms) early; `companion/test_frame_pacer.cpp`
+simulates the sensor and fails against the old rule. Even so, 200 ms averages
+5.0 fps by skipping about one frame in 26, and each skip is a 390 ms hitch, so
+the default interval is now 100 ms, which sends every frame.
+
+**Over Wi-Fi the gain is smaller, because the radio link became the limit.**
+With the robot at -70 dBm (it had been -39 earlier that day), alternating runs
+gave jpge 3.15 and 2.94 fps against esp_new_jpeg 3.74 and 3.73, with sending
+taking about 100-118 ms per frame in both. Stronger signal should move Wi-Fi
+closer to the USB figures; not yet measured.
+
 ## Bitrate and downsampling — 2026-09-15
 
 Two changes, both aimed at image quality rather than frame rate.

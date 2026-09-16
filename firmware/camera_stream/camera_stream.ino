@@ -29,6 +29,8 @@
 #include <ArduinoOTA.h>
 #include <Preferences.h>
 #include "downsample.h"
+#include "frame_pacer.h"
+#include <esp_jpeg_enc.h>       // Espressif's optimized encoder; firmware/lib/EspNewJpeg
 #include "boot_screen.h"
 
 // Build identity, reported by the V command. firmware/build.sh generates
@@ -65,17 +67,24 @@ constexpr int kDataPins[] = {39, 40, 41, 42, 15, 16, 48, 47};
 // the same value does cost frame rate, since encode time grows with it.
 constexpr uint8_t kJpegQuality = 90;
 constexpr size_t kMaxJpegBytes = 300000;
-constexpr uint32_t kFrameIntervalMs = 200;  // Requests up to 5 fps; measured ~3.5 fps.
+// 100 ms asks for every sensor frame (~5.2 fps on this unit). 200 ms averages
+// 5.0 by skipping about one frame in 26, and each skip is a visible 390 ms
+// hitch, so the default asks for all of them. See docs/camera-performance.md.
+constexpr uint32_t kFrameIntervalMs = 100;
 
 ESPVideoCaptureDevClass capture;
 uint32_t sequence = 0;
-uint32_t nextFrameAtMs = 0;
+stanbot::FramePacer framePacer;  // which captured frames to send; see frame_pacer.h
 std::atomic<bool> streamEnabled{false};
 std::atomic<uint32_t> frameIntervalMs{kFrameIntervalMs};
 // 0: VGA JPEG; 1: QVGA JPEG; 2: benchmark-only QVGA raw YUYV + CRC32.
 std::atomic<uint8_t> imageMode{1};
 std::atomic<uint8_t> jpegQuality{kJpegQuality};
 uint8_t* smallFrame = nullptr;
+// 1: esp_new_jpeg (default). 0: the esp32-camera jpge encoder behind fmt2jpg,
+// kept selectable with the USB-only K,0 / K,1 commands so the two can be
+// compared on the same build, camera and scene.
+std::atomic<uint8_t> jpegEncoder{1};
 std::atomic<bool> statsRequested{false}, resetStats{false};
 std::atomic<bool> versionRequested{false};
 // Bump when a command, a reply line, or the SBFR packet format changes in a way
@@ -106,6 +115,7 @@ uint32_t lastEyeMs = 0;
 struct PipelineStats {
   uint32_t startedMs = 0, captures = 0, sent = 0, failures = 0;
   uint64_t captureWaitUs = 0, encodeUs = 0, enqueueUs = 0, jpegBytes = 0;
+  uint64_t scaleUs = 0;  // VGA-to-QVGA box average, also included in encodeUs
 } stats;
 StanbotEyes eyes;
 stanbot::BootScreen bootScreen;
@@ -485,6 +495,8 @@ void handleCommand(const char* line) {
   else if (strcmp(line, "M,640") == 0) imageMode.store(0);
   else if (strcmp(line, "M,320") == 0) imageMode.store(1);
   else if (strcmp(line, "M,raw320") == 0) imageMode.store(2);
+  else if (strcmp(line, "K,0") == 0) jpegEncoder.store(0);
+  else if (strcmp(line, "K,1") == 0) jpegEncoder.store(1);
   else if (strncmp(line, "J,", 2) == 0) {
     const long value = strtol(line + 2, nullptr, 10);
     if (value >= 10 && value <= 95) jpegQuality.store(static_cast<uint8_t>(value));
@@ -626,22 +638,86 @@ bool beginCamera() {
   return capture.startCapture();
 }
 
+// esp_new_jpeg wrapper. One encoder handle, reopened only when the frame size
+// changes, and one output buffer reused for every frame, so the stream does no
+// per-frame allocation. The library needs 16-byte-aligned input: QVGA frames are
+// downsampled into an aligned buffer already, and a VGA frame from the driver is
+// copied into one only if it happens not to be aligned.
+struct FastJpeg {
+  jpeg_enc_handle_t handle = nullptr;
+  int width = 0, height = 0;
+  uint8_t quality = 0;
+  uint8_t* aligned = nullptr;
+  size_t alignedSize = 0;
+  uint8_t* output = nullptr;
+
+  bool encode(const uint8_t* yuyv, int w, int h, uint8_t q, const uint8_t** out, size_t* length) {
+    if (!output) output = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!output) return false;
+    if (handle && (w != width || h != height)) { jpeg_enc_close(handle); handle = nullptr; }
+    if (!handle) {
+      jpeg_enc_config_t config = DEFAULT_JPEG_ENC_CONFIG();
+      config.width = w;
+      config.height = h;
+      config.src_type = JPEG_PIXEL_FORMAT_YCbYCr;
+      config.subsampling = JPEG_SUBSAMPLE_420;  // as the jpge path produced
+      config.quality = q;
+      if (jpeg_enc_open(&config, &handle) != JPEG_ERR_OK) { handle = nullptr; return false; }
+      width = w; height = h; quality = q;
+    }
+    if (q != quality) {
+      if (jpeg_enc_set_quality(handle, q) != JPEG_ERR_OK) return false;
+      quality = q;
+    }
+    const size_t size = static_cast<size_t>(w) * h * 2;
+    const uint8_t* source = yuyv;
+    if (reinterpret_cast<uintptr_t>(yuyv) & 15u) {
+      if (alignedSize < size) {
+        heap_caps_free(aligned);
+        aligned = static_cast<uint8_t*>(heap_caps_aligned_alloc(16, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        alignedSize = aligned ? size : 0;
+      }
+      if (!aligned) return false;
+      memcpy(aligned, yuyv, size);
+      source = aligned;
+    }
+    int produced = 0;
+    if (jpeg_enc_process(handle, source, static_cast<int>(size), output, static_cast<int>(kMaxJpegBytes), &produced) != JPEG_ERR_OK ||
+        produced <= 0) {
+      return false;
+    }
+    *out = output;
+    *length = static_cast<size_t>(produced);
+    return true;
+  }
+} fastJpeg;
+
 void sendFrame(const ESPVideoBufferClass& frame) {
   uint8_t* jpeg = nullptr;
   size_t jpegLength = 0;
   const uint32_t encodeStart = micros();
   const uint8_t mode = imageMode.load();
-  if (mode && !smallFrame) smallFrame = static_cast<uint8_t*>(heap_caps_malloc(320 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (mode && !smallFrame) smallFrame = static_cast<uint8_t*>(heap_caps_aligned_alloc(16, 320 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (mode && (!smallFrame || frame.getWidth() != 640 || frame.getHeight() != 480 || frame.size() != 640 * 480 * 2)) {
     ++stats.failures;
     return;
   }
   if (mode) {
+    const uint32_t scaleStart = micros();
     boxAverageYuyvHalf(frame.data(), smallFrame);
+    stats.scaleUs += static_cast<uint32_t>(micros() - scaleStart);
   }
   const bool raw = mode == 2;
+  const bool fast = !raw && jpegEncoder.load() == 1;
+  const bool ownsJpeg = !raw && !fast;  // fmt2jpg mallocs its output; the others do not
   bool encoded = true;
   if (raw) { jpeg = smallFrame; jpegLength = 320 * 240 * 2; }
+  else if (fast) {
+    const uint8_t* output = nullptr;
+    encoded = fastJpeg.encode(mode ? smallFrame : frame.data(), mode ? 320 : frame.getWidth(),
+                              mode ? 240 : frame.getHeight(), jpegQuality.load(), &output, &jpegLength);
+    jpeg = const_cast<uint8_t*>(output);
+  }
   else encoded = fmt2jpg(mode ? smallFrame : frame.data(), mode ? 320 * 240 * 2 : frame.size(),
                          mode ? 320 : frame.getWidth(), mode ? 240 : frame.getHeight(),
                          PIXFORMAT_YUV422, jpegQuality.load(), &jpeg, &jpegLength);
@@ -649,7 +725,7 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   if (raw) putUInt32LE(checksum, esp_rom_crc32_le(0, jpeg, jpegLength));
   stats.encodeUs += static_cast<uint32_t>(micros() - encodeStart);
   if (!encoded || jpeg == nullptr || jpegLength == 0 || jpegLength > kMaxJpegBytes) {
-    if (jpeg != nullptr && !raw) free(jpeg);
+    if (jpeg != nullptr && ownsJpeg) free(jpeg);
     ++stats.failures;
     return;
   }
@@ -667,7 +743,7 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   stats.enqueueUs += static_cast<uint32_t>(micros() - enqueueStart);
   if (sent) { ++stats.sent; stats.jpegBytes += jpegLength; }
   else ++stats.failures;
-  if (!raw) free(jpeg);
+  if (ownsJpeg) free(jpeg);
 }
 
 SCSCL servoBus;
@@ -1233,7 +1309,7 @@ void serviceFrame(bool onlyWhenDue = false) {
   // due, and the servo writes failed alongside it.
   if (onlyWhenDue) {
     if (!streamEnabled.load()) return;
-    if (static_cast<int32_t>(millis() - nextFrameAtMs) < 0) return;
+    if (!framePacer.due(millis(), frameIntervalMs.load())) return;
   }
   const uint32_t captureStart = micros();
   ESPVideoBufferClass frame = capture.captureBuffer();
@@ -1241,8 +1317,9 @@ void serviceFrame(bool onlyWhenDue = false) {
   if (!frame.valid()) return;
   ++stats.captures;
   const uint32_t now = millis();
-  if (streamEnabled.load() && static_cast<int32_t>(now - nextFrameAtMs) >= 0) {
-    nextFrameAtMs = now + frameIntervalMs.load();
+  const uint32_t interval = frameIntervalMs.load();
+  if (streamEnabled.load() && framePacer.due(now, interval)) {
+    framePacer.sent(now, interval);
     sendFrame(frame);
   }
 }
@@ -1619,15 +1696,16 @@ void cameraTask(void*) {
     }
     if (powerTestRequested.exchange(false)) testServoPower();
     if (servoProbeRequested.exchange(false)) probeServos();
-    if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); nextFrameAtMs = 0; }
+    if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
     if (statsRequested.exchange(false)) {
-      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu}\n",
+      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu,\"scale_us\":%llu,\"encoder\":\"%s\"}\n",
         (unsigned long)(millis() - stats.startedMs), (unsigned long)stats.captures,
         (unsigned long)stats.sent, (unsigned long)stats.failures,
         (unsigned long long)stats.captureWaitUs, (unsigned long long)stats.encodeUs,
         (unsigned long long)stats.enqueueUs, (unsigned long long)stats.jpegBytes,
-        (unsigned long)maxEyeGapMs.load());
+        (unsigned long)maxEyeGapMs.load(), (unsigned long long)stats.scaleUs,
+        jpegEncoder.load() == 1 ? "esp_new_jpeg" : "jpge");
     }
     serviceFrame();
     vTaskDelay(1);

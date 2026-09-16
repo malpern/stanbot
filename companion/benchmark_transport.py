@@ -107,9 +107,10 @@ def percentile(values, p):
     return ordered[min(len(ordered) - 1, int(round(p / 100 * (len(ordered) - 1))))]
 
 
-def run_config(name, commands, video, status, seconds):
+def run_config(name, commands, video, status, seconds, save_dir=None):
     links = [(video, Demuxer())] + ([(status, Demuxer())] if status else [])
     frames, texts = [], []
+    last_payload = [b""]
     pending_v, latencies = None, []
 
     def on_event(link, kind, value, now):
@@ -118,6 +119,7 @@ def run_config(name, commands, video, status, seconds):
             if link is video:
                 sequence, payload = value
                 frames.append((now, sequence, len(payload)))
+                last_payload[0] = payload
         else:
             line = value if isinstance(value, str) else value.decode("utf-8", "replace")
             texts.append(line)
@@ -127,10 +129,11 @@ def run_config(name, commands, video, status, seconds):
 
     video.send("X\n")
     pump(links, 0.6, lambda *a: None)
+    # Setup goes over USB when both links are open: Wi-Fi refuses USB-only
+    # diagnostics such as K, (network_policy.h), and the rest work on either.
     for command in commands:
-        video.send(command + "\n")
-    if status:
-        status.send("Z\n")
+        (status or video).send(command + "\n")
+    (status or video).send("Z\n")   # per-config firmware stats, whichever link carries text
     video.send("S\n")
     pump(links, 2.0, lambda *a: None)       # let the rate settle; discard
     frames.clear(); texts.clear()
@@ -170,7 +173,20 @@ def run_config(name, commands, video, status, seconds):
         "commands_answered": len(latencies),
         "demux_dropped_bytes": links[0][1].dropped,
     }
+    if not stats and status is None:
+        # USB-only runs: the stats reply arrives on the video link itself.
+        video.send("P\n")
+        pump(links, 1.0, on_event)
+        stats = next((json.loads(t[5:]) for t in reversed(texts) if t.startswith("SBST")), None)
+    if save_dir and frames:
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, name + (".jpg" if not name.startswith("raw") else ".yuyv")), "wb") as f:
+            f.write(last_payload[0])
     if stats and stats.get("sent"):
+        result["encoder"] = stats.get("encoder")
+        result["max_eye_gap_ms"] = stats.get("max_eye_gap_ms")
+        if "scale_us" in stats:
+            result["firmware_scale_ms_mean"] = round(stats["scale_us"] / max(1, stats["captures"]) / 1000, 1)
         result["firmware_sent"] = stats["sent"]
         result["firmware_send_failures"] = stats["failures"]
         result["firmware_encode_ms_mean"] = round(stats["encode_us"] / max(1, stats["captures"]) / 1000, 1)
@@ -185,6 +201,10 @@ def main():
     parser.add_argument("--usb", help="serial device; video over USB unless --tcp is given")
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--only", help="comma-separated config names")
+    parser.add_argument("--setup", default="",
+                        help="semicolon-separated commands sent before every config, e.g. 'K,0' for the jpge encoder")
+    parser.add_argument("--label", default="", help="suffix for config names, e.g. _jpge")
+    parser.add_argument("--save-frames", help="directory for the last frame of each config")
     args = parser.parse_args()
     if not args.tcp and not args.usb:
         parser.error("give --tcp, --usb, or both")
@@ -205,9 +225,11 @@ def main():
         for name, commands in CONFIGS:
             if wanted and name not in wanted:
                 continue
+            setup = [c for c in args.setup.split(";") if c]   # commands contain commas
             print(json.dumps({"transport": "wifi" if tcp else "usb",
-                              **run_config(name, commands, video, status, args.seconds)}), flush=True)
-        video.send("M,320\nJ,90\nR,200\n")   # leave the documented defaults
+                              **run_config(name + args.label, setup + commands, video, status,
+                                           args.seconds, args.save_frames)}), flush=True)
+        video.send("M,320\nJ,90\nR,100\nK,1\n")   # leave the documented defaults
     finally:
         if tcp:
             tcp.close()
