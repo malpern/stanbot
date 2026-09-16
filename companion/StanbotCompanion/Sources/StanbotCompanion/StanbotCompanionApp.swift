@@ -27,6 +27,10 @@ struct StanbotCompanionApp: App {
                     .keyboardShortcut("r", modifiers: [.command])
             }
         }
+        Settings {
+            TransportSettingsView()
+                .environmentObject(robot)
+        }
         Window("About Stanbot", id: "about") {
             AboutView()
         }
@@ -256,10 +260,31 @@ final class RobotConnection: ObservableObject {
     /// nothing hardcodes an address that DHCP can change.
     private let networkHost: String
     private let networkPort: UInt16
-    /// Use Wi-Fi even when a USB device is present, so the network link can be
-    /// exercised without moving the cable:
-    /// `open Stanbot.app --args -StanbotTransport wifi`
-    private let preferNetwork: Bool
+    /// Which links the app may use; see TransportPreference. Changing it
+    /// reconnects immediately.
+    @Published var transport: TransportPreference {
+        didSet {
+            guard transport != oldValue else { return }
+            if persistTransport {
+                UserDefaults.standard.set(transport.rawValue, forKey: TransportPreference.defaultsKey)
+            }
+            connect()
+        }
+    }
+    /// False when a test passed the preference in, so tests never write defaults.
+    private let persistTransport: Bool
+    /// How often an automatic connection that fell back to USB tries Wi-Fi again.
+    private let wifiRetryInterval: TimeInterval
+    /// An attempt that has neither connected nor failed by now is treated as failed,
+    /// so a silent network cannot leave automatic mode stuck short of its USB fallback.
+    private static let wifiConnectTimeout: TimeInterval = 6
+    private var networkStartedAt = Date.distantPast
+    /// A background Wi-Fi attempt made while automatic mode is on USB. Only
+    /// if it connects does the app leave USB, so a failed try costs nothing.
+    private var probe: NetworkReader?
+    private var probeID = UUID()
+    private var probeStartedAt = Date.distantPast
+    private var nextWiFiProbe = Date.distantPast
     /// True only while the current Wi-Fi connection is ready. `usingNetwork`
     /// says which transport is chosen; this says whether it is up.
     private var networkUp = false
@@ -281,10 +306,12 @@ final class RobotConnection: ObservableObject {
 
     init(port: String? = nil, automaticPolling: Bool = true,
          networkHost: String = "stanbot.local", networkPort: UInt16 = 3333,
-         preferNetwork: Bool = UserDefaults.standard.string(forKey: "StanbotTransport") == "wifi") {
+         transport: TransportPreference? = nil, wifiRetryInterval: TimeInterval = 30) {
         self.networkHost = networkHost
         self.networkPort = networkPort
-        self.preferNetwork = preferNetwork
+        self.transport = transport ?? .stored
+        self.persistTransport = transport == nil
+        self.wifiRetryInterval = wifiRetryInterval
         selectedPort = port ?? availablePorts.first
         connect()
         guard automaticPolling else { return }
@@ -301,6 +328,16 @@ final class RobotConnection: ObservableObject {
             .sorted()
     }
 
+    /// One line for Settings: which link is in use right now.
+    var linkSummary: String {
+        switch connection {
+        case .connected where usingNetwork: "Wi-Fi (\(networkHost))"
+        case .connected: "USB (\(portName))"
+        case .connecting: "Connecting over Wi-Fi…"
+        case .disconnected, .unavailable: "Not connected"
+        }
+    }
+
     var portName: String {
         if usingNetwork { return networkHost }
         guard let selectedPort else { return "No USB device" }
@@ -310,25 +347,41 @@ final class RobotConnection: ObservableObject {
     func connect() {
         closeSerial()
         cameraState = wantsCamera ? .waiting : .off
-        guard !preferNetwork, let selectedPort, FileManager.default.fileExists(atPath: selectedPort) else {
-            // No cable, or the device vanished: the robot may be on Wi-Fi with
-            // the cable in its base carrying power only, which is the normal
-            // arrangement once provisioned. Try the network rather than
-            // retrying a USB device that is not there.
+        switch transport {
+        case .usb:
+            if !connectUSB() && connection != .unavailable {
+                connection = .unavailable
+            }
+        case .wifi, .automatic:
+            // Automatic tries Wi-Fi first and falls back to USB from
+            // networkStateChanged, once the attempt has actually failed.
             connectNetwork()
-            return
+        }
+    }
+
+    /// Opens the USB link. Returns false, with `lastAction` saying why, when
+    /// there is no usable device. Reopens only the selected device and never
+    /// switches to a different one; with none selected, adopts the first.
+    @discardableResult
+    private func connectUSB(afterWiFi reason: String? = nil) -> Bool {
+        if selectedPort == nil { selectedPort = availablePorts.first }
+        guard let selectedPort, FileManager.default.fileExists(atPath: selectedPort) else {
+            connection = .unavailable
+            lastAction = reason.map { "Wi-Fi unavailable (\($0)), and no USB device is connected." }
+                ?? "No USB device. Waiting for StackChan to be plugged in."
+            return false
         }
         let fd = Darwin.open(selectedPort, O_RDWR | O_NOCTTY | O_NONBLOCK)
         guard fd >= 0 else {
             connection = .unavailable
-            lastAction = "Couldn’t open \(portName)."
-            return
+            lastAction = "Couldn’t open \(URL(fileURLWithPath: selectedPort).lastPathComponent)."
+            return false
         }
         var settings = termios()
         guard tcgetattr(fd, &settings) == 0 else {
             Darwin.close(fd)
             connection = .unavailable
-            return
+            return false
         }
         cfmakeraw(&settings)
         settings.c_cflag |= tcflag_t(CLOCAL | CREAD)
@@ -336,7 +389,7 @@ final class RobotConnection: ObservableObject {
         guard tcsetattr(fd, TCSANOW, &settings) == 0 else {
             Darwin.close(fd)
             connection = .unavailable
-            return
+            return false
         }
         serialFD = fd
         usingNetwork = false
@@ -344,14 +397,21 @@ final class RobotConnection: ObservableObject {
                               onChunk: { [weak self] chunk in self?.handle(chunk) },
                               onClosed: { [weak self] in self?.disconnected() })
         connection = .connected(selectedPort)
-        lastAction = "Connected locally through \(portName). Motion remains locked."
+        if let reason {
+            lastAction = "Wi-Fi unavailable (\(reason)); using USB through \(portName). Will return to Wi-Fi when it is back."
+        } else {
+            lastAction = "Connected locally through \(portName). Motion remains locked."
+        }
+        nextWiFiProbe = Date().addingTimeInterval(wifiRetryInterval)
         requestVersion()
         if wantsCamera { startCamera() }
+        return true
     }
 
     private func connectNetwork() {
         usingNetwork = true
         networkUp = false
+        networkStartedAt = Date()
         connection = .connecting
         lastAction = "Looking for \(networkHost) on the network."
         let id = UUID()
@@ -389,7 +449,56 @@ final class RobotConnection: ObservableObject {
             lastAction = "\(networkHost): \(detail)"
             cameraState = wantsCamera ? .waiting : .off
             nextReconnect = Date().addingTimeInterval(3)
+            if transport == .automatic && connectUSB(afterWiFi: detail) { return }
         }
+    }
+
+    /// Automatic mode on USB: try Wi-Fi alongside, and move over only once it
+    /// is actually connected.
+    private func startWiFiProbe() {
+        let id = UUID()
+        probeID = id
+        probeStartedAt = Date()
+        probe = NetworkReader(
+            host: networkHost, port: networkPort,
+            onChunk: { [weak self] chunk in
+                guard let self, self.networkReaderID == id else { return }
+                self.handle(chunk)
+            },
+            onState: { [weak self] up, detail in
+                guard let self else { return }
+                if self.networkReaderID == id {        // promoted: an ordinary Wi-Fi link now
+                    self.networkStateChanged(up, detail)
+                } else if self.probeID == id {
+                    up ? self.promoteProbe() : self.endProbe()
+                }
+            })
+    }
+
+    private func endProbe() {
+        probeID = UUID()
+        probe?.cancel()
+        probe = nil
+        nextWiFiProbe = Date().addingTimeInterval(wifiRetryInterval)
+    }
+
+    private func promoteProbe() {
+        guard let link = probe else { return }
+        let id = probeID
+        probe = nil
+        probeID = UUID()
+        // Leave USB. Drop the descriptor before cancelling, as closeSerial does.
+        serialFD = -1
+        reader?.cancel()
+        reader = nil
+        generation = UUID()
+        cameraImage = nil
+        resetFaces()
+        network = link
+        networkReaderID = id
+        usingNetwork = true
+        networkStateChanged(true, "connected")
+        lastAction = "Wi-Fi is back; switched from USB to \(networkHost). Motion remains locked."
     }
 
     func startCamera() {
@@ -428,6 +537,9 @@ final class RobotConnection: ObservableObject {
         networkUp = false
         network?.cancel()
         network = nil
+        probeID = UUID()
+        probe?.cancel()
+        probe = nil
         generation = UUID()
         cameraImage = nil
         firmware = .unknown
@@ -482,19 +594,27 @@ final class RobotConnection: ObservableObject {
         faceSelection.expire(at: ProcessInfo.processInfo.systemUptime)
         publishFaces()
         guard serialFD >= 0 || networkUp else {
-            // A Wi-Fi attempt in flight reports its own outcome; cancelling it
-            // here would restart it every tick and it would never complete.
-            if network != nil { return }
-            // Reopen only the selected device; never switch to another USB device.
-            if Date() >= nextReconnect, let selectedPort,
-               FileManager.default.fileExists(atPath: selectedPort) {
+            if network != nil {
+                // A Wi-Fi attempt in flight reports its own outcome; cancelling it
+                // every tick would mean it never completes. Only give up on one
+                // that has gone silent.
+                if Date().timeIntervalSince(networkStartedAt) > Self.wifiConnectTimeout {
+                    networkStateChanged(false, "no answer from the robot")
+                }
+                return
+            }
+            if Date() >= nextReconnect {
                 nextReconnect = Date().addingTimeInterval(2)
-                connect()
-            } else if Date() >= nextReconnect {
-                nextReconnect = Date().addingTimeInterval(3)
                 connect()
             }
             return
+        }
+        if transport == .automatic && serialFD >= 0 {
+            if probe == nil, Date() >= nextWiFiProbe {
+                startWiFiProbe()
+            } else if probe != nil, Date().timeIntervalSince(probeStartedAt) > Self.wifiConnectTimeout {
+                endProbe()
+            }
         }
         if firmware == .asking, Date().timeIntervalSince(versionAskedAt) > Self.versionRetryInterval {
             if versionAttempts < Self.versionMaxAttempts {

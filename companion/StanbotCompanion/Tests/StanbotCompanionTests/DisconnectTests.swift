@@ -20,7 +20,7 @@ final class DisconnectTests: XCTestCase {
         var slave: Int32 = -1
         var name = [CChar](repeating: 0, count: 128)
         XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
-        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false, transport: .usb)
         robot.startCamera()
         // A partial packet and garbage must not crash or survive a disconnect.
         let noise = Array("garbageSBFR".utf8)
@@ -57,7 +57,7 @@ final class DisconnectTests: XCTestCase {
         XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
         defer { Darwin.close(slave); Darwin.close(master) }
         // Connecting alone must request the stream; nothing calls startCamera().
-        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false, transport: .usb)
         XCTAssertEqual(robot.connection, .connected(String(cString: name)))
         XCTAssertEqual(robot.cameraState, .waiting)
         // Every connect asks for the firmware version before the stream.
@@ -85,7 +85,7 @@ final class DisconnectTests: XCTestCase {
         var slave: Int32 = -1
         var name = [CChar](repeating: 0, count: 128)
         XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
-        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false, transport: .usb)
         XCTAssertEqual(robot.firmware, .asking)
         let reply = #"SBVR {"sketch":"camera_stream","commit":"abcdef123456","dirty":false,"built":"2026-09-16T18:00:00Z","protocol":1,"follow_limits_measured":false}"# + "\n"
         _ = Array(reply.utf8).withUnsafeBytes { Darwin.write(master, $0.baseAddress, $0.count) }
@@ -113,7 +113,7 @@ final class DisconnectTests: XCTestCase {
         var slave: Int32 = -1
         var name = [CChar](repeating: 0, count: 128)
         XCTAssertEqual(openpty(&master, &slave, &name, nil, nil), 0)
-        let robot = RobotConnection(port: String(cString: name), automaticPolling: false)
+        let robot = RobotConnection(port: String(cString: name), automaticPolling: false, transport: .usb)
         Darwin.close(slave)
         Darwin.close(master)
         robot.startCamera()

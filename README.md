@@ -37,6 +37,17 @@ Only one process can hold the serial port, so close the app before running
 `companion/probe_servos.py`.
 Head movement remains unavailable until calibration is complete.
 
+**Transport** is chosen in Stanbot → Settings (⌘,):
+
+- **Wi-Fi, falling back to USB** (default). Uses Wi-Fi when the robot is on the
+  network, the side-port USB cable when it is not, and moves back to Wi-Fi when
+  the robot reappears, retrying every 30 seconds.
+- **Wi-Fi only.** Never opens the serial port, so it stays free for scripts.
+- **USB only.** Never contacts the robot over the network.
+
+The choice is stored under `StanbotTransport` (`automatic`, `wifi`, `usb`), so
+`open Stanbot.app --args -StanbotTransport usb` overrides it for one launch.
+
 ```sh
 cd companion/StanbotCompanion
 ./build-app.sh

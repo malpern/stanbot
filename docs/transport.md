@@ -157,8 +157,9 @@ The app could connect over Wi-Fi but never had a working video path:
 
 All three are fixed and covered by `NetworkTransportTests`, which run a fake
 robot on loopback and fail against the old code. To use Wi-Fi with the cable
-still attached, launch with
-`open Stanbot.app --args -StanbotTransport wifi`. Verified live: the app
+still attached, choose Wi-Fi only in Settings, or launch with
+`open Stanbot.app --args -StanbotTransport wifi`. The default is now Wi-Fi with
+USB fallback; see the README. Verified live: the app
 connected over Wi-Fi, started the camera on its own, and the robot reported a
 Wi-Fi client with 17 frames sent in 5 s and none to USB.
 
