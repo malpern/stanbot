@@ -105,9 +105,12 @@ def main():
     image = os.path.join(BUILD, info["app_bin"])
     ip = socket.gethostbyname(args.host)
 
-    before = ask_version(ip, 6)
+    # The robot serves one viewer and notices a departed one only after a few
+    # seconds, so a Stanbot quit just before this can still hold the slot.
+    before = ask_version(ip, 25)
     if before is None:
-        sys.exit("no V reply from %s:3333 before flashing; is Stanbot still connected?" % ip)
+        sys.exit("no V reply from %s:3333 within 25 s. Quit Stanbot and retry; if it "
+                 "persists, check the robot is on Wi-Fi (provision_wifi.py <port> --status)." % ip)
     print(json.dumps({"before": before["commit"], "flashing": info["commit"], "ip": ip,
                       "app_bytes": info["app_bytes"]}), flush=True)
 
