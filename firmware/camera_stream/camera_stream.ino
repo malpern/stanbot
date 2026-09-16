@@ -265,20 +265,38 @@ void reportWifi() {
 // join". Blocking, so it runs on the camera task between frames.
 void scanWifi() {
   const bool wasConnected = WiFi.status() == WL_CONNECTED;
+  // A join in flight owns the radio and scanNetworks() then returns
+  // WIFI_SCAN_FAILED (-2) outright. Because the rotation below restarts a join
+  // every kJoinAttemptMs, a robot with profiles stored never has a free moment,
+  // so the scan a stuck robot most needs was the one it could never run. Stand
+  // the attempt down, scan, then resume the rotation where it left off.
+  const bool wasJoining = wifiStarted && !wasConnected;
+  if (wasJoining) {
+    WiFi.disconnect(false, false);
+    // Leaving the connecting state is not instant; scanning too soon still
+    // fails, and 120ms is comfortably past it on this radio.
+    delay(120);
+  }
   if (!wifiStarted) WiFi.mode(WIFI_STA);
   const int found = WiFi.scanNetworks(false, true);
-  if (found <= 0) { Serial.printf("SBWF {\"scan\":[],\"count\":%d}\n", found); return; }
-  Serial.print("SBWF {\"scan\":[");
-  for (int i = 0; i < found && i < 24; ++i) {
-    const int mode = WiFi.encryptionType(i);
-    Serial.printf("%s{\"ssid\":\"%s\",\"rssi\":%d,\"channel\":%d,\"enterprise\":%s,\"open\":%s}",
-                  i ? "," : "", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i),
-                  mode == WIFI_AUTH_WPA2_ENTERPRISE ? "true" : "false",
-                  mode == WIFI_AUTH_OPEN ? "true" : "false");
+  if (found <= 0) {
+    Serial.printf("SBWF {\"scan\":[],\"count\":%d}\n", found);
+  } else {
+    Serial.print("SBWF {\"scan\":[");
+    for (int i = 0; i < found && i < 24; ++i) {
+      const int mode = WiFi.encryptionType(i);
+      Serial.printf("%s{\"ssid\":\"%s\",\"rssi\":%d,\"channel\":%d,\"enterprise\":%s,\"open\":%s}",
+                    i ? "," : "", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i),
+                    mode == WIFI_AUTH_WPA2_ENTERPRISE ? "true" : "false",
+                    mode == WIFI_AUTH_OPEN ? "true" : "false");
+    }
+    Serial.printf("],\"count\":%d,\"note\":\"2.4GHz only\"}\n", found);
+    WiFi.scanDelete();
   }
-  Serial.printf("],\"count\":%d,\"note\":\"2.4GHz only\"}\n", found);
-  WiFi.scanDelete();
-  if (wasConnected && WiFi.status() != WL_CONNECTED) attemptProfile(profileIndex);
+  // Resume on the way out whether the scan found anything or not, so a failed
+  // scan never leaves the radio parked. The retried profile gets a fresh
+  // kJoinAttemptMs window rather than being counted out by the scan's duration.
+  if (wasJoining || (wasConnected && WiFi.status() != WL_CONNECTED)) attemptProfile(profileIndex);
 }
 
 void startNetworkServices() {

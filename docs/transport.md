@@ -155,9 +155,20 @@ companion's decoder and every command are shared and either link works.
 - **`W,SCAN` reports what is actually broadcasting.** Use it before trusting an
   SSID from a note. It found that neither `Alpern-Home` nor `Alpern-Fiber`
   exists here: the eeros broadcast `Alpern-Home-5G` on 2.4 GHz channels 6 and
-  11, so despite the name that is the network to join. `SATURDAY-5G` is stored
-  under the same assumption and has not been confirmed on 2.4 GHz yet; scan
-  there before blaming the passphrase.
+  11, so despite the name that is the network to join. A scan on 2026-09-15
+  also settled `Saturday`: it had been provisioned as `SATURDAY` from a note
+  and never associated, because SSIDs are case-sensitive. Copy the spelling
+  from the scan, not from a note, before blaming the passphrase.
+- **A scan stands the join rotation down first.** A join in flight owns the
+  radio, and `scanNetworks()` then fails outright with `WIFI_SCAN_FAILED`
+  (`{"scan":[],"count":-2}`). Because the rotation above restarts a join every
+  12 seconds, a robot with profiles stored never had a free radio, so until
+  2026-09-15 the scan a stuck robot most needed was the one it could never run:
+  `W,SCAN` worked only on an unprovisioned device, which is the opposite of the
+  advice above. `scanWifi()` now disconnects, waits for the radio to leave the
+  connecting state, scans, and resumes the rotation at the same profile with a
+  fresh 12-second window. A scan therefore costs a few seconds of joining, and
+  a `W,SCAN` is followed by a `joining` line for the profile it resumed.
 - **Modem sleep is disabled.** It is on by default and cost 78-110 ms of round
   trip on a -38 dBm link, which is invisible for a status poll and ruinous for
   video. The robot is mains powered, so the trade is free.
