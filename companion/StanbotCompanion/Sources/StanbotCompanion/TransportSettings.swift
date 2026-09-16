@@ -42,6 +42,7 @@ enum TransportPreference: String, CaseIterable, Identifiable, Sendable {
 struct TransportSettingsView: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var passphraseStatus: String?
+    @State private var chime = FirmwareChime.stored
 
     var body: some View {
         Form {
@@ -62,6 +63,15 @@ struct TransportSettingsView: View {
             Divider().padding(.vertical, 6)
 
             Section {
+                Picker("Sound on firmware change", selection: $chime) {
+                    ForEach(FirmwareChime.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .onChange(of: chime) { _, new in
+                    new.store()
+                    new.play()
+                }
                 LabeledContent("Robot passphrase", value: robot.passphraseAvailable ? "Available" : "Not available")
                 HStack {
                     Button("Re-read from Secrets") {

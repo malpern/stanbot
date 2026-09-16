@@ -637,7 +637,7 @@ final class RobotConnection: ObservableObject {
         followLogUntil = Date().addingTimeInterval(5)   // the power summary follows the result
     }
 
-    /// A soft chime when the robot comes back on a different build, so a flash
+    /// A soft sound when the robot comes back on a different build, so a flash
     /// is noticed without watching the Firmware card. The last commit is
     /// remembered across launches, since the app is usually closed for a flash.
     private func announceFirmwareChange(_ info: FirmwareInfo) {
@@ -646,7 +646,7 @@ final class RobotConnection: ObservableObject {
         guard previous != info.commit else { return }
         UserDefaults.standard.set(info.commit, forKey: key)
         guard previous != nil else { return }   // nothing to compare against on a first run
-        NSSound(named: "Tink")?.play()
+        FirmwareChime.stored.play()
         lastAction = "Robot is now running \(info.shortCommit)."
     }
 
