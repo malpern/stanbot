@@ -22,6 +22,7 @@
 #include <drivers/FTServo_Arduino/src/SCSCL.h>
 #include <driver/i2c_master.h>
 #include <WiFi.h>
+#include <esp_eap_client.h>   // clearing PEAP state between profiles; see attemptProfile
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include <Preferences.h>
@@ -198,6 +199,18 @@ bool attemptProfile(int index) {
   WiFi.setSleep(false);
   WiFi.setHostname(kHostname);
   if (user.isEmpty()) {
+    // A previous PEAP attempt leaves its configuration in the supplicant, and
+    // it is not cleared by WiFi.disconnect() or by re-provisioning: the next
+    // pre-shared-key join keeps offering enterprise credentials and never
+    // associates. Only an erasing disconnect (`W,X`) used to recover it, so at
+    // home the rotation died on the profile behind Hacker Dojo. Measured
+    // 2026-09-15: Saturday joined in under a second alone, and not at all in
+    // two 12-second windows once dojo preceded it. Clearing costs nothing when
+    // no enterprise join has happened.
+    esp_eap_client_clear_identity();
+    esp_eap_client_clear_username();
+    esp_eap_client_clear_password();
+    esp_wifi_sta_enterprise_disable();
     WiFi.begin(ssid.c_str(), pass.c_str());
   } else {
     // WPA2-Enterprise with PEAP: identity and username are both the account,
