@@ -99,12 +99,68 @@ path to artifact-free full-sensor images at close to the capture ceiling.
 | --- | --- | --- |
 | VGA JPEG over USB | 1.9 fps | Heavily compressed, about 0.5 bits/pixel |
 | VGA raw over USB | About 1.2 fps | Lossless |
-| VGA raw over Wi-Fi | To be measured | Lossless, full sensor |
+| VGA raw over Wi-Fi | Not available: no raw VGA mode exists; raw QVGA over Wi-Fi measured slower than USB (below) | Lossless, full sensor |
 
 Caveats: the ESP32-S3 is 2.4 GHz only, this house runs a crowded mesh, and
 throughput there swings with interference. Treat any number as needing
 measurement. Jitter will also matter more than throughput once the head is
 following a face.
+
+## Wi-Fi against USB, measured at home 2026-09-16
+
+`companion/benchmark_transport.py`, 30 s per setting after a 2 s settle, video
+over TCP to `stanbot.local` and then over USB, same firmware (79da869), robot on
+`Alpern-Home-5G` at -39 dBm. Run from the mini through
+`ssh malpern@openclaw.local`, because agent shells there cannot reach LAN
+hosts directly.
+
+| Setting | Link | fps | Lost | Interval p50 / p95 / max ms | Command reply p50 / max ms | Send time per frame ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| QVGA JPEG q90, 200 ms | Wi-Fi | 3.43 | 0 | 278 / 444 / 473 | 121 / 430 | 59 |
+| | USB | 3.49 | 0 | 354 / 391 / 396 | 171 / 361 | |
+| QVGA JPEG q90, 100 ms | Wi-Fi | 3.43 | 0 | 277 / 453 / 490 | 160 / 374 | 58 |
+| | USB | 3.50 | 0 | 342 / 390 / 398 | 163 / 386 | |
+| VGA JPEG q90, 100 ms | Wi-Fi | 1.46 | 0 | 676 / 789 / 798 | 243 / 662 | 145 |
+| | USB | 1.63 | 0 | 622 / 634 / 643 | 264 / 644 | |
+| Raw QVGA, 100 ms | Wi-Fi | 2.46 | 0 | 434 / 458 / 488 | 206 / 429 | 359 |
+| | USB | 3.26 | 0 | 289 / 435 / 458 | 174 / 290 | |
+
+What this settles:
+
+- **For the stream the app uses, Wi-Fi costs nothing measurable.** QVGA JPEG
+  runs at the same rate with no lost frames. The rate is set by capture and
+  the roughly 208 ms encode, exactly as the section above predicted, so
+  neither link is the limit.
+- **Wi-Fi is a little less steady.** The worst gap between frames was about
+  470-490 ms against about 400 ms on USB. Command replies look alike on both,
+  because they wait behind a frame in progress. Head following will feel
+  that, but the gap is small beside the frame interval itself.
+- **The prediction that Wi-Fi would win for uncompressed video was wrong.**
+  Raw QVGA fell from 3.26 fps on USB to 2.46 on Wi-Fi. Sending one 150 KB
+  frame took 359 ms, about 420 KB/s. That is far below what the radio link
+  should carry at -39 dBm, so the ceiling is most likely the ESP32's TCP
+  send path (lwIP buffers and window), not the air. Unmeasured: tuning those
+  buffers might change this. There is also no raw VGA mode to test.
+- **Signal was strong.** Everything here is a best case for this house. The
+  robot across a room, or a busier evening on 2.4 GHz, is untested.
+
+### App fixes that this test needed
+
+The app could connect over Wi-Fi but never had a working video path:
+
+- `startCamera()` required the USB descriptor, so over Wi-Fi it reported the
+  camera unavailable and never sent `S`.
+- A Wi-Fi link that dropped was never retried, because `tick()` treated the
+  chosen transport as if it were up.
+- An unplugged USB device was retried forever instead of falling back to
+  Wi-Fi.
+
+All three are fixed and covered by `NetworkTransportTests`, which run a fake
+robot on loopback and fail against the old code. To use Wi-Fi with the cable
+still attached, launch with
+`open Stanbot.app --args -StanbotTransport wifi`. Verified live: the app
+connected over Wi-Fi, started the camera on its own, and the robot reported a
+Wi-Fi client with 17 frames sent in 5 s and none to USB.
 
 ## OTA is already possible; the partition table supports it
 

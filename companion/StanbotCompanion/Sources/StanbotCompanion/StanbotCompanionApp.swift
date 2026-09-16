@@ -209,7 +209,7 @@ final class RobotConnection: ObservableObject {
             switch self {
             case .connecting: "Connecting over Wi-Fi"
             case .disconnected: "Not connected"
-            case .connected: "USB control connected"
+            case .connected(let link): link.hasPrefix("/dev/") ? "USB control connected" : "Wi-Fi control connected"
             case .unavailable: "StackChan not found"
             }
         }
@@ -254,8 +254,18 @@ final class RobotConnection: ObservableObject {
     private var network: NetworkReader?
     /// Where the robot is when there is no USB cable. Resolved by mDNS, so
     /// nothing hardcodes an address that DHCP can change.
-    private let networkHost = "stanbot.local"
-    private let networkPort: UInt16 = 3333
+    private let networkHost: String
+    private let networkPort: UInt16
+    /// Use Wi-Fi even when a USB device is present, so the network link can be
+    /// exercised without moving the cable:
+    /// `open Stanbot.app --args -StanbotTransport wifi`
+    private let preferNetwork: Bool
+    /// True only while the current Wi-Fi connection is ready. `usingNetwork`
+    /// says which transport is chosen; this says whether it is up.
+    private var networkUp = false
+    /// Identifies the live NetworkReader, so a late callback from one that was
+    /// cancelled (every reconnect cancels the last) cannot mark the new link down.
+    private var networkReaderID = UUID()
     private var timer: Timer?
     // The camera stream starts by itself on connect and on every automatic
     // reconnect: the feed is the point of the app, so it should not wait for a
@@ -269,7 +279,12 @@ final class RobotConnection: ObservableObject {
     private var lastFrameAt = Date.distantPast
     private var nextReconnect = Date.distantPast
 
-    init(port: String? = nil, automaticPolling: Bool = true) {
+    init(port: String? = nil, automaticPolling: Bool = true,
+         networkHost: String = "stanbot.local", networkPort: UInt16 = 3333,
+         preferNetwork: Bool = UserDefaults.standard.string(forKey: "StanbotTransport") == "wifi") {
+        self.networkHost = networkHost
+        self.networkPort = networkPort
+        self.preferNetwork = preferNetwork
         selectedPort = port ?? availablePorts.first
         connect()
         guard automaticPolling else { return }
@@ -287,6 +302,7 @@ final class RobotConnection: ObservableObject {
     }
 
     var portName: String {
+        if usingNetwork { return networkHost }
         guard let selectedPort else { return "No USB device" }
         return URL(fileURLWithPath: selectedPort).lastPathComponent
     }
@@ -294,10 +310,11 @@ final class RobotConnection: ObservableObject {
     func connect() {
         closeSerial()
         cameraState = wantsCamera ? .waiting : .off
-        guard let selectedPort else {
-            // No cable: the robot may be on Wi-Fi with the cable in its base
-            // carrying power only, which is the normal arrangement once
-            // provisioned. Try the network rather than declaring failure.
+        guard !preferNetwork, let selectedPort, FileManager.default.fileExists(atPath: selectedPort) else {
+            // No cable, or the device vanished: the robot may be on Wi-Fi with
+            // the cable in its base carrying power only, which is the normal
+            // arrangement once provisioned. Try the network rather than
+            // retrying a USB device that is not there.
             connectNetwork()
             return
         }
@@ -334,24 +351,41 @@ final class RobotConnection: ObservableObject {
 
     private func connectNetwork() {
         usingNetwork = true
+        networkUp = false
         connection = .connecting
         lastAction = "Looking for \(networkHost) on the network."
+        let id = UUID()
+        networkReaderID = id
         network = NetworkReader(
             host: networkHost, port: networkPort,
-            onChunk: { [weak self] chunk in self?.handle(chunk) },
-            onState: { [weak self] up, detail in self?.networkStateChanged(up, detail) })
+            onChunk: { [weak self] chunk in
+                guard let self, self.networkReaderID == id else { return }
+                self.handle(chunk)
+            },
+            onState: { [weak self] up, detail in
+                guard let self, self.networkReaderID == id else { return }
+                self.networkStateChanged(up, detail)
+            })
     }
 
     private func networkStateChanged(_ up: Bool, _ detail: String) {
         guard usingNetwork else { return }
+        networkUp = up
         if up {
             connection = .connected(networkHost)
             lastAction = "Connected to \(networkHost) over Wi-Fi. Motion remains locked."
             requestVersion()
             if wantsCamera { startCamera() }
         } else {
+            // Drop the reader so tick() sees no link and reconnects; its own
+            // cancellation callback is ignored by the reader ID check.
+            networkReaderID = UUID()
+            network?.cancel()
+            network = nil
             connection = .unavailable
             firmware = .unknown
+            cameraImage = nil
+            resetFaces()
             lastAction = "\(networkHost): \(detail)"
             cameraState = wantsCamera ? .waiting : .off
             nextReconnect = Date().addingTimeInterval(3)
@@ -361,7 +395,7 @@ final class RobotConnection: ObservableObject {
     func startCamera() {
         resetFaces()
         wantsCamera = true
-        guard serialFD >= 0 else {
+        guard serialFD >= 0 || networkUp else {
             cameraState = .unavailable
             lastAction = "Connect StackChan before starting the local camera view."
             return
@@ -390,6 +424,8 @@ final class RobotConnection: ObservableObject {
         serialFD = -1
         reader?.cancel()
         reader = nil
+        networkReaderID = UUID()
+        networkUp = false
         network?.cancel()
         network = nil
         generation = UUID()
@@ -445,7 +481,10 @@ final class RobotConnection: ObservableObject {
     func tick() {
         faceSelection.expire(at: ProcessInfo.processInfo.systemUptime)
         publishFaces()
-        guard serialFD >= 0 || usingNetwork else {
+        guard serialFD >= 0 || networkUp else {
+            // A Wi-Fi attempt in flight reports its own outcome; cancelling it
+            // here would restart it every tick and it would never complete.
+            if network != nil { return }
             // Reopen only the selected device; never switch to another USB device.
             if Date() >= nextReconnect, let selectedPort,
                FileManager.default.fileExists(atPath: selectedPort) {
