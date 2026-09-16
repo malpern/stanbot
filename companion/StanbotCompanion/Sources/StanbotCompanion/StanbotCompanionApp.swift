@@ -681,7 +681,7 @@ final class RobotConnection: ObservableObject {
     }
 
     private func beginFollowing() {
-        targetSequence = 0
+        targetSequence = 0   // frame sequences only have to increase within a session
         openFollowLog()
         follow = .following(since: Date())
         lastAction = "Head following started. Stay at the robot."
@@ -776,11 +776,14 @@ final class RobotConnection: ObservableObject {
     /// Feeds the selected face to a running session. Only a face the selection
     /// logic has confirmed is sent; with none, the robot's own timeout returns
     /// the head to rest.
-    func sendFollowTarget(_ box: FaceBox) {
+    /// `sequence` is the camera frame this face came from. The robot remembers
+    /// when it sent each recent frame and applies the correction relative to
+    /// where the head was pointing then, which is what stops it overshooting.
+    func sendFollowTarget(_ box: FaceBox, sequence: UInt32) {
         guard case .following = follow else { return }
-        targetSequence &+= 1
-        if targetSequence == 0 { targetSequence = 1 }
-        _ = send(FollowTarget.line(for: box, sequence: targetSequence))
+        guard sequence > targetSequence else { return }   // the robot ignores repeats anyway
+        targetSequence = sequence
+        _ = send(FollowTarget.line(for: box, sequence: sequence))
     }
 
     private func disconnected() {
@@ -863,6 +866,7 @@ final class RobotConnection: ObservableObject {
     }
 
     private func analyze(_ frame: CameraFrame) {
+        let frameSequence = frame.sequence
         guard wantsCamera, !analyzing else { return }
         guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
@@ -892,7 +896,7 @@ final class RobotConnection: ObservableObject {
                 self.publishFaces()
                 var sent: FaceBox?
                 if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
-                    self.sendFollowTarget(box)
+                    self.sendFollowTarget(box, sequence: frameSequence)
                     sent = box
                 }
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,

@@ -1,5 +1,6 @@
 #include "../firmware/camera_stream/head_tracker.h"
 #include <cassert>
+#include <cstdio>
 #include <cmath>
 
 using stanbot::FollowCommand;
@@ -75,13 +76,22 @@ void observationAppliedOnce() {
   HeadTracker tracker(kLimits, kConfig);
   uint32_t now = 1000;
   tracker.begin(460, 620, now);
-  // x = +0.5 asks for +48 raw once. Seven ticks of six reach 502, the last six
-  // are inside the raw deadband and are left alone, and the same frame is
-  // never counted again however many ticks pass before the next one.
+  // x = +0.5 asks for 0.5 * rawPerUnitX * gain = +29 raw once, reached in five
+  // ticks of six with the last step short; what remains is inside the raw
+  // deadband and is left alone, and the same frame is never counted again
+  // however many ticks pass before the next one.
+  const int expected = static_cast<int>(0.5f * kConfig.rawPerUnitX * kConfig.gain + 0.5f);
   assert(tracker.observe(1, 0.5f, 0.0f, 0.9f, now));
   assert(tracker.mode() == FollowMode::Attending);
-  assert(drain(tracker, now, kConfig.maxStepRaw) == 7);
-  assert(tracker.commandedYaw() == 502);
+  // Steps of maxStepRaw until what is left is inside the raw deadband, which
+  // the controller accepts as arrived rather than chasing.
+  int remaining = expected, expectedTicks = 0;
+  while (remaining >= kConfig.deadbandRaw) {
+    remaining -= remaining < kConfig.maxStepRaw ? remaining : kConfig.maxStepRaw;
+    ++expectedTicks;
+  }
+  assert(drain(tracker, now, kConfig.maxStepRaw) == expectedTicks);
+  assert(tracker.commandedYaw() == 460 + expected - remaining);
   assert(tracker.commandedPitch() == 620);
 }
 
@@ -97,21 +107,24 @@ void centreDeadbandHoldsStill() {
 
 void rawDeadbandNeverChasesStandingError() {
   uint32_t now = 1000;
-  // ~9 raw requested: one step of six, then a residual of three that is
-  // smaller than the standing error and is accepted as arrived.
+  // The face position that asks for a given number of raw steps, whatever the
+  // gain and the field-of-view estimate are set to.
+  auto offsetFor = [](int raw) { return raw / (kConfig.rawPerUnitX * kConfig.gain); };
+  // 9 raw requested: one step of six, then a residual of three that is smaller
+  // than the standing error and is accepted as arrived.
   HeadTracker nine(kLimits, kConfig);
   nine.begin(460, 620, now);
-  assert(nine.observe(1, 0.09f, 0.0f, 0.9f, now));
+  assert(nine.observe(1, offsetFor(9), 0.0f, 0.9f, now));
   assert(drain(nine, now, kConfig.maxStepRaw) == 1);
   assert(nine.commandedYaw() == 466);
-  // With the centre band removed, a request of ~7 raw is inside the raw
+  // With the centre band removed, a request of 7 raw is inside the raw
   // deadband from the start and is declined outright. Re-issuing it is
   // exactly the hunting the servo review predicts for I = 0.
   FollowConfig wide = kConfig;
   wide.centreDeadband = 0.0f;
   HeadTracker seven(kLimits, wide);
   seven.begin(460, 620, now);
-  assert(seven.observe(1, 0.07f, 0.0f, 0.9f, now));
+  assert(seven.observe(1, offsetFor(7), 0.0f, 0.9f, now));
   assert(drain(seven, now, kConfig.maxStepRaw) == 0);
   assert(seven.commandedYaw() == 460);
 }
@@ -185,7 +198,11 @@ void timeoutReturnsToRestSlowly() {
 }
 
 void controlPeriodIsRespected() {
-  HeadTracker tracker(kLimits, kConfig);
+  // Full gain here, so the goal is bigger than the ticks available and the
+  // period is plainly what limits the pace.
+  FollowConfig full = kConfig;
+  full.gain = 1.0f;
+  HeadTracker tracker(kLimits, full);
   uint32_t now = 1000;
   tracker.begin(460, 620, now);
   assert(tracker.observe(1, 1.0f, 0.0f, 0.9f, now));     // asks for 96 raw: 16 steps
@@ -249,7 +266,79 @@ void pitchDisabledNeverMovesPitch() {
   }
 }
 
+// Closed loop with the real delay: the camera frame a target comes from was
+// captured before the head acted on the frames before it. Session 5
+// (2026-09-16) hunted across the whole range with a ~3 s period because each
+// observation asked for motion that was already under way. Simulated here with
+// a face at a fixed angle, frames at 5 fps, and 300 ms of pipeline delay.
+struct LoopResult { double finalOffset; int reversals; double worstOffset; int travel; };
+
+LoopResult simulate(bool compensateLatency, double fieldOfViewError = 1.0) {
+  FollowConfig config;
+  config.pitchEnabled = false;
+  HeadTracker tracker(kLimits, config);
+  uint32_t now = 100000;
+  int head = kLimits.yawRest;                 // the servo follows commands exactly
+  tracker.begin(head, 620, now);
+  const int faceRaw = kLimits.yawRest + 60;   // a face 60 raw to the robot's right
+  struct Frame { uint32_t sentMs; int headThen; uint32_t sequence; };
+  Frame pipeline[8]{};
+  unsigned queued = 0;
+  uint32_t nextFrameMs = now, sequence = 0;
+  double worst = 0, last = 0;
+  int reversals = 0, travel = 0;
+  for (int tick = 0; tick < 250; ++tick) {    // 250 x 80 ms = 20 s
+    now += config.controlPeriodMs;
+    if (static_cast<int32_t>(now - nextFrameMs) >= 0) {      // a frame is captured
+      nextFrameMs = now + 200;                               // 5 fps
+      if (queued < 8) pipeline[queued++] = {now, head, ++sequence};
+    }
+    if (queued > 0 && static_cast<int32_t>(now - pipeline[0].sentMs) >= 300) {  // it arrives 300 ms later
+      const Frame frame = pipeline[0];
+      for (unsigned i = 1; i < queued; ++i) pipeline[i - 1] = pipeline[i];
+      --queued;
+      // Where the face appeared in that frame, given where the head was then.
+      const double offset = (faceRaw - frame.headThen) / (config.rawPerUnitX * fieldOfViewError);
+      worst = offset > worst ? offset : (-offset > worst ? -offset : worst);
+      if ((offset > 0) != (last > 0) && last != 0) ++reversals;
+      last = offset;
+      tracker.observe(frame.sequence, static_cast<float>(offset), 0.0f, 0.95f, now,
+                      compensateLatency ? frame.sentMs : now);
+    }
+    const FollowCommand command = tracker.step(now);
+    if (command.send) {
+      travel += std::abs(command.yaw - head);
+      head = command.yaw;                     // the servo is where it was told
+    }
+  }
+  return {(faceRaw - head) / static_cast<double>(config.rawPerUnitX), reversals, worst, travel};
+}
+
+void closedLoopSettlesInsteadOfHunting() {
+  const LoopResult fixed = simulate(true);
+  std::printf("  compensated:   final %.3f reversals %d travel %d\n", fixed.finalOffset, fixed.reversals, fixed.travel);
+  const LoopResult raw = simulate(false);
+  std::printf("  uncompensated: final %.3f reversals %d travel %d\n", raw.finalOffset, raw.reversals, raw.travel);
+  const LoopResult over = simulate(true, 1.0 / 1.6);
+  std::printf("  over-gained:   final %.3f reversals %d travel %d\n", over.finalOffset, over.reversals, over.travel);
+  // Settles near the centre without crossing it. The residual is the raw
+  // deadband divided by the gain, about 0.14 of the frame or 4 degrees: the
+  // price of never chasing the servos' standing error.
+  assert(std::fabs(fixed.finalOffset) <= 0.16);
+  assert(fixed.reversals <= 1);
+  // Correcting from where the head is now instead makes it travel further for
+  // the same job, and cross the centre. This simulated servo is ideal, so it
+  // understates it; on the robot the same loop hunted across its whole range.
+  assert(raw.travel > fixed.travel * 6 / 5);
+  assert(raw.reversals > fixed.reversals);
+  // A field of view 1.6x smaller than rawPerUnitX assumes: still settles,
+  // because each correction takes only `gain` of the measured error.
+  assert(std::fabs(over.finalOffset) <= 0.2);
+  assert(over.reversals <= 2);
+}
+
 int main() {
+  closedLoopSettlesInsteadOfHunting();
   pitchDisabledNeverMovesPitch();
   protocolValidation();
   idleUntilObserved();

@@ -809,6 +809,19 @@ struct FastJpeg {
   }
 } fastJpeg;
 
+// When each recent frame was sent, so a target naming a frame's sequence can be
+// applied relative to where the head was pointing then. Written and read only
+// by the camera task (or the session capture task while it runs).
+struct SentFrame { uint32_t sequence, ms; };
+SentFrame sentFrames[32] = {};
+unsigned sentFrameNext = 0;
+
+uint32_t frameSentMs(uint32_t sequence) {
+  for (const SentFrame& entry : sentFrames)
+    if (entry.sequence == sequence && entry.ms != 0) return entry.ms;
+  return 0;
+}
+
 void sendFrame(const ESPVideoBufferClass& frame) {
   uint8_t* jpeg = nullptr;
   size_t jpegLength = 0;
@@ -858,7 +871,12 @@ void sendFrame(const ESPVideoBufferClass& frame) {
   const bool sent = writeFully(header, sizeof(header)) && writeFully(jpeg, jpegLength) &&
                     (!raw || writeFully(checksum, sizeof(checksum)));
   stats.enqueueUs += static_cast<uint32_t>(micros() - enqueueStart);
-  if (sent) { ++stats.sent; stats.jpegBytes += jpegLength; }
+  if (sent) {
+    ++stats.sent;
+    stats.jpegBytes += jpegLength;
+    sentFrames[sentFrameNext] = {sequence, millis()};
+    sentFrameNext = (sentFrameNext + 1) % (sizeof sentFrames / sizeof sentFrames[0]);
+  }
   else ++stats.failures;
   if (ownsJpeg) free(jpeg);
 }
@@ -1482,7 +1500,9 @@ void endTelemetry(bool wasStreaming) {
 }
 
 constexpr uint32_t kFollowSessionMs = 20000;
-constexpr uint32_t kFollowCooldownMs = 3000;  // between sessions; see runFollowSession
+constexpr uint32_t kFollowCooldownMs = 3000;
+// Used only when a target names a frame the robot no longer remembers sending.
+constexpr uint32_t kFollowAssumedLatencyMs = 250;  // between sessions; see runFollowSession
 uint32_t followEndedMs = 0;
 constexpr uint32_t kFollowFeedbackMs = 40;
 constexpr int kFollowEnvelopeMargin = 16;
@@ -1651,9 +1671,13 @@ void runFollowSession() {
           const uint32_t sequence = targetSequence.load();
           if (sequence != lastSequence) {
             lastSequence = sequence;
+            // The app names the frame its target came from, so the correction
+            // is relative to where the head was pointing when that frame left.
+            const uint32_t sentMs = frameSentMs(sequence);
             const bool taken = tracker.observe(sequence,
               targetXMilli.load() / 1000.0f, targetYMilli.load() / 1000.0f,
-              targetConfidenceMilli.load() / 1000.0f, now);
+              targetConfidenceMilli.load() / 1000.0f, now,
+              sentMs != 0 ? sentMs : (now > kFollowAssumedLatencyMs ? now - kFollowAssumedLatencyMs : now));
             if (taken) ++observations; else ++rejected;
           }
           const stanbot::FollowCommand command = tracker.step(now);

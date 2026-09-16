@@ -79,6 +79,10 @@ struct FollowConfig {
   float centreDeadband = 0.08f;      // |x| or |y| below this: already looking at it
   int rawPerUnitX = 96;              // raw steps for a face at the image edge (~30 deg)
   int rawPerUnitY = 64;
+  // Fraction of the measured error corrected per observation. Below 1 because
+  // rawPerUnitX is a guess at the camera's field of view: over-estimating it
+  // with a gain of 1 turns every correction into an overshoot.
+  float gain = 0.6f;
   int deadbandRaw = 8;               // never chase less than this: above the standing error
   int maxStepRaw = 6;                // per tick while attending (~23 deg/s at 80 ms)
   int restStepRaw = 4;               // per tick while returning (~16 deg/s)
@@ -101,6 +105,19 @@ class HeadTracker {
   // Adopt the measured starting position as the commanded one. The firmware
   // holds this exact goal before enabling torque, so the first tick never
   // yanks the head from wherever it was resting.
+  // Where the head was commanded to be at `whenMs`, from the recent history.
+  // Older than the history reaches, or empty: the oldest sample, or now.
+  int yawAt(uint32_t whenMs) const {
+    if (historyCount_ == 0) return yaw_;
+    int best = -1;
+    for (unsigned i = 0; i < historyCount_; ++i) {
+      const Sample& sample = history_[(historyStart_ + i) % kHistory];
+      if (static_cast<int32_t>(whenMs - sample.ms) >= 0) best = static_cast<int>(i);
+    }
+    if (best < 0) return history_[historyStart_].yaw;          // before anything recorded
+    return history_[(historyStart_ + static_cast<unsigned>(best)) % kHistory].yaw;
+  }
+
   void begin(int yawNow, int pitchNow, uint32_t nowMs) {
     yaw_ = goalYaw_ = clamp(yawNow, limits_.yawMin, limits_.yawMax);
     // A disabled pitch is left exactly where it is: clamping it would make the
@@ -110,12 +127,26 @@ class HeadTracker {
     lastControlMs_ = nowMs - config_.controlPeriodMs;
     lastTargetMs_ = 0;
     haveGoal_ = false;
+    historyCount_ = 0;
+    historyStart_ = 0;
+    record(nowMs);
   }
 
   // One T,<seq>,<x>,<y>,<confidence> line. Rejects anything outside the
   // protocol ranges, a repeated or older sequence, and NaN; a rejected line
   // leaves the current goal untouched. Returns whether it was taken up.
+  //
+  // `capturedMs` is when the frame this target came from was sent, which the
+  // firmware looks up from the frame's sequence number. The correction is
+  // relative to where the head was pointing THEN, not now. Measured on
+  // 2026-09-16: correcting from the current position instead made every frame
+  // re-ask for motion that was already under way, and the head hunted across
+  // its whole range with a period of about 3 s.
   bool observe(uint32_t sequence, float x, float y, float confidence, uint32_t nowMs) {
+    return observe(sequence, x, y, confidence, nowMs, nowMs);
+  }
+
+  bool observe(uint32_t sequence, float x, float y, float confidence, uint32_t nowMs, uint32_t capturedMs) {
     if (!(x == x) || !(y == y) || !(confidence == confidence)) return false;
     if (x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) return false;
     if (confidence < 0.0f || confidence > 1.0f) return false;
@@ -126,10 +157,10 @@ class HeadTracker {
     // -1 is the left of the image; +1 raw is robot-right on the yaw servo.
     // -1 is the top of the image, so the head tilts up for negative y.
     const int dx = (x > config_.centreDeadband || x < -config_.centreDeadband)
-                       ? roundToInt(x * config_.rawPerUnitX) : 0;
+                       ? roundToInt(x * config_.rawPerUnitX * config_.gain) : 0;
     const int dy = config_.pitchEnabled && (y > config_.centreDeadband || y < -config_.centreDeadband)
-                       ? roundToInt(-y * config_.rawPerUnitY) * limits_.pitchUpSign : 0;
-    goalYaw_ = clamp(yaw_ + dx, limits_.yawMin, limits_.yawMax);
+                       ? roundToInt(-y * config_.rawPerUnitY * config_.gain) * limits_.pitchUpSign : 0;
+    goalYaw_ = clamp(yawAt(capturedMs) + dx, limits_.yawMin, limits_.yawMax);
     goalPitch_ = config_.pitchEnabled ? clamp(pitch_ + dy, limits_.pitchMin, limits_.pitchMax) : pitch_;
     haveGoal_ = true;
     mode_ = FollowMode::Attending;
@@ -162,6 +193,7 @@ class HeadTracker {
     }
     yaw_ += clamp(dy, -stepLimit, stepLimit);
     pitch_ += clamp(dp, -stepLimit, stepLimit);
+    record(nowMs);
     return {true, yaw_, pitch_, mode_};
   }
 
@@ -175,6 +207,19 @@ class HeadTracker {
   }
   static int roundToInt(float value) {
     return static_cast<int>(value >= 0.0f ? value + 0.5f : value - 0.5f);
+  }
+
+  // Commanded yaw over the last few seconds, for yawAt().
+  struct Sample { uint32_t ms; int yaw; };
+  static constexpr unsigned kHistory = 48;
+  Sample history_[kHistory] = {};
+  unsigned historyStart_ = 0, historyCount_ = 0;
+
+  void record(uint32_t nowMs) {
+    const unsigned index = (historyStart_ + historyCount_) % kHistory;
+    history_[index] = {nowMs, yaw_};
+    if (historyCount_ < kHistory) ++historyCount_;
+    else historyStart_ = (historyStart_ + 1) % kHistory;
   }
 
   FollowLimits limits_;

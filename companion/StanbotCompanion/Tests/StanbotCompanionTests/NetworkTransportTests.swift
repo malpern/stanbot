@@ -359,7 +359,7 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertFalse(fake.commands.contains("test-passphrase"), "the passphrase never crosses the network")
         XCTAssertFalse(fake.commands.contains("C,FOLLOW"), "over Wi-Fi only the authorized form is used")
 
-        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9))
+        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9), sequence: 1)
         robot.stopFollowing()
         wait(upTo: 2) { fake.commands.contains("C,UNFOLLOW") }
         XCTAssertTrue(fake.commands.contains("T,1,"))
@@ -380,7 +380,7 @@ final class NetworkTransportTests: XCTestCase {
         wait(upTo: 3) { if case .finished = robot.follow { return true }; return false }
         XCTAssertEqual(robot.follow, .finished(FollowResult(code: "auth_bad_mac")))
         XCTAssertEqual(fake.authorizedCommands, [])
-        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9))
+        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9), sequence: 1)
         XCTAssertFalse(fake.commands.contains("T,"))
     }
 

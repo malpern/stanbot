@@ -93,16 +93,18 @@ final class HeadFollowingTests: XCTestCase {
         defer { usb.close() }
         XCTAssertNil(robot.followUnavailableReason)
 
-        robot.sendFollowTarget(face)
+        robot.sendFollowTarget(face, sequence: 7)
         XCTAssertEqual(usb.read(), "", "no targets outside a session")
 
         robot.startFollowing()
         guard case .following = robot.follow else { return XCTFail("not following") }
         XCTAssertEqual(usb.read(), "C,FOLLOW\n")
 
-        robot.sendFollowTarget(face)
-        robot.sendFollowTarget(face)
-        XCTAssertEqual(usb.read(), "T,1,0.500,0.500,0.91\nT,2,0.500,0.500,0.91\n", "sequence starts at 1 and increases")
+        // The sequence is the camera frame the face came from.
+        robot.sendFollowTarget(face, sequence: 41)
+        robot.sendFollowTarget(face, sequence: 42)
+        robot.sendFollowTarget(face, sequence: 42)   // a repeat is not sent again
+        XCTAssertEqual(usb.read(), "T,41,0.500,0.500,0.91\nT,42,0.500,0.500,0.91\n")
 
         robot.stopFollowing()
         XCTAssertEqual(usb.read(), "C,UNFOLLOW\n")
@@ -116,7 +118,7 @@ final class HeadFollowingTests: XCTestCase {
         wait(upTo: 2) { if case .finished = robot.follow { return true }; return false }
         XCTAssertEqual(robot.follow, .finished(FollowResult(code: "stopped_by_host")))
 
-        robot.sendFollowTarget(face)
+        robot.sendFollowTarget(face, sequence: 7)
         XCTAssertEqual(usb.read(), "", "no targets after the session ended")
     }
 
