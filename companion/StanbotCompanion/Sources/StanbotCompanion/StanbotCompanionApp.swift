@@ -236,6 +236,18 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var faceBoxes: [FaceBox] = []
     @Published private(set) var faceState: FaceSelection.State = .searching
     @Published private(set) var firmware: FirmwareStatus = .unknown
+    /// Display-only enhancements, set in Settings. Face detection is unaffected.
+    @Published var enhancement: VideoEnhancement = .stored {
+        didSet {
+            guard enhancement != oldValue else { return }
+            enhancement.store()
+            enhancerSession = nil   // start the frame history afresh
+        }
+    }
+    private let enhancer = VideoEnhancer()
+    private var enhancerSession: UUID?
+    private var lastDisplayedAt: TimeInterval?
+    private var displayToken = UUID()
     private var versionAttempts = 0
     private var versionAskedAt = Date.distantPast
     private static let versionRetryInterval: TimeInterval = 2
@@ -662,11 +674,40 @@ final class RobotConnection: ObservableObject {
                 self?.analyzing = false
                 guard let self, self.generation == session,
                       ProcessInfo.processInfo.systemUptime - receivedAt < 0.75 else { return }
-                // Publish the image and its detection together, never an old box on a new frame.
-                self.cameraImage = NSImage(cgImage: image, size: .zero)
+                // Detection always uses the frame as sent; only the displayed image
+                // is enhanced. Boxes are normalized, so they fit an upscaled frame.
                 self.faceSelection.update(boxes, at: receivedAt)
                 self.publishFaces()
+                self.display(image, receivedAt: receivedAt, session: session)
             }
+        }
+    }
+
+    /// Enhances one frame for display. With smooth motion, shows the frame
+    /// interpolated between the previous one and this one at once, then this
+    /// one half a frame interval later, so the view updates twice per frame at
+    /// the cost of that half interval of delay.
+    private func display(_ image: CGImage, receivedAt: TimeInterval, session: UUID) {
+        let settings = enhancement
+        let interval = lastDisplayedAt.map { receivedAt - $0 }
+        lastDisplayedAt = receivedAt
+        // A new stream, a settings change or a stall: nothing before it is related.
+        let discontinuity = enhancerSession != session || (interval ?? .infinity) > 1.0
+        enhancerSession = session
+        let enhancer = self.enhancer
+        Task { @MainActor [weak self] in
+            if discontinuity { await enhancer.reset() }
+            let frames = await enhancer.process(image, settings: settings)
+            guard let self, self.generation == session else { return }
+            let token = UUID()
+            self.displayToken = token
+            if let middle = frames.interpolated, !discontinuity, let interval {
+                self.cameraImage = NSImage(cgImage: middle, size: .zero)
+                let delay = min(max(interval / 2, 0.03), 0.3)
+                try? await Task.sleep(for: .seconds(delay))
+                guard self.displayToken == token, self.generation == session else { return }
+            }
+            self.cameraImage = NSImage(cgImage: frames.current, size: .zero)
         }
     }
 
@@ -946,6 +987,7 @@ private struct CompanionView: View {
                     GeometryReader { proxy in
                         Image(nsImage: image)
                             .resizable()
+                            .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: proxy.size.width, height: proxy.size.height)
                             .overlay { FaceOverlay(boxes: robot.faceBoxes) }

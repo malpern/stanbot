@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import Network
 import ImageIO
 import UniformTypeIdentifiers
@@ -14,7 +15,11 @@ private final class FakeRobot: @unchecked Sendable {
     private var accepted = 0
     private var current: NWConnection?
 
-    init(port: UInt16? = nil) throws {
+    let frameWidth: Int, frameHeight: Int
+
+    init(port: UInt16? = nil, frameWidth: Int = 32, frameHeight: Int = 24) throws {
+        self.frameWidth = frameWidth
+        self.frameHeight = frameHeight
         listener = try NWListener(using: .tcp, on: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any)
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         let ready = DispatchSemaphore(value: 0)
@@ -49,24 +54,24 @@ private final class FakeRobot: @unchecked Sendable {
                     connection.send(content: Data(line.utf8), completion: .idempotent)
                 }
                 if text.contains("S\n") {
-                    for sequence in UInt32(1)...3 { connection.send(content: Self.packet(sequence), completion: .idempotent) }
+                    for sequence in UInt32(1)...3 { connection.send(content: Self.packet(sequence, width: frameWidth, height: frameHeight), completion: .idempotent) }
                 }
             }
             if !done && error == nil { self.receive(on: connection) }
         }
     }
 
-    private static func packet(_ sequence: UInt32) -> Data {
-        let jpeg = jpegBytes()
+    private static func packet(_ sequence: UInt32, width: Int, height: Int) -> Data {
+        let jpeg = jpegBytes(width: width, height: height)
         func le(_ v: UInt32) -> [UInt8] { (0..<4).map { UInt8((v >> ($0 * 8)) & 0xff) } }
         return Data(Array("SBFR".utf8) + [1] + le(sequence) + le(UInt32(jpeg.count))) + jpeg
     }
 
-    private static func jpegBytes() -> Data {
-        let context = CGContext(data: nil, width: 32, height: 24, bitsPerComponent: 8, bytesPerRow: 0,
+    private static func jpegBytes(width: Int, height: Int) -> Data {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
         context.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 32, height: 24))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let out = NSMutableData()
         let destination = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, context.makeImage()!, nil)
@@ -267,5 +272,29 @@ final class NetworkTransportTests: XCTestCase {
         wait(upTo: 5, tick: robot) { robot.connection == .connected("127.0.0.1") && fake.connections == 2 }
         XCTAssertEqual(robot.connection, .connected("127.0.0.1"))
         XCTAssertEqual(fake.connections, 2)
+    }
+
+    @MainActor
+    func testDisplayedFramesAreEnhancedAtRobotResolution() throws {
+        try XCTSkipUnless(VideoEnhancement.videoToolboxAvailable, "needs macOS 26 VideoToolbox processors")
+        let fake = try FakeRobot(frameWidth: 320, frameHeight: 240)
+        defer { fake.stop() }
+        let robot = RobotConnection(port: nil, automaticPolling: false, networkHost: "127.0.0.1",
+                                    networkPort: fake.port, transport: .wifi)
+        robot.enhancement = VideoEnhancement()   // all on, whatever this machine has stored
+        wait(upTo: 5) { pixelWidth(robot.cameraImage) == 640 }
+        XCTAssertEqual(pixelWidth(robot.cameraImage), 640, "upscaled for display")
+
+        robot.enhancement = .off
+        robot.stopCamera(); robot.startCamera()
+        wait(upTo: 5) { pixelWidth(robot.cameraImage) == 320 }
+        XCTAssertEqual(pixelWidth(robot.cameraImage), 320, "untouched when off")
+    }
+
+    /// The backing CGImage's width. NSImage representations report doubled
+    /// pixels on a Retina display, which is not the frame's size.
+    private func pixelWidth(_ image: NSImage?) -> Int {
+        var rect = CGRect.zero
+        return image?.cgImage(forProposedRect: &rect, context: nil, hints: nil)?.width ?? 0
     }
 }

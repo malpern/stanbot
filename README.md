@@ -45,6 +45,13 @@ Head movement remains unavailable until calibration is complete.
 - **Wi-Fi only.** Never opens the serial port, so it stays free for scripts.
 - **USB only.** Never contacts the robot over the network.
 
+**Video** settings in the same window improve what is displayed, never what
+face detection sees: color, temporal noise reduction, smooth motion (one
+generated frame between each pair, about 0.1 s of added delay, can ghost on fast
+movement) and 2x super-resolution upscaling. The last three use the macOS 26
+VideoToolbox frame processors and cost about 10 ms per frame together. See
+[camera performance](docs/camera-performance.md#mac-side-enhancement--2026-09-16).
+
 The choice is stored under `StanbotTransport` (`automatic`, `wifi`, `usb`), so
 `open Stanbot.app --args -StanbotTransport usb` overrides it for one launch.
 

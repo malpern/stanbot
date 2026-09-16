@@ -57,8 +57,38 @@ struct TransportSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             LabeledContent("Now using", value: robot.linkSummary)
+
+            Divider().padding(.vertical, 6)
+
+            Section {
+                Toggle("Enhance color", isOn: $robot.enhancement.color)
+                Text("Slightly more saturation and contrast. The camera renders flat and grey.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Group {
+                    Toggle("Reduce noise", isOn: $robot.enhancement.denoise)
+                    Text("Filters grain using the previous frame.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Toggle("Smooth motion", isOn: $robot.enhancement.smoothMotion)
+                    Text("Adds a generated frame between each pair, doubling the displayed rate. Delays the picture by about a tenth of a second, and fast movement can ghost.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("Upscale", isOn: $robot.enhancement.upscale)
+                    Text("Machine-learning upscaling from 320×240 to 640×480. Sharper, but the added detail is inferred.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .disabled(!VideoEnhancement.videoToolboxAvailable)
+                if !VideoEnhancement.videoToolboxAvailable {
+                    Text("Noise reduction, smooth motion and upscaling need macOS 26 on Apple silicon.")
+                        .font(.callout).foregroundStyle(.orange)
+                }
+                Text("Display only: face detection always uses the frames exactly as the robot sends them.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: {
+                Text("Video").font(.headline)
+            }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 480)
     }
 }

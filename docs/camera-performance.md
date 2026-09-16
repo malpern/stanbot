@@ -44,6 +44,34 @@ Two independent defects, both fixed:
 Verified on the robot: the app locks on within about a second and holds.
 
 
+## Mac-side enhancement — 2026-09-16
+
+With the robot near its limits, the companion now improves the displayed video
+instead (`VideoEnhancer.swift`, Settings → Video, all on by default). Face
+detection still runs on the frames exactly as sent.
+
+| Stage | Tool | Effect |
+| --- | --- | --- |
+| Reduce noise | `VTTemporalNoiseFilter`, previous frame only | Grain filtered; needs the lossless 420v pixel format, converted with `VTPixelTransferSession` |
+| Upscale | `VTLowLatencySuperResolutionScaler`, 2x | 320×240 to 640×480; sharpness metric 1,200 to 2,700 |
+| Smooth motion | `VTLowLatencyFrameInterpolation`, phase 0.5 | Doubles displayed frames; the in-between frame is shown at once and the real one half an interval later |
+| Enhance color | Core Image color controls and vibrance | Saturation 1.1, contrast 1.05, vibrance 0.15; stronger settings tinted whites lavender |
+
+The whole chain measured about 10 ms per frame at 320×240 on the recorded
+sequence, and app CPU rose from about 40% to 43% of one core live.
+
+**Interpolate after upscaling, not before.** The first version interpolated at
+320×240 and upscaled both frames. Its in-between frames measured about a third
+as sharp as the real ones (915 against 2,710 on a Laplacian-variance metric), and
+alternating the two made the live picture pulse between clear and fuzzy. Moved
+after upscaling they measure about 2,400, within about 11%. The diagnostic
+`EnhancerSharpnessProbe` prints this per displayed frame for recorded frames.
+
+**Interpolation ghosts on large movement.** A textureless square jumping 160
+pixels between frames came out as two faint copies, a crossfade rather than
+motion. At about 5 fps a person moving quickly covers that kind of distance, so
+Settings says so.
+
 ## Pixel clock re-tested: 7.8 fps is available, but it tears — 2026-09-16
 
 The 2026-09-14 tearing fix (GC0308 page 0 register 0x28, divider bits 6:4 set
