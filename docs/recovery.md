@@ -6,6 +6,32 @@ the link really is, and what the partition table allows — live in
 **head** port on this unit, and the flashed partition table already supports OTA
 (otadata plus two 3 MB app slots), so flashing over Wi-Fi needs no repartitioning.
 
+## Secure OTA installed and verified, 2026-09-16
+
+All over Wi-Fi with `firmware/ota.py`, run from the mini through
+`ssh malpern@openclaw.local`; USB on the side port was used only for the
+passphrase and for observation.
+
+1. `provision_wifi.py --ota-password` stored the passphrase over USB; the three
+   Wi-Fi profiles were left intact.
+2. 69cee81 to 63d5add with `--allow-unauthenticated`, the last upload the robot
+   accepted without a passphrase (24.7 s, verified by `V`).
+3. A wrong passphrase was refused at authentication after 2.4 s, before any
+   image data was sent; `V` still reported 63d5add.
+4. 63d5add to 87d44b0 with the real passphrase: authenticated
+   (PBKDF2-HMAC-SHA256), 26.3 s, verified by `V`.
+5. Over Wi-Fi, `W,O,...`, `W,?`, `C,REBOOT`, `C,FOLLOW` and `Q` each drew
+   `SBNR {"refused":"usb_only"}` on both links, with no side effect on USB and
+   no reboot; `V` still answered on Wi-Fi and USB.
+6. With the passphrase cleared over USB and a reboot, the robot printed
+   `SBWF {"ota":"disabled_no_passphrase"}` and did not answer an update
+   invitation. Restored over USB and rebooted, it answered with an `AUTH`
+   challenge again.
+
+The robot ends on 87d44b0 with the passphrase stored. Rollback over USB at
+0x10000 as before; note OTA alternates app slots, so after an OTA the running
+image may be in the second slot.
+
 ## Version command installed, 2026-09-16
 
 One application-only write at 0x10000 on the known device (head USB, MAC
