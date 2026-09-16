@@ -1207,6 +1207,30 @@ void serviceFrame(bool onlyWhenDue = false) {
 //    its deadline whatever this loop is doing.
 //  - goals come from HeadTracker, which owns the rate limit and both
 //    deadbands; feedback is read only to guard the envelope and catch a stall.
+// Frames and text share one USB channel and only the frames carry a length, so
+// a reader cannot tell where a text line ends if a packet interrupts it. Every
+// other motion routine sidesteps this by refusing to run while the stream is
+// on; following is the one routine that cannot, because the host needs frames
+// to find a face. So anything this routine prints stops the stream first, lets
+// a packet already in flight drain, and brackets itself with markers the host
+// can resynchronize on. Measured 2026-09-15: without this a session's own
+// results arrived shredded and could not say whether the head had behaved.
+bool beginTelemetry() {
+  const bool wasStreaming = streamEnabled.exchange(false);
+  Serial.flush();
+  vTaskDelay(pdMS_TO_TICKS(200));
+  Serial.println("SBTB {\"telemetry\":\"begin\",\"plan\":\"follow\"}");
+  return wasStreaming;
+}
+
+// Restores whatever the host had asked for: a session never silently changes
+// the stream state it was given.
+void endTelemetry(bool wasStreaming) {
+  Serial.println("SBTE {\"telemetry\":\"end\"}");
+  Serial.flush();
+  streamEnabled.store(wasStreaming);
+}
+
 constexpr uint32_t kFollowSessionMs = 20000;
 constexpr uint32_t kFollowFeedbackMs = 40;
 constexpr int kFollowEnvelopeMargin = 16;
@@ -1216,11 +1240,15 @@ constexpr uint32_t kFollowStallMs = 800;
 void runFollowSession() {
   const auto& limits = stanbot::kFollowLimits;
   if (!limits.measured) {
+    const bool wasStreaming = beginTelemetry();
     Serial.println("SBMV {\"result\":\"follow_refused_limits_unmeasured\",\"plan\":\"follow\"}");
+    endTelemetry(wasStreaming);
     return;
   }
   if (disableOnlyLatched || powerWindowUsed) {
+    const bool wasStreaming = beginTelemetry();
     Serial.println("SBPW {\"error\":\"requires_unused_boot\"}");
+    endTelemetry(wasStreaming);
     return;
   }
   if (!streamEnabled.load()) {
@@ -1378,6 +1406,17 @@ void runFollowSession() {
   vTaskDelay(pdMS_TO_TICKS(250));
   const int offVoltage[] = {servoBus.ReadVoltage(1), servoBus.ReadVoltage(2)};
   // Diagnostics only now that power is verified off, as everywhere else.
+  //
+  // Frames and text share one USB channel and only the frames carry a length,
+  // so a reader has to guess where a text line ends. Every other motion
+  // routine sidesteps that by refusing to run while the stream is on;
+  // following is the one routine that cannot, because the host needs frames to
+  // find a face. So the stream stops here, the link is given time to drain any
+  // packet already in flight, and the telemetry is bracketed by markers the
+  // host can resynchronize on even if it lost framing earlier. Measured
+  // 2026-09-15: without this, a session's own results arrived shredded and
+  // were unusable for deciding whether the head had behaved.
+  const bool wasStreaming = beginTelemetry();
   for (unsigned i = 0; i < traceCount; ++i)
     Serial.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u}\n",
                   (unsigned long)trace[i].elapsed, trace[i].yawGoal, trace[i].yawPos, trace[i].pitchGoal, trace[i].pitchPos, trace[i].mode);
@@ -1391,6 +1430,7 @@ void runFollowSession() {
   Serial.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
                 failServo, failAck, failState, failError);
+  endTelemetry(wasStreaming);
   Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
                 enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
 }
