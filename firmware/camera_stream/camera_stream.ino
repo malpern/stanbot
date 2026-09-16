@@ -30,6 +30,8 @@
 #include <esp_eap_client.h>   // clearing PEAP state between profiles; see attemptProfile
 #include "head_tracker.h"       // follow controller; see runFollowSession
 #include "network_policy.h"     // which commands a Wi-Fi viewer may send
+#include "command_auth.h"       // passphrase-authorized FOLLOW/REBOOT over Wi-Fi
+#include <mbedtls/md.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include <Preferences.h>
@@ -179,7 +181,15 @@ std::atomic<bool> wifiScanRequested{false};
 // costs nothing worse than the badge lingering for a fraction of a second.
 std::atomic<bool> wifiLinkUp{false};
 std::atomic<bool> otaActive{false};
-std::atomic<bool> otaEnabled{false};  // ArduinoOTA started, which requires a stored passphrase
+std::atomic<bool> otaEnabled{false};
+// The OTA passphrase doubles as the key for authorizing FOLLOW and REBOOT over
+// Wi-Fi (command_auth.h). Loaded with it; empty means nothing can be authorized.
+char commandAuthKey[128] = {};
+bool hmacSha256(const uint8_t* key, size_t keyLength, const uint8_t* message, size_t messageLength, uint8_t out[32]) {
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  return info != nullptr && mbedtls_md_hmac(info, key, keyLength, message, messageLength, out) == 0;
+}
+stanbot::CommandAuth commandAuth(hmacSha256);  // ArduinoOTA started, which requires a stored passphrase
 bool wifiStarted = false;       // a join has been attempted this boot
 bool servicesStarted = false;   // mDNS, OTA and the listener are up
 int profileCount = 0;
@@ -352,6 +362,7 @@ void startNetworkServices() {
   storage.begin("stanbot", true);
   String otaPass = storage.getString("ota", "");
   storage.end();
+  std::snprintf(commandAuthKey, sizeof commandAuthKey, "%s", otaPass.c_str());
   if (MDNS.begin(kHostname)) MDNS.addService("stanbot", "tcp", kStreamPort);
   ArduinoOTA.setHostname(kHostname);
   // No passphrase, no OTA. An unauthenticated updater lets anyone on the
@@ -424,6 +435,21 @@ bool transportWrite(const uint8_t* bytes, size_t length) {
 // reply returns over whichever transport asked. Called only from the camera
 // task, which also writes every frame, so the line can never land inside a
 // packet on either transport.
+// Session results go to USB and, when there is one, the Wi-Fi viewer, so a
+// session started over Wi-Fi reports back to the app that started it. Only the
+// camera task (or the session capture task) writes to the viewer, and every
+// user of this runs there.
+class TelemetryOut : public Print {
+ public:
+  size_t write(uint8_t c) override { return write(&c, 1); }
+  size_t write(const uint8_t* data, size_t size) override {
+    Serial.write(data, size);
+    if (streamClient && streamClient.connected()) transportWrite(data, size);
+    return size;
+  }
+  void flush() override { Serial.flush(); }
+} Telemetry;
+
 void emitVersion() {
   const bool dirtyKnown = strcmp(STANBOT_GIT_DIRTY, "unknown") != 0;
   char line[320];
@@ -526,6 +552,37 @@ void handleCommand(const char* line) {
 
 // Reads newline commands arriving from the network viewer. Its own buffer, so
 // a partial line here cannot interleave with one arriving over USB.
+// A,? issues a challenge; A,<COMMAND>,<hex> carries the answer. Replies never
+// echo the MAC. Wi-Fi only: USB is already trusted and uses C,FOLLOW directly.
+void handleAuthCommand(const char* line) {
+  if (strcmp(line, "A,?") == 0) {
+    uint8_t random[16];
+    esp_fill_random(random, sizeof random);
+    const char* nonce = commandAuth.issue(random, millis());
+    Telemetry.printf("SBAC {\"nonce\":\"%s\",\"lifetime_ms\":%lu}\n", nonce,
+                     (unsigned long)stanbot::CommandAuth::kLifetimeMs);
+    return;
+  }
+  char command[16] = {};
+  const char* body = line + 2;
+  const char* comma = strchr(body, ',');
+  const size_t length = comma ? static_cast<size_t>(comma - body) : 0;
+  stanbot::CommandAuth::Result result = stanbot::CommandAuth::Result::Malformed;
+  if (comma && length > 0 && length < sizeof command) {
+    memcpy(command, body, length);
+    result = commandAuth.verify(command, comma + 1, commandAuthKey, millis());
+  } else {
+    commandAuth.verify("", "", commandAuthKey, millis());   // still consume the challenge
+  }
+  const bool ok = result == stanbot::CommandAuth::Result::Ok;
+  Telemetry.printf("SBAU {\"command\":\"%s\",\"ok\":%s,\"reason\":\"%s\"}\n",
+                   stanbot::CommandAuth::allowed(command) ? command : "", ok ? "true" : "false",
+                   stanbot::CommandAuth::name(result));
+  if (!ok) return;
+  if (strcmp(command, "FOLLOW") == 0) followRequested.store(true);
+  else if (strcmp(command, "REBOOT") == 0) rebootRequested.store(true);
+}
+
 void pollNetworkCommands() {
   static char line[160]{};
   static size_t length = 0;
@@ -535,7 +592,9 @@ void pollNetworkCommands() {
     const char c = static_cast<char>(streamClient.read());
     if (c == '\n') {
       line[length] = '\0';
-      if (!discard && stanbot::networkCommandAllowed(line)) {
+      if (!discard && strncmp(line, "A,", 2) == 0) {
+        handleAuthCommand(line);
+      } else if (!discard && stanbot::networkCommandAllowed(line)) {
         handleCommand(line);
       } else if (!discard && length > 0) {
         // Never echo the line: a refused W, command may carry a passphrase.
@@ -862,7 +921,7 @@ EnableSnapshot readEnable(i2c_master_dev_handle_t device) {
 }
 
 void printEnable(const char* phase, const EnableSnapshot& state) {
-  Serial.printf("SBPD {\"phase\":\"%s\",\"mode\":%u,\"latch\":%u,\"input\":%u,\"mode_error\":%d,\"latch_error\":%d,\"input_error\":%d}\n",
+  Telemetry.printf("SBPD {\"phase\":\"%s\",\"mode\":%u,\"latch\":%u,\"input\":%u,\"mode_error\":%d,\"latch_error\":%d,\"input_error\":%d}\n",
     phase, state.mode, state.latch, state.input,
     state.modeError, state.latchError, state.inputError);
 }
@@ -977,15 +1036,15 @@ void readStartupReadiness(ServoReading* readings, uint32_t started) {
 void printReadiness(const ServoReading* readings, const int* offVoltage) {
   for (int id = 1; id <= 2; ++id) {
     const auto& r = readings[id - 1];
-    Serial.printf("SBPD {\"phase\":\"startup_readiness\",\"id\":%d,\"attempts\":%u,\"torque_off_at_ms\":%d}\n",
+    Telemetry.printf("SBPD {\"phase\":\"startup_readiness\",\"id\":%d,\"attempts\":%u,\"torque_off_at_ms\":%d}\n",
                   id, r.attempts, r.readyAtMs);
-    Serial.printf("SBPD {\"phase\":\"deadband\",\"id\":%d,\"cw_raw\":%d,\"ccw_raw\":%d}\n",
+    Telemetry.printf("SBPD {\"phase\":\"deadband\",\"id\":%d,\"cw_raw\":%d,\"ccw_raw\":%d}\n",
                   id, r.cwDead, r.ccwDead);
-    Serial.printf("SBPD {\"phase\":\"gains\",\"id\":%d,\"p\":%d,\"d\":%d,\"i\":%d,\"punch\":%d}\n",
+    Telemetry.printf("SBPD {\"phase\":\"gains\",\"id\":%d,\"p\":%d,\"d\":%d,\"i\":%d,\"punch\":%d}\n",
                   id, r.gainP, r.gainD, r.gainI, r.punch);
-    Serial.printf("SBPD {\"phase\":\"power_window_voltage\",\"id\":%d,\"enabled_raw\":%d,\"after_cutoff_raw\":%d}\n",
+    Telemetry.printf("SBPD {\"phase\":\"power_window_voltage\",\"id\":%d,\"enabled_raw\":%d,\"after_cutoff_raw\":%d}\n",
                   id, r.voltage, offVoltage[id - 1]);
-    Serial.printf("SBSC {\"id\":%d,\"position\":%d,\"torque\":%d,\"minimum\":%d,\"maximum\":%d,\"moving\":%d,\"read_only\":false}\n",
+    Telemetry.printf("SBSC {\"id\":%d,\"position\":%d,\"torque\":%d,\"minimum\":%d,\"maximum\":%d,\"moving\":%d,\"read_only\":false}\n",
                   id, r.position, r.torque, r.minimum, r.maximum, r.moving);
   }
 }
@@ -1408,17 +1467,17 @@ void serviceFrame(bool onlyWhenDue = false) {
 // results arrived shredded and could not say whether the head had behaved.
 bool beginTelemetry() {
   const bool wasStreaming = streamEnabled.exchange(false);
-  Serial.flush();
+  Telemetry.flush();
   vTaskDelay(pdMS_TO_TICKS(200));
-  Serial.println("SBTB {\"telemetry\":\"begin\",\"plan\":\"follow\"}");
+  Telemetry.println("SBTB {\"telemetry\":\"begin\",\"plan\":\"follow\"}");
   return wasStreaming;
 }
 
 // Restores whatever the host had asked for: a session never silently changes
 // the stream state it was given.
 void endTelemetry(bool wasStreaming) {
-  Serial.println("SBTE {\"telemetry\":\"end\"}");
-  Serial.flush();
+  Telemetry.println("SBTE {\"telemetry\":\"end\"}");
+  Telemetry.flush();
   streamEnabled.store(wasStreaming);
 }
 
@@ -1474,20 +1533,20 @@ void runFollowSession() {
   const auto& limits = stanbot::kFollowLimits;
   if (!limits.measured) {
     const bool wasStreaming = beginTelemetry();
-    Serial.println("SBMV {\"result\":\"follow_refused_limits_unmeasured\",\"plan\":\"follow\"}");
+    Telemetry.println("SBMV {\"result\":\"follow_refused_limits_unmeasured\",\"plan\":\"follow\"}");
     endTelemetry(wasStreaming);
     return;
   }
   if (disableOnlyLatched || powerWindowUsed) {
     const bool wasStreaming = beginTelemetry();
-    Serial.println("SBPW {\"error\":\"requires_unused_boot\"}");
+    Telemetry.println("SBPW {\"error\":\"requires_unused_boot\"}");
     endTelemetry(wasStreaming);
     return;
   }
   if (!streamEnabled.load()) {
     // The opposite condition from every other motion routine, for the reason
     // in the header comment: no frames, no faces, nothing to follow.
-    Serial.println("SBPW {\"error\":\"follow_requires_stream_on\"}");
+    Telemetry.println("SBPW {\"error\":\"follow_requires_stream_on\"}");
     return;
   }
   powerWindowUsed = true;
@@ -1669,21 +1728,21 @@ void runFollowSession() {
   // were unusable for deciding whether the head had behaved.
   const bool wasStreaming = beginTelemetry();
   for (unsigned i = 0; i < traceCount; ++i)
-    Serial.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u}\n",
+    Telemetry.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u}\n",
                   (unsigned long)trace[i].elapsed, trace[i].yawGoal, trace[i].yawPos, trace[i].pitchGoal, trace[i].pitchPos, trace[i].mode);
   printEnable("immediate", immediate);
   printEnable("settled", settled);
   printEnable("after_cutoff", after);
   printReadiness(readings, offVoltage);
-  Serial.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
+  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
                 result, pitchOn ? "true" : "false", observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
-  Serial.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
+  Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
                 captureDecoupled ? "true" : "false", (unsigned long)sessionFrames, (unsigned long)captureStopMs,
                 failServo, failAck, failState, failError);
   endTelemetry(wasStreaming);
-  Serial.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
+  Telemetry.printf("SBPW {\"power_write_ack\":%s,\"enable_latch_high_verified\":%s,\"disable_latch_low_verified\":%s,\"rail_off_verified\":false,\"elapsed_ms\":%lu,\"position_commands\":%d}\n",
                 enabled ? "true" : "false", onVerified ? "true" : "false", offVerified ? "true" : "false", (unsigned long)(millis() - started), positionCommands);
 }
 

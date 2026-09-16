@@ -134,4 +134,12 @@ final class HeadFollowingTests: XCTestCase {
         XCTAssertEqual(usb.read(), "C,REBOOT\n")
         XCTAssertEqual(robot.follow, .idle)
     }
+
+    /// The vector computed with Python's hmac module, shared with
+    /// companion/test_command_auth.cpp, so app and firmware agree.
+    func testAuthorizationMatchesTheSharedVector() {
+        XCTAssertEqual(CommandAuthorization.mac(command: "FOLLOW", nonce: "00112233445566778899aabbccddeeff",
+                                                passphrase: "correct horse battery staple"),
+                       "ddefdb5a5ae93875b5911d6e3dd6bff073c70007431ff2d71f8b84b8ece41f76")
+    }
 }

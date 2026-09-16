@@ -14,6 +14,12 @@ private final class FakeRobot: @unchecked Sendable {
     private var received = ""
     private var accepted = 0
     private var current: NWConnection?
+    /// The passphrase this fake robot holds, and what it concluded.
+    var passphrase = "test-passphrase"
+    /// What this fake reports for follow_limits_measured: true is a calibration build.
+    var followMeasured = false
+    private(set) var authorized: [String] = []
+    private static let nonce = "00112233445566778899aabbccddeeff"
 
     let frameWidth: Int, frameHeight: Int
 
@@ -35,6 +41,10 @@ private final class FakeRobot: @unchecked Sendable {
     /// Drops the current client, as a robot rebooting or leaving Wi-Fi would.
     func dropClient() { queue.sync { current?.cancel(); current = nil } }
 
+    /// Sends a text line to the connected app, as robot telemetry would arrive.
+    func sendLine(_ text: String) { queue.sync { current?.send(content: Data((text + "\n").utf8), completion: .idempotent) } }
+    var authorizedCommands: [String] { lock.withLock { authorized } }
+
     func stop() { dropClient(); listener.cancel() }
 
     private func accept(_ connection: NWConnection) {
@@ -49,8 +59,19 @@ private final class FakeRobot: @unchecked Sendable {
             guard let self else { return }
             if let data, let text = String(data: data, encoding: .utf8) {
                 lock.withLock { received += text }
+                for line in text.split(separator: "\n") where line.hasPrefix("A,") {
+                    if line == "A,?" {
+                        connection.send(content: Data("SBAC {\"nonce\":\"\(Self.nonce)\",\"lifetime_ms\":30000}\n".utf8), completion: .idempotent)
+                    } else {
+                        let parts = line.split(separator: ",")
+                        let command = parts.count == 3 ? String(parts[1]) : ""
+                        let ok = parts.count == 3 && String(parts[2]) == CommandAuthorization.mac(command: command, nonce: Self.nonce, passphrase: passphrase)
+                        if ok { lock.withLock { authorized.append(command) } }
+                        connection.send(content: Data("SBAU {\"command\":\"\(command)\",\"ok\":\(ok),\"reason\":\"\(ok ? "ok" : "bad_mac")\"}\n".utf8), completion: .idempotent)
+                    }
+                }
                 if text.contains("V\n") {
-                    let line = #"SBVR {"sketch":"camera_stream","commit":"0123456789ab","dirty":false,"built":"2026-09-16T18:00:00Z","protocol":1,"follow_limits_measured":false}"# + "\n"
+                    let line = #"SBVR {"sketch":"camera_stream","commit":"0123456789ab","dirty":false,"built":"2026-09-16T18:00:00Z","protocol":1,"follow_limits_measured":"# + "\(followMeasured)}\n"
                     connection.send(content: Data(line.utf8), completion: .idempotent)
                 }
                 if text.contains("S\n") {
@@ -299,15 +320,78 @@ final class NetworkTransportTests: XCTestCase {
     }
 
     @MainActor
-    func testHeadFollowingNeverStartsOverWiFi() throws {
+    func testHeadFollowingNeverStartsOverWiFiWithoutAPassphrase() throws {
         let fake = try FakeRobot()
         defer { fake.stop() }
         let robot = RobotConnection(port: nil, automaticPolling: false, networkHost: "127.0.0.1",
-                                    networkPort: fake.port, transport: .wifi)
+                                    networkPort: fake.port, transport: .wifi, passphrase: { nil })
         wait(upTo: 5) { robot.cameraState == .receiving }
-        XCTAssertTrue(robot.followUnavailableReason?.contains("USB only") ?? false)
+        XCTAssertTrue(robot.followUnavailableReason?.contains("passphrase") ?? false)
         robot.startFollowing()
         XCTAssertEqual(robot.follow, .idle)
         XCTAssertFalse(fake.commands.contains("C,FOLLOW"))
+    }
+
+    @MainActor
+    private func calibratedWiFiRobot(_ fake: FakeRobot, passphrase: String) -> RobotConnection {
+        fake.followMeasured = true
+        let robot = RobotConnection(port: nil, automaticPolling: false, networkHost: "127.0.0.1", networkPort: fake.port,
+                                    transport: .wifi,
+                                    followLogDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("stanbot-test-logs"),
+                                    passphrase: { passphrase })
+        robot.enhancement = .off
+        wait(upTo: 5) { robot.cameraState == .receiving }
+        wait(upTo: 3) { if case .reported = robot.firmware { return true }; return false }
+        return robot
+    }
+
+    @MainActor
+    func testFollowingOverWiFiIsAuthorizedWithThePassphrase() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        XCTAssertNil(robot.followUnavailableReason)
+
+        robot.startFollowing()
+        wait(upTo: 3) { if case .following = robot.follow { return true }; return false }
+        guard case .following = robot.follow else { return XCTFail("not following: \(robot.follow)") }
+        XCTAssertEqual(fake.authorizedCommands, ["FOLLOW"])
+        XCTAssertFalse(fake.commands.contains("test-passphrase"), "the passphrase never crosses the network")
+        XCTAssertFalse(fake.commands.contains("C,FOLLOW"), "over Wi-Fi only the authorized form is used")
+
+        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9))
+        robot.stopFollowing()
+        wait(upTo: 2) { fake.commands.contains("C,UNFOLLOW") }
+        XCTAssertTrue(fake.commands.contains("T,1,"))
+        XCTAssertTrue(fake.commands.contains("C,UNFOLLOW"))
+
+        // The result now reaches a Wi-Fi viewer too.
+        fake.sendLine(#"SBMV {"result":"stopped_by_host","plan":"follow","pitch_enabled":false,"observations":1,"rejected":0,"yaw_final":460,"pitch_final":602,"yaw_commanded":460,"pitch_commanded":602,"mode":0}"#)
+        wait(upTo: 2) { if case .finished = robot.follow { return true }; return false }
+        XCTAssertEqual(robot.follow, .finished(FollowResult(code: "stopped_by_host")))
+    }
+
+    @MainActor
+    func testWrongPassphraseIsRefusedAndNothingIsSent() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "not-the-robots")
+        robot.startFollowing()
+        wait(upTo: 3) { if case .finished = robot.follow { return true }; return false }
+        XCTAssertEqual(robot.follow, .finished(FollowResult(code: "auth_bad_mac")))
+        XCTAssertEqual(fake.authorizedCommands, [])
+        robot.sendFollowTarget(FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), confidence: 0.9))
+        XCTAssertFalse(fake.commands.contains("T,"))
+    }
+
+    @MainActor
+    func testRebootOverWiFiIsAuthorized() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        robot.rebootRobot()
+        wait(upTo: 3) { fake.authorizedCommands == ["REBOOT"] }
+        XCTAssertEqual(fake.authorizedCommands, ["REBOOT"])
+        XCTAssertFalse(fake.commands.contains("C,REBOOT"))
     }
 }

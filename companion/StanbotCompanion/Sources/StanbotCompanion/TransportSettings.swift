@@ -41,6 +41,8 @@ enum TransportPreference: String, CaseIterable, Identifiable, Sendable {
 
 struct TransportSettingsView: View {
     @EnvironmentObject private var robot: RobotConnection
+    @State private var typedPassphrase = ""
+    @State private var passphraseStatus: String?
 
     var body: some View {
         Form {
@@ -57,6 +59,32 @@ struct TransportSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             LabeledContent("Now using", value: robot.linkSummary)
+
+            Divider().padding(.vertical, 6)
+
+            Section {
+                LabeledContent("Robot passphrase", value: robot.passphraseAvailable ? "Stored in Keychain" : "Not set")
+                HStack {
+                    Button("Load from Secrets") {
+                        passphraseStatus = RobotPassphrase.loadFromSecrets()
+                        robot.refreshPassphrase()
+                    }
+                    SecureField("Or enter it", text: $typedPassphrase)
+                        .onSubmit {
+                            passphraseStatus = RobotPassphrase.store(typedPassphrase) ? "Saved." : "Could not save."
+                            typedPassphrase = ""
+                            robot.refreshPassphrase()
+                        }
+                }
+                if let passphraseStatus {
+                    Text(passphraseStatus).font(.callout).foregroundStyle(.secondary)
+                }
+                Text("Lets head following start and the robot reboot over Wi-Fi. The passphrase stays on this Mac; the robot sends a one-time challenge and checks the answer.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Head following").font(.headline)
+            }
 
             Divider().padding(.vertical, 6)
 

@@ -26,6 +26,11 @@ struct FollowResult: Equatable {
         case "follow_requires_stream_on": "Refused: the camera stream must be on."
         case "preflight_refused": "Refused before moving: the servos were not where the robot expects."
         case "no_result": "No result arrived from the robot."
+        case "auth_bad_mac": "Refused: the robot passphrase on this Mac does not match the robot."
+        case "auth_no_passphrase_stored": "Refused: the robot has no passphrase stored. Set one over USB."
+        case "auth_no_passphrase": "The robot passphrase is missing from this Mac. Add it in Settings."
+        case "auth_no_reply": "The robot did not answer the authorization request."
+        case let other where other.hasPrefix("auth_"): "Authorization failed (\(other.dropFirst(5)))."
         default: "Ended early (\(code)). The head is powered off; see the robot's telemetry."
         }
     }
@@ -65,7 +70,7 @@ struct HeadFollowingPanel: View {
                 case .finished(let result) where result.needsReboot:
                     Button("Reboot Robot", systemImage: "arrow.triangle.2.circlepath") { robot.rebootRobot() }
                         .buttonStyle(.bordered)
-                        .disabled(robot.followUnavailableReason != nil && !robot.connectedOverUSB)
+                        .disabled(!(robot.connectedOverUSB || (robot.connectedOverWiFi && robot.passphraseAvailable)))
                 default:
                     Button("Follow", systemImage: "scope") { confirming = true }
                         .buttonStyle(.borderedProminent)
@@ -79,7 +84,7 @@ struct HeadFollowingPanel: View {
             Button("Start Following") { robot.startFollowing() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The head will turn toward the selected face for up to 20 seconds, yaw only, within the calibration limits. Stay at the robot, and press Stop if anything looks wrong.")
+            Text("The head will turn toward the selected face for up to 20 seconds, yaw only, within the calibration limits. Stay at the robot, and press Stop if anything looks wrong. Over Wi-Fi the robot checks the passphrase first.")
         }
     }
 

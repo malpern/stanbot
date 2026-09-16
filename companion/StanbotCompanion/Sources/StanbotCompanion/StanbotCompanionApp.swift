@@ -255,6 +255,13 @@ final class RobotConnection: ObservableObject {
     /// Where session logs go. Tests pass a temporary directory so they never
     /// write into the user's Logs folder, as they did on 2026-09-16.
     private let followLogDirectory: URL
+    /// The robot passphrase, for authorizing FOLLOW and REBOOT over Wi-Fi.
+    private let passphrase: () -> String?
+    /// A Wi-Fi command waiting on the robot's challenge or its verdict.
+    private enum PendingAuthorization { case follow, reboot }
+    private var pendingAuthorization: PendingAuthorization?
+    private var authorizationSentAt = Date.distantPast
+    @Published private(set) var passphraseAvailable = false
     private var followLogUntil = Date.distantPast
     /// Longer than the robot's 20 s session plus its telemetry, so a missing
     /// result is reported rather than leaving the Stop button up forever.
@@ -333,8 +340,14 @@ final class RobotConnection: ObservableObject {
     init(port: String? = nil, automaticPolling: Bool = true,
          networkHost: String = "stanbot.local", networkPort: UInt16 = 3333,
          transport: TransportPreference? = nil, wifiRetryInterval: TimeInterval = 30,
-         followLogDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot")) {
+         followLogDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot"),
+         passphrase: (() -> String?)? = nil) {
         self.followLogDirectory = followLogDirectory
+        // The Keychain item belongs to the signed app. Reading it from the test
+        // runner would raise a macOS permission dialog mid-run, so under XCTest
+        // the default is no passphrase and tests that need one inject it.
+        let underTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        self.passphrase = passphrase ?? (underTests ? { nil } : { RobotPassphrase.read() })
         self.networkHost = networkHost
         self.networkPort = networkPort
         self.transport = transport ?? .stored
@@ -461,6 +474,7 @@ final class RobotConnection: ObservableObject {
         networkUp = up
         if up {
             connection = .connected(networkHost)
+            refreshPassphrase()
             lastAction = "Connected to \(networkHost) over Wi-Fi. Motion remains locked."
             requestVersion()
             if wantsCamera { startCamera() }
@@ -598,6 +612,10 @@ final class RobotConnection: ObservableObject {
             firmware = .reported(info)
             return
         }
+        if line.hasPrefix("SBAC ") || line.hasPrefix("SBAU ") {
+            handleAuthorization(line)
+            return
+        }
         guard case .following = follow, line.hasPrefix("SBMV ") || line.hasPrefix("SBPW "),
               let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
         else { return }
@@ -612,11 +630,15 @@ final class RobotConnection: ObservableObject {
     }
 
     var connectedOverUSB: Bool { serialFD >= 0 && !usingNetwork }
+    var connectedOverWiFi: Bool { usingNetwork && networkUp }
+
+    func refreshPassphrase() { passphraseAvailable = passphrase() != nil }
 
     /// Why a session cannot start now, or nil when it can.
     var followUnavailableReason: String? {
-        guard connectedOverUSB else {
-            return "Starts over USB only, since it moves the head. Choose USB only in Settings, with the cable in the side port."
+        guard connectedOverUSB || connectedOverWiFi else { return "Connect to the robot first." }
+        if connectedOverWiFi && !passphraseAvailable {
+            return "Over Wi-Fi, starting needs the robot passphrase. Add it in Settings."
         }
         guard case .reported(let info) = firmware else { return "Waiting for the robot to report its firmware." }
         guard info.followLimitsMeasured else {
@@ -627,13 +649,57 @@ final class RobotConnection: ObservableObject {
     }
 
     func startFollowing() {
-        guard followUnavailableReason == nil else { return }
+        guard followUnavailableReason == nil, pendingAuthorization == nil else { return }
         if case .following = follow { return }
+        if connectedOverWiFi {
+            requestAuthorization(.follow)
+            return
+        }
         guard send("C,FOLLOW\n") else { return }
+        beginFollowing()
+    }
+
+    private func beginFollowing() {
         targetSequence = 0
         openFollowLog()
         follow = .following(since: Date())
         lastAction = "Head following started. Stay at the robot."
+    }
+
+    private func requestAuthorization(_ purpose: PendingAuthorization) {
+        guard send("A,?\n") else { return }
+        pendingAuthorization = purpose
+        authorizationSentAt = Date()
+        lastAction = "Authorizing with the robot over Wi-Fi…"
+    }
+
+    /// SBAC carries the challenge to answer; SBAU the robot's verdict.
+    private func handleAuthorization(_ line: String) {
+        guard let purpose = pendingAuthorization,
+              let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
+        else { return }
+        let command = purpose == .follow ? "FOLLOW" : "REBOOT"
+        if line.hasPrefix("SBAC "), let nonce = object["nonce"] as? String {
+            guard let key = passphrase() else {
+                pendingAuthorization = nil
+                follow = .finished(FollowResult(code: "auth_no_passphrase"))
+                return
+            }
+            _ = send("A,\(command),\(CommandAuthorization.mac(command: command, nonce: nonce, passphrase: key))\n")
+            authorizationSentAt = Date()
+            return
+        }
+        guard line.hasPrefix("SBAU "), object["command"] as? String == command else { return }
+        pendingAuthorization = nil
+        let ok = object["ok"] as? Bool ?? false
+        let reason = object["reason"] as? String ?? "unknown"
+        switch (purpose, ok) {
+        case (.follow, true): beginFollowing()
+        case (.reboot, true): follow = .idle; lastAction = "Rebooting the robot for a fresh motion session."
+        case (_, false):
+            follow = .finished(FollowResult(code: "auth_\(reason)"))
+            lastAction = "The robot refused authorization: \(reason)."
+        }
     }
 
     private func openFollowLog() {
@@ -665,12 +731,18 @@ final class RobotConnection: ObservableObject {
 
     func stopFollowing() {
         guard case .following = follow else { return }
-        // USB only, like the start; the robot also ends the session by itself.
+        // Allowed on either link without authorization: stopping only makes the
+        // robot safer. The robot also ends the session by itself.
         _ = send("C,UNFOLLOW\n")
         lastAction = "Asked the robot to stop following."
     }
 
     func rebootRobot() {
+        if connectedOverWiFi {
+            guard passphraseAvailable, pendingAuthorization == nil else { return }
+            requestAuthorization(.reboot)
+            return
+        }
         guard connectedOverUSB else { return }
         _ = send("C,REBOOT\n")
         follow = .idle
@@ -736,6 +808,10 @@ final class RobotConnection: ObservableObject {
             } else if probe != nil, Date().timeIntervalSince(probeStartedAt) > Self.wifiConnectTimeout {
                 endProbe()
             }
+        }
+        if pendingAuthorization != nil, Date().timeIntervalSince(authorizationSentAt) > 5 {
+            pendingAuthorization = nil
+            follow = .finished(FollowResult(code: "auth_no_reply"))
         }
         if case .following(let since) = follow, Date().timeIntervalSince(since) > Self.followResultTimeout {
             follow = .finished(FollowResult(code: "no_result"))
