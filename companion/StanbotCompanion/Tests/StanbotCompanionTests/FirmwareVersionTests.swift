@@ -62,6 +62,14 @@ final class FirmwareVersionTests: XCTestCase {
         XCTAssertEqual(chunk.lines, ["SBST {\"a\":1}", clean])
     }
 
+    /// Serial.println() lines end in \r\n; they used to be dropped entirely.
+    func testCarriageReturnLinesAreKept() {
+        let decoder = FrameDecoder()
+        let bytes = Array("SBTB {\"telemetry\":\"begin\",\"plan\":\"follow\"}\r\nSBPW {\"error\":\"follow_requires_stream_on\"}\r\n".utf8)
+        XCTAssertEqual(decoder.append(Data(bytes)).lines,
+                       [#"SBTB {"telemetry":"begin","plan":"follow"}"#, #"SBPW {"error":"follow_requires_stream_on"}"#])
+    }
+
     func testTextInsidePayloadIsNotALine() {
         let decoder = FrameDecoder()
         let fake = Array((clean + "\n").utf8)

@@ -1020,7 +1020,11 @@ final class FrameDecoder {
             guard Array(raw.prefix(4)) == magic else {
                 if raw[0] == 0x53, raw[1] == 0x42 { // "SB": possibly a text line
                     if let newline = raw.prefix(maximumLineBytes).firstIndex(of: 0x0a) {
-                        if let line = String(bytes: raw[..<newline], encoding: .utf8),
+                        // Serial.println() ends lines with \r\n. Without dropping
+                        // the \r every such line failed isTextLine and vanished:
+                        // SBTB, and refusals such as follow_requires_stream_on.
+                        let end = newline > 0 && raw[newline - 1] == 0x0d ? newline - 1 : newline
+                        if let line = String(bytes: raw[..<end], encoding: .utf8),
                            Self.isTextLine(line) {
                             chunk.lines.append(line)
                             buffer.removeFirst(newline + 1)

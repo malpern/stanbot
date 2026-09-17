@@ -329,6 +329,12 @@ unchecked. Shared test vector: two lines, `76f85edc`, in
 This detects damage; it does not repair it. The lost byte itself is still
 unexplained.
 
+Found while building this: the app's decoder dropped every line ending in
+`\r\n`, which is what `Serial.println()` writes, because it required the line
+to end in `}`. `SBTB`, and refusals such as `follow_requires_stream_on`, never
+reached the app or the session logs. The decoder now drops a trailing `\r`
+(`testCarriageReturnLinesAreKept`).
+
 ## Eyes glance at the face (built, not yet seen on the robot)
 
 The drawn eyes now look toward the selected face: from `T,` lines during a
