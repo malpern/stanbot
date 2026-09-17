@@ -116,6 +116,9 @@ std::atomic<int32_t> gazeXMilli{0}, gazeYMilli{0};
 std::atomic<uint32_t> gazeSequence{0};
 std::atomic<bool> followRequested{false};
 std::atomic<bool> followStopRequested{false};
+// True from just before a follow session opens its power window until power
+// off is verified. An OTA update waits on it (see ArduinoOTA.onStart).
+std::atomic<bool> followRunning{false};
 std::atomic<bool> powerTestRequested{false};
 std::atomic<bool> powerOffRequested{false};
 std::atomic<bool> yawTestRequested{false};
@@ -384,7 +387,13 @@ void startNetworkServices() {
     ArduinoOTA.setPassword(otaPass.c_str());
     ArduinoOTA.onStart([]() {
       // Free the link and the CPU for the update, and stop driving anything.
+      // A follow session is asked to stop first, and the update waits (up to
+      // 3 s) for its motor power to be verified off: an update over Wi-Fi
+      // must never write flash and reboot with the head powered and moving.
+      followStopRequested.store(true);
       otaActive.store(true);
+      const uint32_t waitStarted = millis();
+      while (followRunning.load() && millis() - waitStarted < 3000) vTaskDelay(pdMS_TO_TICKS(10));
       streamEnabled.store(false);
       if (streamClient) streamClient.stop();
     });
@@ -1618,6 +1627,12 @@ uint32_t stopSessionCapture(UBaseType_t basePriority) {
 
 void runFollowSession() {
   const auto& limits = stanbot::kFollowLimits;
+  if (otaActive.load()) {
+    const bool wasStreaming = beginTelemetry();
+    Telemetry.println("SBPW {\"error\":\"update_in_progress\"}");
+    endTelemetry(wasStreaming);
+    return;
+  }
   if (!limits.measured) {
     const bool wasStreaming = beginTelemetry();
     Telemetry.println("SBMV {\"result\":\"follow_refused_limits_unmeasured\",\"plan\":\"follow\"}");
@@ -1647,7 +1662,9 @@ void runFollowSession() {
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
   TaskHandle_t cutoff = nullptr;
-  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) return;
+  followRunning.store(true);
+  if (otaActive.load()) { followRunning.store(false); return; }   // an update began in between
+  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) { followRunning.store(false); return; }
   servoBus.EnableTorque(0xfe, 0);
   // The sweep's 20 ms bus timeout assumes its own tight loop. This one shares
   // a task with camera capture, so a reply can arrive after a longer pause;
@@ -1739,6 +1756,7 @@ void runFollowSession() {
             powerCutoff.renewedMs.store(now);
             ++renewals;
           }
+          if (otaActive.load()) { result = "stopped_for_update"; break; }
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
           ++iterations;
@@ -1827,6 +1845,7 @@ void runFollowSession() {
   servoBus.EnableTorque(0xfe, 0);
   servoBus.IOTimeOut = 20;         // restore the tight-loop timeout
   const EnableSnapshot after = readEnable(device);
+  followRunning.store(false);   // power off has been commanded and read back
   const bool offVerified = powerCutoff.written.load() && after.modeError == ESP_OK &&
     (after.mode & 1) && after.latchError == ESP_OK && !(after.latch & 1);
   i2c_master_bus_rm_device(device);

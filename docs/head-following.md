@@ -357,6 +357,28 @@ closed-loop simulations (compensated yaw, pitch and both axes) still settle
 without crossing the centre. Tests that count exact ticks use a linear
 configuration (`kLinear`), and `easingRampsUpAndSlowsDown` pins the new shape.
 
+## Following over Wi-Fi only
+
+Everything needed to follow with the USB cable in the power-only back port is
+built; none of it has run that way on the robot. Before the first such session:
+
+1. **Update safety (new).** An OTA update that starts during a session now
+   asks it to stop and waits up to 3 s for motor power to be verified off
+   before writing flash (`stopped_for_update`); a session refuses to start
+   while an update is in progress (`update_in_progress`). Previously the
+   update proceeded with the head powered and still following.
+2. **Link loss.** If Wi-Fi drops mid-session no targets arrive, the lease
+   stops being renewed, the head searches and returns, and the session ends
+   after 12 s (`session_idle`), power off. Nothing depends on the app
+   reconnecting.
+3. **Authorization.** Follow and Reboot need the passphrase challenge
+   (`command_auth.h`); Stop, eye gaze (`G,`) and targets do not.
+4. **Telemetry** reaches the Wi-Fi viewer and is checked the same way.
+5. **Checklist for the session:** flash over OTA with the app closed
+   (`firmware/ota.py`), move the cable to the back port, open the app on
+   Wi-Fi, confirm the Firmware card shows the expected commit, stay at the
+   robot, and replay the log afterwards.
+
 ## Replaying a session
 
 ```sh
