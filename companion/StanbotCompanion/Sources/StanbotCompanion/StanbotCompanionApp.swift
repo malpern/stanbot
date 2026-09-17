@@ -1001,6 +1001,12 @@ final class RobotConnection: ObservableObject {
                 versionAttempts += 1
                 versionAskedAt = Date()
                 _ = send("V\n")
+            } else if usingNetwork {
+                // Over Wi-Fi a connection nobody answers is not a link. The robot
+                // serves one viewer and only accepts the next once it notices the
+                // last has gone, so an app relaunched within a few seconds sits in
+                // its listen queue, connected and unheard, forever. Reconnect.
+                networkStateChanged(false, "connected, but the robot did not answer")
             } else {
                 firmware = .silent
             }

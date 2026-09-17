@@ -19,6 +19,9 @@ private final class FakeRobot: @unchecked Sendable {
     /// What this fake reports for follow_limits_measured: true is a calibration build.
     var followMeasured = false
     private(set) var authorized: [String] = []
+    /// How many connections to accept and then never answer, as the real robot
+    /// does while a previous viewer still holds its only slot.
+    var unheardConnections = 0
     private static let nonce = "00112233445566778899aabbccddeeff"
 
     let frameWidth: Int, frameHeight: Int
@@ -48,10 +51,15 @@ private final class FakeRobot: @unchecked Sendable {
     func stop() { dropClient(); listener.cancel() }
 
     private func accept(_ connection: NWConnection) {
-        lock.withLock { accepted += 1 }
+        let ignore = lock.withLock { () -> Bool in
+            accepted += 1
+            guard unheardConnections > 0 else { return false }
+            unheardConnections -= 1
+            return true
+        }
         current = connection
         connection.start(queue: queue)
-        receive(on: connection)
+        if !ignore { receive(on: connection) }
     }
 
     private func receive(on connection: NWConnection) {
@@ -150,6 +158,21 @@ final class NetworkTransportTests: XCTestCase {
         wait(upTo: 8, tick: robot) { robot.cameraState == .receiving && fake.connections == 2 }
         XCTAssertEqual(fake.connections, 2, "exactly one reconnect, not a cancel-and-retry loop")
         XCTAssertEqual(robot.cameraState, .receiving)
+    }
+
+    @MainActor
+    func testReconnectsWhenAConnectedRobotNeverAnswers() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        // The bug: relaunched while the robot still served the old app, Stanbot
+        // connected into the robot's listen queue and waited there forever.
+        fake.unheardConnections = 1
+        let robot = RobotConnection(port: nil, automaticPolling: false,
+                                    networkHost: "127.0.0.1", networkPort: fake.port, transport: .wifi)
+        wait(upTo: 15, tick: robot) { robot.cameraState == .receiving && fake.connections == 2 }
+        XCTAssertEqual(fake.connections, 2)
+        XCTAssertEqual(robot.cameraState, .receiving)
+        guard case .reported = robot.firmware else { return XCTFail("no firmware after reconnecting: \(robot.firmware)") }
     }
 
     // MARK: - Transport preference

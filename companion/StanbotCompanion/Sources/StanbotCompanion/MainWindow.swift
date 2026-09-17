@@ -378,12 +378,19 @@ private struct Joystick: View {
     var body: some View {
         // A direction pad, not a circle with a dot (which read as a record
         // button). It leans a few points toward the drag while steering.
-        Image(systemName: robot.steering ? "dpad.fill" : "dpad")
-            .font(.system(size: 17, weight: .regular))
-            .foregroundStyle(robot.steering ? Color.stanbot : .primary)
-            .offset(knob)
-            .frame(width: size, height: size)
-            .contentShape(Rectangle())
+        // Wrapped in a ZStack on purpose: as a bare Image in the toolbar the
+        // drag never reached the robot (2026-09-17), while the earlier shape
+        // version did; a toolbar item that is only an Image is likely turned
+        // into a native toolbar image, which drops the gesture.
+        ZStack {
+            Color.clear
+            Image(systemName: robot.steering ? "dpad.fill" : "dpad")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(robot.steering ? Color.stanbot : .primary)
+                .offset(knob)
+        }
+        .frame(width: size, height: size)
+        .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
