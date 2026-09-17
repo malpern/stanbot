@@ -98,11 +98,12 @@ struct CompanionView: View {
             // Stanbot's face, left of its name. SwiftUI's .navigation toolbar
             // placement drew nothing in this window (2026-09-17), so it is an
             // AppKit titlebar accessory instead.
-            .background(TitlebarFace(content: RobotFaceBadge(mood: mood(at: Date()))
+            .background(TitlebarFace(content: RobotFaceBadge(mood: mood(at: Date()), showEyes: !showControls)
                 .environmentObject(robot)
                 .environment(speech)))
             .inspector(isPresented: $showControls) {
-                ControlsPanel(mood: mood(at: Date()), reaction: reaction)
+                ControlsPanel(mood: mood(at: Date()), reaction: reaction,
+                              captionShownInVideoArea: robot.cameraImage == nil && !robot.asleep)
                     .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
             }
             .onAppear {
@@ -203,6 +204,17 @@ private struct LiveView: View {
             }
         }
         .animation(.smooth(duration: 0.45), value: showingVideo)
+        // The first picture after connecting is also a waking: Stanbot's eyes
+        // open on the world at launch and whenever the camera comes back. Not
+        // after sleep, whose own wake is already running (and holds a frame).
+        .onChange(of: picture != nil, initial: true) { _, has in
+            guard has, !robot.asleep, frozen == nil, motion == nil else { return }
+            motion = (false, Date())
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(EyeMotionSequence.wakeDuration))
+                if motion?.asleep == false { motion = nil }
+            }
+        }
         .onChange(of: robot.asleep) { _, sleeping in
             motion = (sleeping, Date())
             let duration = sleeping ? EyeMotionSequence.sleepDuration : EyeMotionSequence.wakeDuration
@@ -492,7 +504,7 @@ enum ExpressionIcon {
 
     static func image(for emotion: Emotion) -> NSImage {
         if let cached = cache[emotion] { return cached }
-        let renderer = ImageRenderer(content: StaticEyes(pose: EyePose.of(emotion)).frame(width: 24, height: 18))
+        let renderer = ImageRenderer(content: StaticEyes(pose: EyePose.of(emotion), trouble: emotion == .trouble).frame(width: 24, height: 18))
         renderer.scale = 2
         let image = renderer.nsImage ?? NSImage(systemSymbolName: emotion.symbol, accessibilityDescription: nil) ?? NSImage()
         cache[emotion] = image
@@ -503,14 +515,16 @@ enum ExpressionIcon {
 /// The eyes without time: no blink, no drift, looking straight ahead. For icons.
 private struct StaticEyes: View {
     let pose: EyePose
+    var trouble = false
 
     var body: some View {
         GeometryReader { proxy in
             let scale = min(proxy.size.width / 320, proxy.size.height / 240)
             ZStack {
                 RoundedRectangle(cornerRadius: 40 * scale, style: .continuous).fill(.black)
+                if trouble { TroubleFace(scale: scale) }
                 HStack(spacing: (218 - 102) * scale - pose.width * scale) {
-                    ForEach(0..<2, id: \.self) { _ in
+                    ForEach(0..<(trouble ? 0 : 2), id: \.self) { _ in
                         ZStack {
                             RoundedRectangle(cornerRadius: min(30, pose.height / 2) * scale, style: .continuous)
                                 .fill(Color(white: 0.74))   // the irises' grey, as the robot draws them

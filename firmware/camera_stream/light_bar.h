@@ -86,10 +86,31 @@ struct LightBar {
   static constexpr uint8_t kOrangeR = 96, kOrangeG = 32, kOrangeB = 0;  // the breath's peak
   static constexpr uint32_t kBreathMs = 5000;
   static constexpr float kBreathFloor = 0.2f;                           // faintest point of the breath
+  // Waking: the bar comes up from dark over this long, orange rising, the
+  // moment the robot wakes — before the app has even restarted the camera —
+  // so the light reads as waking too. Then the ordinary rules apply.
+  static constexpr uint32_t kWakeRampMs = 600;
 
   LightMode mode = LightMode::Off;
   uint32_t lastFaceMs = 0;
   bool seenFace = false;
+  bool waking = false;
+  uint32_t wokeMs = 0;
+
+  // The robot has just woken: ramp up from dark.
+  void wake(uint32_t nowMs) {
+    waking = true;
+    wokeMs = nowMs;
+  }
+
+  // 0..1 through the wake ramp, 1 once it is over (or never woke).
+  float wakeRamp(uint32_t nowMs) const {
+    if (!waking) return 1.0f;
+    const uint32_t elapsed = nowMs - wokeMs;
+    if (elapsed >= kWakeRampMs) return 1.0f;
+    const float t = static_cast<float>(elapsed) / kWakeRampMs;
+    return t * t * (3.0f - 2.0f * t);   // eased, so it does not snap on at the end
+  }
 
   // `attending`: a face is attended to now. `looking`: the camera is streaming.
   // Returns whether the mode changed.
@@ -98,8 +119,11 @@ struct LightBar {
       lastFaceMs = nowMs;
       seenFace = true;
     }
+    if (waking && nowMs - wokeMs >= kWakeRampMs) waking = false;
+    // While waking the bar shows the searching orange even before the app has
+    // restarted the camera, so the light comes up with the eyes.
     const LightMode want = seenFace && nowMs - lastFaceMs < kHoldMs ? LightMode::Face
-                         : looking ? LightMode::Searching : LightMode::Off;
+                         : (looking || waking) ? LightMode::Searching : LightMode::Off;
     if (want == mode) return false;
     mode = want;
     return true;
@@ -114,10 +138,15 @@ struct LightBar {
   }
 
   uint16_t color(uint32_t nowMs) const {
+    const float ramp = wakeRamp(nowMs);
     switch (mode) {
-      case LightMode::Face: return rgb565(kBlueR, kBlueG, kBlueB);
+      case LightMode::Face:
+        return rgb565(static_cast<uint8_t>(kBlueR * ramp + 0.5f), static_cast<uint8_t>(kBlueG * ramp + 0.5f),
+                      static_cast<uint8_t>(kBlueB * ramp + 0.5f));
       case LightMode::Searching: {
-        const float b = breath(nowMs);
+        // Through the ramp the breath is held at its peak, so what rises is
+        // the light itself, not a breath caught at its faintest.
+        const float b = (waking ? 1.0f : breath(nowMs)) * ramp;
         return rgb565(static_cast<uint8_t>(kOrangeR * b + 0.5f), static_cast<uint8_t>(kOrangeG * b + 0.5f),
                       static_cast<uint8_t>(kOrangeB * b + 0.5f));
       }

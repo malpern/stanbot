@@ -53,7 +53,7 @@ struct Mood: Equatable {
             break
         }
         if case .finished(let result) = follow, !result.retryable {
-            return Mood(emotion: .worried, caption: "Something’s wrong")
+            return Mood(emotion: .trouble, caption: "Something’s wrong")
         }
         let look = box.map { CGPoint(x: $0.rect.midX * 2 - 1, y: 1 - $0.rect.midY * 2) }
         let closeness = Double(box?.rect.width ?? 0)

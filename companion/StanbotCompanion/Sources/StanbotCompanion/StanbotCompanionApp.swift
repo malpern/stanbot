@@ -1298,6 +1298,8 @@ final class FrameDecoder {
 enum Emotion: String, CaseIterable, Identifiable {
     case normal, angry, glee, happy, sad, worried, focused, annoyed, surprised
     case skeptic, frustrated, unimpressed, sleepy, suspicious, squint, furious, scared, awe
+    /// Something went wrong: crossed-out eyes and a frown, after the Sad Mac.
+    case trouble
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -1311,6 +1313,7 @@ enum Emotion: String, CaseIterable, Identifiable {
         case .annoyed, .frustrated, .unimpressed: "ellipsis"
         case .surprised, .awe: "exclamationmark.bubble"
         case .sleepy: "moon.zzz"
+        case .trouble: "xmark.circle"
         }
     }
 }

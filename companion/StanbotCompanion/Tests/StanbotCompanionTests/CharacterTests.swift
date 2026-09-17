@@ -41,7 +41,7 @@ final class CharacterTests: XCTestCase {
         XCTAssertEqual(seen.look!.y, 0.4, accuracy: 0.001)
         XCTAssertEqual(mood(face: .tracking, box: face, follow: .following(since: Date())).caption, "Following you")
         XCTAssertEqual(mood(follow: .following(since: Date())).caption, "Looking for you")
-        XCTAssertEqual(mood(follow: .finished(FollowResult(code: "preflight_refused"))).emotion, .worried)
+        XCTAssertEqual(mood(follow: .finished(FollowResult(code: "preflight_refused"))).emotion, .trouble)
         XCTAssertEqual(mood(follow: .finished(FollowResult(code: "session_idle"))).caption, "Looking around",
                        "an ordinary end is not a worry")
     }

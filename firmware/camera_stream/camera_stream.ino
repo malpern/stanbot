@@ -233,6 +233,11 @@ std::atomic<bool> wifiLinkUp{false};
 constexpr uint8_t kAwakeBrightness = 255;
 std::atomic<bool> asleep{false};
 std::atomic<bool> sleepRequested{false};   // the eyes are closing; the screen darkens after
+std::atomic<bool> lightBarWakeRequested{false};   // the bar ramps up from dark on wake
+// A follow session that ended in a fault shows the trouble face until this
+// millis() time (0: none). Normal endings — idle, deadline, stopped — do not.
+std::atomic<uint32_t> troubleUntilMs{0};
+constexpr uint32_t kTroubleFaceMs = 12000;
 std::atomic<int> brightnessRequest{-1};   // applied by the camera task, which owns internal I2C
 std::atomic<bool> powerDownRequested{false};
 std::atomic<bool> sleepStateChanged{false};
@@ -654,6 +659,7 @@ void handleCommand(const char* line) {
     sleepRequested.store(false);
     asleep.store(false);
     brightnessRequest.store(kAwakeBrightness);
+    lightBarWakeRequested.store(true);
     sleepStateChanged.store(true);
   }
   else if (strcmp(line, "C,OFF") == 0) powerDownRequested.store(true);
@@ -1152,6 +1158,7 @@ void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
   nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
+  if (lightBarWakeRequested.exchange(false)) lightBar.wake(now);
   lightBar.update(attending, streamEnabled.load(), now);
   // Asleep the bar is off, whatever the bar's own rules would show.
   const uint16_t color = asleep.load() ? 0 : lightBar.color(now);
@@ -2138,6 +2145,14 @@ void runFollowSession() {
   printEnable("settled", settled);
   printEnable("after_cutoff", after);
   printReadiness(readings, offVoltage);
+  {
+    static const char* const kNormalEndings[] = {"session_complete", "session_deadline", "session_idle",
+                                                  "session_max_duration", "stopped_by_host", "stopped_for_update",
+                                                  "follow_cooldown"};
+    bool normal = false;
+    for (const char* ending : kNormalEndings) normal = normal || strcmp(result, ending) == 0;
+    if (!normal) troubleUntilMs.store(millis() + kTroubleFaceMs);
+  }
   Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"manual_inputs\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
                 result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, manualInputs, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
@@ -2450,6 +2465,8 @@ void updateBootScreen(uint32_t now) {
 
 bool screenDarkened = false;
 bool sleepAnimating = false;
+StanbotEmotion chosenEmotion = StanbotEmotion::Normal;   // the app's or the owner's pick
+bool showingTrouble = false;
 
 void loop() {
   const uint32_t now = millis();
@@ -2458,7 +2475,14 @@ void loop() {
   // the eyes stop. The camera task stands down via the onStart handler.
   if (servicesStarted && otaEnabled.load()) ArduinoOTA.handle();
   const int emotion = pendingEmotion.exchange(-1);
-  if (emotion >= 0) eyes.setEmotion(static_cast<StanbotEmotion>(emotion));
+  if (emotion >= 0) { chosenEmotion = static_cast<StanbotEmotion>(emotion); eyes.setEmotion(chosenEmotion); }
+  // The trouble face after a faulted session, then back to what was chosen.
+  {
+    const uint32_t until = troubleUntilMs.load();
+    const bool trouble = until != 0 && static_cast<int32_t>(until - now) > 0;
+    if (trouble && !showingTrouble) { eyes.setEmotion(StanbotEmotion::Trouble); showingTrouble = true; }
+    if (!trouble && showingTrouble) { eyes.setEmotion(chosenEmotion); showingTrouble = false; }
+  }
   if (bootScreenActive) { updateBootScreen(now); return; }
   // Look toward the latest face. The eyes' own 900 ms timeout drifts them back
   // to idle when the app stops sending, and their smoothing leads the head,

@@ -63,16 +63,21 @@ struct RobotFace: View {
 struct RobotFaceBadge: View {
     @EnvironmentObject private var robot: RobotConnection
     var mood: Mood
+    /// The eyes appear here only while the controls panel, with its large
+    /// face, is hidden: one Stanbot on screen, not two.
+    var showEyes = true
 
     static let size = CGSize(width: 130, height: 26)
 
     var body: some View {
         HStack(spacing: 6) {
-            StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, screen: false,
-                            scanning: mood.scanning, engaged: mood.engaged,
-                            mouthMinimumPoints: 1.2, mouthGlow: false)
-                .frame(width: 34, height: 26)
-                .help(mood.caption)
+            if showEyes {
+                StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, screen: false,
+                                scanning: mood.scanning, engaged: mood.engaged,
+                                mouthMinimumPoints: 1.2, mouthGlow: false)
+                    .frame(width: 34, height: 26)
+                    .help(mood.caption)
+            }
             Text("Stanbot")
                 .font(.headline)
             ReachabilityDot()

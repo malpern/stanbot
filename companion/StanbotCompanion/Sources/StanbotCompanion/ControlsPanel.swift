@@ -7,6 +7,9 @@ struct ControlsPanel: View {
     @EnvironmentObject private var robot: RobotConnection
     let mood: Mood
     let reaction: EyeReaction?
+    /// The video area is showing its empty state, whose headline says the same
+    /// thing in bigger type: one message, not two.
+    var captionShownInVideoArea = false
     /// STANBOT_SNAPSHOT_WINDOW=sheet opens it at launch, to photograph it.
     @State private var showingDetails = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] == "sheet"
 
@@ -15,7 +18,8 @@ struct ControlsPanel: View {
     /// The video area's empty state already says this, in bigger type: one
     /// message, not two. Every other caption still shows here.
     private var repeatsPlaceholder: Bool {
-        mood.caption == Mood.placeholderHeadline(connection: robot.connection, camera: robot.cameraState)
+        captionShownInVideoArea
+            || mood.caption == Mood.placeholderHeadline(connection: robot.connection, camera: robot.cameraState)
     }
 
     /// What is wrong, in words, beside the red dot in the title bar: the robot

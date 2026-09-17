@@ -16,7 +16,9 @@
 enum class StanbotEmotion : uint8_t {
   Normal, Angry, Glee, Happy, Sad, Worried, Focused, Annoyed, Surprised,
   Skeptic, Frustrated, Unimpressed, Sleepy, Suspicious, Squint, Furious,
-  Scared, Awe
+  Scared, Awe,
+  // Something went wrong: crossed-out eyes and a frown, after the Sad Mac.
+  Trouble
 };
 
 // Shared renderer for the avatar-only and camera-enabled sketches.
@@ -50,7 +52,10 @@ class StanbotEyes {
     lastEngagedMs_ = now;
   }
 
-  void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
+  void setEmotion(StanbotEmotion emotion) {
+    emotion_ = emotion;
+    targetPose_ = poseFor(emotion);
+  }
 
   // Sleep: the eyes close over SleepCurtain::kCloseMs, and only then may the
   // screen go dark (closedForSleep). Waking opens them again.
@@ -67,7 +72,7 @@ class StanbotEyes {
     static constexpr const char* kNames[] = {
         "normal", "angry", "glee", "happy", "sad", "worried", "focused",
         "annoyed", "surprised", "skeptic", "frustrated", "unimpressed",
-        "sleepy", "suspicious", "squint", "furious", "scared", "awe"};
+        "sleepy", "suspicious", "squint", "furious", "scared", "awe", "trouble"};
     for (uint8_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
       if (strcmp(name, kNames[i]) == 0) {
         result = static_cast<StanbotEmotion>(i);
@@ -134,6 +139,7 @@ class StanbotEyes {
   stanbot::GazeBrain gaze_{0xC0FFEEu};
   stanbot::MouthModel mouth_;
   stanbot::SleepCurtain curtain_;
+  StanbotEmotion emotion_ = StanbotEmotion::Normal;
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
   Pose targetPose_{86, 112, 0, 1};
@@ -158,6 +164,7 @@ class StanbotEyes {
       case StanbotEmotion::Furious: return {92,62,24,0.65f};
       case StanbotEmotion::Scared: return {92,138,0,1.35f};
       case StanbotEmotion::Awe: return {100,142,0,1.1f};
+      case StanbotEmotion::Trouble: return {86,112,0,1};
     }
     return {86,112,0,1};
   }
@@ -180,11 +187,31 @@ class StanbotEyes {
     const uint16_t iris = 0xBDF7;
 
     display.fillScreen(TFT_BLACK);
+    if (emotion_ == StanbotEmotion::Trouble) {
+      drawTrouble(display, iris);
+      return;
+    }
     drawEye(display, 102, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
     drawEye(display, 218, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
     drawMouth(display);
+  }
+
+  // Something went wrong: two crossed-out eyes where the eyes were, and a
+  // frown below, after the Sad Mac. Still, so it reads as a state, not a mood.
+  template <typename Display>
+  void drawTrouble(Display& display, uint16_t iris) {
+    constexpr int kBaseY = 120;
+    constexpr int kArm = 30;     // half the width of each X
+    constexpr int kStroke = 6;   // half the line width
+    for (int centreX : {102, 218}) {
+      display.drawWideLine(centreX - kArm, kBaseY - kArm, centreX + kArm, kBaseY + kArm, kStroke, iris);
+      display.drawWideLine(centreX - kArm, kBaseY + kArm, centreX + kArm, kBaseY - kArm, kStroke, iris);
+    }
+    // The frown: the upper part of a ring centred below the mouth line, so the
+    // ends turn down. Angles run clockwise from 3 o'clock in M5GFX.
+    display.fillArc(160, 232, 22, 30, 190, 350, iris);
   }
 
   // The mouth, only while speaking: a grey capsule a little dimmer than the

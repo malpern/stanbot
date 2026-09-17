@@ -34,6 +34,7 @@ struct EyePose: Equatable {
         case .furious: EyePose(width: 92, height: 62, tilt: 24, pupilScale: 0.65)
         case .scared: EyePose(width: 92, height: 138, tilt: 0, pupilScale: 1.35)
         case .awe: EyePose(width: 100, height: 142, tilt: 0, pupilScale: 1.1)
+        case .trouble: EyePose(width: 86, height: 112, tilt: 0, pupilScale: 1)
         }
     }
 }
@@ -167,6 +168,8 @@ struct StanbotEyesView: View {
                         if asleep {
                             closedEye(width: pose.width, scale: scale)
                             closedEye(width: pose.width, scale: scale)
+                        } else if emotion == .trouble {
+                            TroubleFace(scale: scale, glow: screenLook)
                         } else {
                             eye(pose: pose, scale: scale, openness: openness,
                                 gaze: CGPoint(x: gaze.x + converge, y: gaze.y))
@@ -175,9 +178,11 @@ struct StanbotEyesView: View {
                         }
                     }
                     // The mouth, where the robot draws it (MouthModel): a resting
-                    // line, shaping while Stanbot speaks.
-                    StanbotMouthView(scale: scale, glow: mouthGlow, minimumPoints: mouthMinimumPoints)
-                        .offset(y: (MouthModel.centerY - 120) * scale)
+                    // line, shaping while Stanbot speaks. The trouble face has its own.
+                    if emotion != .trouble {
+                        StanbotMouthView(scale: scale, glow: mouthGlow, minimumPoints: mouthMinimumPoints)
+                            .offset(y: (MouthModel.centerY - 120) * scale)
+                    }
                 }
                 .scaleEffect(motion.scale)
                 .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)
@@ -317,6 +322,40 @@ struct StanbotEyesView: View {
         }
         .frame(width: pose.width * scale, height: max(pose.height * 1.2, 6) * scale)
         .compositingGroup()
+    }
+}
+
+/// Something went wrong: two crossed-out eyes where the eyes were and a frown
+/// below, after the Sad Mac, in the same grey and the same places the robot
+/// draws its own (StanbotEyes::drawTrouble). Still, so it reads as a state.
+struct TroubleFace: View {
+    var scale: Double
+    var glow = false
+
+    var body: some View {
+        let grey = Color(white: 0.74)
+        let arm = 30 * scale, stroke = 12 * scale
+        // Laid out in the robot's 320x240 frame: eyes at x 102 and 218, y 120,
+        // the frown's arc centred at (160, 232).
+        ZStack {
+            ForEach([102.0, 218.0], id: \.self) { centre in
+                Path { path in
+                    path.move(to: CGPoint(x: -arm, y: -arm)); path.addLine(to: CGPoint(x: arm, y: arm))
+                    path.move(to: CGPoint(x: -arm, y: arm)); path.addLine(to: CGPoint(x: arm, y: -arm))
+                }
+                .stroke(grey, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                .frame(width: 1, height: 1)
+                .offset(x: (centre - 160) * scale)
+            }
+            Path { path in
+                path.addArc(center: .zero, radius: 26 * scale, startAngle: .degrees(190), endAngle: .degrees(350), clockwise: false)
+            }
+            .stroke(grey, style: StrokeStyle(lineWidth: 8 * scale, lineCap: .round))
+            .frame(width: 1, height: 1)
+            .offset(y: (232 - 120) * scale)
+        }
+        .shadow(color: glow ? grey.opacity(0.35) : .clear, radius: 14 * scale)
+        .frame(width: 320 * scale, height: 240 * scale)
     }
 }
 

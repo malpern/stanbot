@@ -83,5 +83,28 @@ int main() {
     if (c > peak) peak = c;
   }
   assert(peak == rgb565(LightBar::kOrangeR, LightBar::kOrangeG, LightBar::kOrangeB));
+  // Waking: from dark, orange rising over the ramp even before the camera is
+  // back, eased, reaching the full orange, then the ordinary rules again.
+  LightBar woke;
+  woke.update(false, false, 30000);
+  assert(woke.mode == LightMode::Off && woke.color(30000) == 0);
+  woke.wake(30000);
+  assert(woke.update(false, false, 30000) && woke.mode == LightMode::Searching);   // no stream yet, still lit
+  assert(woke.color(30000) == 0);                                                   // but from dark
+  const uint16_t quarter = woke.color(30000 + LightBar::kWakeRampMs / 4);
+  const uint16_t half = woke.color(30000 + LightBar::kWakeRampMs / 2);
+  const uint16_t full = woke.color(30000 + LightBar::kWakeRampMs);
+  assert(((quarter >> 11) & 0x1F) < ((half >> 11) & 0x1F));                        // rising
+  assert(((half >> 11) & 0x1F) < ((full >> 11) & 0x1F));
+  assert(full == rgb565(LightBar::kOrangeR, LightBar::kOrangeG, LightBar::kOrangeB));   // all the way up
+  // Ramp over and the app still has not restarted the camera: dark again, as the rules say.
+  assert(woke.update(false, false, 30000 + LightBar::kWakeRampMs) && woke.mode == LightMode::Off);
+  // With the camera back it breathes as usual; a face during the ramp comes up blue.
+  LightBar faced;
+  faced.wake(40000);
+  faced.update(true, true, 40000);
+  assert(faced.mode == LightMode::Face && faced.color(40000) == 0);
+  assert(faced.color(40000 + LightBar::kWakeRampMs) == blue);
+
   std::puts("light bar: all checks passed");
 }

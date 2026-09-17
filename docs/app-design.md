@@ -23,7 +23,9 @@ the robot's view, with a little of the robot's character in it.
   time, so `EyeApertureTests` checks the blinks, the lag, the focus and the
   shape frame by frame, and can write a filmstrip (`STANBOT_WAKE_STRIP=1`). It
   is deliberately slower than the robot's own 0.7/0.4 s lids: the app is a
-  cinema screen, the robot a face. While a sequence runs the picture is
+  cinema screen, the robot a face. The same waking plays at launch and whenever
+  the camera comes back, so Stanbot's eyes open on the world rather than the
+  picture popping in. While a sequence runs the picture is
   redrawn every frame from a `TimelineView`; at rest nothing animates. The last
   frame is held while the eyes close, because the robot stops sending as soon as
   it is asked to sleep, and the app stops analysing once they are shut. Reduce
@@ -39,7 +41,8 @@ the robot's view, with a little of the robot's character in it.
   selected face outlined. No sidebar: there is one robot and no
   hierarchy to navigate. If several robots or recorded sessions arrive, a
   sidebar comes back with real places in it.
-- **Title bar:** Stanbot's live eyes and mouth, its name, and the red dot when
+- **Title bar:** Stanbot's live eyes and mouth (only while the controls panel
+  is hidden — one Stanbot on screen, not two), its name, and the red dot when
   it cannot be reached (no icon for a working link: nothing to say) — all one titlebar
   accessory (`RobotFaceBadge`); the window's own title is a single space so the
   dot can sit right of the name. (Hiding the title instead, with
@@ -52,10 +55,13 @@ the robot's view, with a little of the robot's character in it.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption, and a gear in the
   corner, and it scrolls, so nothing is ever pushed out of view at small window
-  sizes. **Clicking the face puts the robot to sleep or wakes it**: on the
+  sizes. The caption is left out while the video area's empty state carries
+  the same message in bigger type. **Clicking the face puts the robot to sleep or wakes it**: on the
   robot the eyes close over 0.7 s before the screen darkens
   (`SleepCurtain.h`), and the light bar goes off while it sleeps; waking opens
-  them again over 0.4 s. An orange
+  them again over 0.4 s while the light bar comes up from dark over 0.6 s
+  (`LightBar::wake`), orange rising the instant the robot wakes — before the app
+  has restarted the camera — so the light wakes with the eyes. An orange
   line appears above the face when something is wrong (unreachable, or a refusal
   that will not clear). Nothing else: the panel is Stanbot, not a control board.
 - **The gear sheet** holds everything else, in four sections: Head (Follow/Stop
@@ -87,7 +93,12 @@ the robot's view, with a little of the robot's character in it.
 - **Mood from facts.** `Mood.of` turns connection, camera, face selection and
   follow state into an expression and a short caption: "Asleep", "Waking up…",
   "Looking around", "Is someone there?", "I see someone", "Following you",
-  "Where did you go?", "Something’s wrong". Empty states use the same face,
+  "Where did you go?", "Something’s wrong" — which is the **trouble face**, after
+  the Sad Mac: two crossed-out eyes where the eyes were and a frown below, in
+  the same grey, still. The robot draws the same (`StanbotEyes::drawTrouble`,
+  emotion `trouble`) on its own screen for 12 s after a follow session that
+  ended in a fault, then returns to whatever expression was chosen; normal
+  endings (idle, deadline, stopped) do not trigger it. Empty states use the same face,
   large, with the one action that helps ("Stanbot is asleep", Reconnect).
 - **Rounded type** only where Stanbot speaks (captions, empty-state titles,
   face labels); the system font everywhere else. The accent is the robot's eye
