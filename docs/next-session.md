@@ -10,10 +10,15 @@ below is committed and pushed.
 
 **On the robot:** firmware `f907097`, a calibration build made with
 `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 STANBOT_FOLLOW_YAW_RANGE=96`,
-flashed over Wi-Fi and verified. `tools/check_sleep_wake.py` passes on it, and a
+flashed over Wi-Fi and verified; a centre-431, yaw +-288 build is ready but
+unflashed. `tools/check_sleep_wake.py` passes on it, and a
 full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
 
-- **Yaw** +-96 raw (~30 deg) around 460. Operator: "left and right looking good".
+- **Yaw** centre MEASURED 2026-09-17 at raw **431** (`kFollowYawCentre`), not
+  the assumed 460: two steered readings agreed at 431 and 432. Travel widened
+  to +-288 (+-90 deg), what the 2026-09-15 sweep traversed. Note +-288 around
+  431 reaches 143 on the robot's left, ~11 deg past anything the sweep
+  commanded: that side is new ground.
 - **Pitch** level measured by eye at raw **614** (`calibration-pitch-level.jsonl`).
   Limits 594..870. Up verified: steered all the way up, the head met a hard stop
   at ~885 that the owner saw as vertical (`stall_detected`, power off verified),
@@ -75,23 +80,21 @@ firmware plus the sleep work.
 
 ## Next, in order
 
-1. **Measure the yaw centre**, with the owner at the robot. 460 is the BSP's
-   `defaultZeroPos`, assumed and never measured, and it is wrong: the head sits
-   left of the feet at rest and the wake scan reaches further left than right.
-   Follow on, steer until the screen is square over the feet, let go, then
-   `python3 tools/read_steered_yaw.py`; put the number in `kFollowLimits` (the
-   limits are written around the centre) and flash. See the calibration
-   checklist, step 1, in `docs/head-following.md`.
+1. **Confirm the new centre and the wider travel on the robot.** Measured and
+   built but NOT yet flashed as of this writing: centre 431 and yaw +-288. At
+   rest the head should now sit square over the feet, and the wake scan should
+   reach equally to either side. Watch the first excursion to the robot's left:
+   143 raw is past anything the sweep commanded.
 2. **See what has never been seen**, with the owner at the robot: the wake scan
    (sleep, then wake while out of view), the mouth
    (Robot menu, Play Mouth Test; then set `robotLead` by eye), the sleep
    animation on the robot's screen, and the trouble face.
 3. **Re-check pitch level** (steer until the face looks straight ahead, read
    pitch from the follow log), then decide the down limit.
-4. **Widen yaw** one supervised session per step:
-   `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept). The
-   owner asked for 144 on 2026-09-17 and then dismissed the supervised prompt:
-   ask again when they are at the robot.
+4. **Widen yaw beyond 288** only after a supervised sweep out there. M5Stack
+   document the X axis as +-128 deg, so the servo has room past the +-90 deg
+   built here; the compile-time assert caps at 288, and the cable and the body,
+   not the motor, are the real limit.
 5. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
    Mac, then a command-line `gpt-live-1` client. The Talk button is phase 4.
 6. **When calibration is done**, decide whether `measured` can be true in the

@@ -533,8 +533,15 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
    log. It takes the last run of manual-mode samples and, within it, only the
    trailing ones that stopped moving, because the head resumes following 1.5 s
    after the last input and a reading taken mid-turn is a wrong answer that
-   looks like a right one. Put the number in `kFollowLimits` as the centre; the
-   limits are written around it, so they move with it.
+   looks like a right one. Put the number in `kFollowYawCentre`; the limits are
+   written around it, so they move with it.
+
+   **Measured 2026-09-17: 431**, not 460. Two steered readings agreed (431 and
+   432); a third at 471 came from a three-input nudge held 0.2 s and was
+   discarded. Both symptoms fit: commanding 460 pointed the head 29 raw (9 deg)
+   to the robot's right of square, and the wake scan reached 125 raw to the
+   owner's left against 67 to their right. `kYawCenter` in the sketch stays at
+   460 on purpose: the sweep's verified envelope is measured around that one.
 2. **Pitch direction.** Same session, face high in frame, `pitchMax` at rest
    +32. Observe nod up or down; record `pitchUpSign`. If +raw nods *down*,
    the safe range is on the other side of rest and both pitch limits change.
@@ -554,6 +561,12 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
    without oscillating. If it hunts, the deadbands are too narrow for this
    unit's standing error; if it lags, raise `rawPerUnitX/Y` a little.
 4. **Widen.** Extend the limits toward what the sweep traversed (yaw +-288),
+   remembering that the limits hang off the measured centre, not 460: at +-288
+   around 431 the robot-left limit is 143, about 11 deg past the furthest the
+   2026-09-15 sweep ever commanded (172, arrived 178). That side is new ground,
+   so watch it and be ready to power the robot off by hand. M5Stack document
+   the X axis as +-128 deg and the SCS0009 as 300 deg over 1024 steps, so the
+   servo has room; the limits here are the body and the cable, not the motor.
    one session per step, watching for the head meeting the body. No source
    edit is needed: `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_YAW_RANGE=96
    firmware/build.sh`, then 144, 192, 240 and 288. Other values fail to

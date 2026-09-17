@@ -1653,6 +1653,10 @@ void testServoPower(bool yawTest = false, int yawDelta = 8, bool session = false
 // envelope; a stall (goal far away, feedback not advancing) aborts with
 // torque-off; and the independent cutoff removes motor power at the plan's
 // deadline regardless of what this task does. No EEPROM/NVS writes.
+// The sweep's own centre, deliberately still the BSP's defaultZeroPos and NOT
+// head_tracker.h's measured kFollowYawCentre: the 2026-09-15 sweep's verified
+// envelope (commanded 172..748, arrived 178..744) is measured around this one,
+// and moving it would move the envelope away from what was observed.
 constexpr int kYawCenter = 460;           // BSP defaultZeroPos for ID 1.
 constexpr int kSweepHalfTravel = 288;     // 90 degrees: 900 tenths * 16 / 50.
 constexpr int kSweepStep = 8;             // raw steps per waypoint (~2.5 deg).

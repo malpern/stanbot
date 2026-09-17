@@ -72,6 +72,16 @@ struct FollowLimits {
 // The pitch limits, shared by both builds; measured below.
 constexpr int kFollowPitchMin = 594;
 constexpr int kFollowPitchMax = 870;
+// Yaw centre, MEASURED 2026-09-17 by eye, the way pitch level was. 460 is the
+// BSP's defaultZeroPos for servo 1 and was taken on trust; it is 29 raw (9 deg)
+// to the robot's right of where the head actually sits square over the feet.
+// The symptoms fit exactly: at rest the head sat to the owner's left, and the
+// wake scan, sweeping centre +-96, reached 125 raw to their left but only 67 to
+// their right, which is why it never came round to them. Two independent
+// steered readings agreed (431 and 432, `tools/read_steered_yaw.py`); a third
+// at 471 came from a three-input nudge held 0.2 s and was discarded.
+// The limits below are written around this, so they move with it.
+constexpr int kFollowYawCentre = 431;
 #if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
 // Checklist step 4 widens yaw one supervised session at a time without editing
 // source: STANBOT_FOLLOW_YAW_RANGE=96 firmware/build.sh, then 144, 192, 240,
@@ -95,14 +105,14 @@ constexpr int kFollowYawRange = 48;
 // "Nearly straight down" at 592 does not fit ~3 raw/deg from a level of 614,
 // so level itself is due a re-check before any further pitch change.
 constexpr FollowLimits kFollowLimits = {
-  460 - kFollowYawRange, 460 + kFollowYawRange, 460,
+  kFollowYawCentre - kFollowYawRange, kFollowYawCentre + kFollowYawRange, kFollowYawCentre,
   kFollowPitchMin, kFollowPitchMax, 614,
   +1, true,
   320, 32, true};
 #else
 constexpr int kFollowYawRange = 144;
 constexpr FollowLimits kFollowLimits = {
-  460 - kFollowYawRange, 460 + kFollowYawRange, 460,
+  kFollowYawCentre - kFollowYawRange, kFollowYawCentre + kFollowYawRange, kFollowYawCentre,
   kFollowPitchMin, kFollowPitchMax, 614,
   +1, false,
   320, 32, true};
