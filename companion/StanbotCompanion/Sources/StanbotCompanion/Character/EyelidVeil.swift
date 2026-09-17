@@ -1,20 +1,36 @@
 import SwiftUI
 
-/// Falling asleep and waking, seen from inside Stanbot's head: the picture is
-/// masked by the shape of the robot's own eyes, which narrow to two eye-shaped
-/// windows and then close like lids, losing focus as they go. Waking reverses
-/// it. The robot does the same thing on its own screen over the same times
-/// (firmware SleepCurtain.h); `MouthTests` checks the timings against it.
+/// Falling asleep and waking, seen from inside Stanbot's head: what the robot
+/// sees is visible only through two eye-shaped windows, exactly where and what
+/// shape the robot draws its own eyes, and the lids open and close over them.
+/// The robot does the same thing on its own screen over the same times
+/// (firmware SleepCurtain.h); `EyelidTests` checks the timings against it.
 ///
-/// `openness` is 1 awake (the whole picture) and 0 asleep (black).
+/// `openness` is 1 awake (the whole picture) and 0 asleep (black). Most of the
+/// animation is spent looking through the two eyes: only at the very end does
+/// the darkness around them dissolve into the full picture, so the first-person
+/// "these are my eyes" reading is what you notice, not a widening rectangle.
 enum Eyelids {
     /// The robot's own closing and opening times, from SleepCurtain.h.
     static let closeDuration = 0.700
     static let openDuration = 0.400
 
-    /// Below this the view has narrowed to eye shapes and the lids are closing;
-    /// above it the eye windows are widening out to the whole picture.
-    static let lidPhase = 0.5
+    /// Up to here the eyes are opening: two windows, lids rising. Above it the
+    /// black around them fades away and the whole picture arrives.
+    static let lidPhase = 0.78
+
+    /// How much of what surrounds the eyes is visible: nothing at all while the
+    /// lids are still moving, then the darkness dissolves.
+    static func surroundOpacity(_ openness: Double) -> Double {
+        guard openness > lidPhase else { return 0 }
+        let t = (openness - lidPhase) / (1 - lidPhase)
+        return t * t   // slow to start, so the eye shapes hold the picture
+    }
+
+    /// How far the eyes have opened, 0...1, over the lid part of the animation.
+    static func lidOpening(_ openness: Double) -> Double {
+        min(max(openness, 0), 1) / lidPhase
+    }
 
     /// Closing: quick at first, settling at the end, like a lid falling.
     /// Opening: a little faster with a touch of overshoot, as eyes do.
@@ -25,8 +41,9 @@ enum Eyelids {
 }
 
 /// The two eye windows, in the robot's own 320x240 display units scaled to the
-/// view: rounded rectangles the size of the current expression's eyes, widening
-/// to cover everything as the eyes open, and closing from the top like lids.
+/// view: rounded rectangles where the robot draws its eyes, the size of the
+/// current expression's, with the upper lid falling as they close. Past
+/// `lidPhase` they swell a little, as the surrounding darkness dissolves.
 struct EyelidShape: Shape {
     var openness: Double
     var pose: EyePose
@@ -40,41 +57,25 @@ struct EyelidShape: Shape {
         var path = Path()
         let o = min(max(openness, 0), 1)
         guard o > 0.001 else { return path }
-        // The robot's display, mapped onto this view.
+        // The robot's display, mapped onto this view: its eyes land where they
+        // would be if you were looking out through them.
         let scale = min(rect.width / 320, rect.height / 240)
         let sx = rect.width / 320, sy = rect.height / 240
-        let centers = [102.0, 218.0]
 
-        if o >= Eyelids.lidPhase {
-            // Widening out: each eye window grows until the two together cover
-            // the whole picture, and their corners straighten as they go.
-            let t = (o - Eyelids.lidPhase) / (1 - Eyelids.lidPhase)
-            let eased = t * t
-            for center in centers {
-                let width = pose.width * scale + (rect.width * 1.25 - pose.width * scale) * eased
-                let height = pose.height * scale + (rect.height * 1.25 - pose.height * scale) * eased
-                let x = center * sx + (rect.midX - center * sx) * eased
-                let radius = (min(30, pose.height / 2) * scale) * (1 - eased) + 4 * eased
-                path.addRoundedRect(in: CGRect(x: x - width / 2, y: 120 * sy - height / 2,
-                                               width: width, height: height),
-                                    cornerSize: CGSize(width: radius, height: radius),
-                                    style: .continuous)
-            }
-            return path
-        }
-
-        // Closing: the upper lid travels most of the way down, the lower lid a
-        // little up, as a real eye closes.
         // Lids gather speed as they close, so the last of the light goes quickly.
-        let t = o / Eyelids.lidPhase
+        let lid = min(Eyelids.lidOpening(o), 1)
         let full = pose.height * scale
-        let height = max(0, full * pow(t, 1.6))
-        let centerY = 120 * sy + (full - height) * 0.3   // the eye's centre drops as the top lid falls
-        for center in centers {
-            let width = pose.width * scale
-            let radius = min(min(30, pose.height / 2) * scale, height / 2)
-            path.addRoundedRect(in: CGRect(x: center * sx - width / 2, y: centerY - height / 2,
-                                           width: width, height: height),
+        let height = max(0, full * pow(lid, 1.5))
+        // Past the lid phase the windows swell, as if leaning into the view.
+        let swell = 1 + 0.35 * Eyelids.surroundOpacity(o)
+        let width = pose.width * scale * swell
+        // The eye's centre sits lower while the top lid is down.
+        let centerY = 120 * sy + (full - height) * 0.32
+        let radius = min(min(30, pose.height / 2) * scale, height / 2)
+        for center in [102.0, 218.0] {
+            let x = center * sx
+            path.addRoundedRect(in: CGRect(x: x - width / 2, y: centerY - height * swell / 2,
+                                           width: width, height: height * swell),
                                 cornerSize: CGSize(width: radius, height: radius),
                                 style: .continuous)
         }
@@ -83,8 +84,8 @@ struct EyelidShape: Shape {
 }
 
 /// Masks what it is applied to with `EyelidShape`, and lets it lose focus as
-/// the lids close: blur, a little less light, and the faintest lens-like scale.
-/// Fully open it does nothing at all.
+/// the lids close: blur, less colour and light, and a little scale, as if the
+/// lens behind the eyes were relaxing. Fully open it does nothing at all.
 struct EyelidVeil: ViewModifier {
     var openness: Double
     var pose: EyePose
@@ -98,19 +99,31 @@ struct EyelidVeil: ViewModifier {
             content
         } else {
             let closing = 1 - openness
+            let surround = Eyelids.surroundOpacity(openness)
             content
-                .blur(radius: 14 * closing * closing)
-                .saturation(1 - 0.35 * closing)
-                .brightness(-0.12 * closing)
-                .scaleEffect(1 + 0.04 * closing)
+                // Out of focus while the eyes are nearly shut, sharp once open.
+                .blur(radius: 16 * pow(1 - Eyelids.lidOpening(openness).clamped(), 1.5))
+                .saturation(1 - 0.4 * closing)
+                .brightness(-0.1 * closing)
+                // Waking leans into the view: the picture settles back from a
+                // slight push-in as the eyes finish opening.
+                .scaleEffect(1 + 0.05 * closing)
                 .mask {
-                    // A soft edge: eyelids are skin, not a stencil.
-                    EyelidShape(openness: openness, pose: pose)
-                        .fill(.white)
-                        .blur(radius: 3)
+                    ZStack {
+                        // What surrounds the eyes: nothing until the very end.
+                        Color.white.opacity(surround)
+                        // A soft edge: eyelids are skin, not a stencil.
+                        EyelidShape(openness: openness, pose: pose)
+                            .fill(.white)
+                            .blur(radius: 4)
+                    }
                 }
         }
     }
+}
+
+private extension Double {
+    func clamped() -> Double { min(max(self, 0), 1) }
 }
 
 extension View {

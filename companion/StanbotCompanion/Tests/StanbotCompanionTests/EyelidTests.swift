@@ -22,37 +22,43 @@ final class EyelidTests: XCTestCase {
         XCTAssertEqual(try constant("kOpenMs") / 1000, Eyelids.openDuration)
     }
 
-    func testOpenEyesShowTheWholePictureAndClosedEyesShowNothing() {
+    func testClosedEyesShowNothingAndTheSurroundArrivesOnlyAtTheEnd() {
         let pose = EyePose.of(.normal)
-        let open = EyelidShape(openness: 1, pose: pose).path(in: frame)
-        XCTAssertTrue(open.contains(CGPoint(x: 4, y: 4)), "a corner of the picture is visible")
-        XCTAssertTrue(open.contains(CGPoint(x: 316, y: 236)))
-        XCTAssertTrue(open.contains(CGPoint(x: 160, y: 120)))
-
-        let shut = EyelidShape(openness: 0, pose: pose).path(in: frame)
-        XCTAssertTrue(shut.isEmpty, "nothing shows through closed lids")
+        XCTAssertTrue(EyelidShape(openness: 0, pose: pose).path(in: frame).isEmpty,
+                      "nothing shows through closed lids")
+        // Most of the animation is the two eye windows alone: no surround at all.
+        XCTAssertEqual(Eyelids.surroundOpacity(0), 0)
+        XCTAssertEqual(Eyelids.surroundOpacity(0.5), 0)
+        XCTAssertEqual(Eyelids.surroundOpacity(Eyelids.lidPhase), 0)
+        XCTAssertLessThan(Eyelids.surroundOpacity(0.9), 0.4, "still mostly through the eyes")
+        XCTAssertEqual(Eyelids.surroundOpacity(1), 1, "and then the whole picture")
+        XCTAssertGreaterThan(Eyelids.lidPhase, 0.7, "the eyes hold the view for most of it")
     }
 
-    func testHalfwayTheViewIsTwoEyeShapes() {
+    func testMostOfTheAnimationIsTwoEyeShapesWhereTheRobotDrawsThem() {
         let pose = EyePose.of(.normal)
+        for openness in [0.3, 0.5, Eyelids.lidPhase] {
+            let path = EyelidShape(openness: openness, pose: pose).path(in: frame)
+            XCTAssertFalse(path.contains(CGPoint(x: 160, y: 120)), "the bridge stays masked at \(openness)")
+            XCTAssertFalse(path.contains(CGPoint(x: 8, y: 8)), "the corners stay masked at \(openness)")
+            XCTAssertEqual(path.boundingRect.width, pose.width + 116, accuracy: 2, "both eyes, where the robot draws them")
+        }
         let path = EyelidShape(openness: Eyelids.lidPhase, pose: pose).path(in: frame)
         // The eyes themselves, where the robot draws them, and nothing between.
-        XCTAssertTrue(path.contains(CGPoint(x: 102, y: 120)))
-        XCTAssertTrue(path.contains(CGPoint(x: 218, y: 120)))
-        XCTAssertFalse(path.contains(CGPoint(x: 160, y: 120)), "the bridge between the eyes is masked")
-        XCTAssertFalse(path.contains(CGPoint(x: 8, y: 8)), "the corners are masked")
-        XCTAssertEqual(path.boundingRect.height, pose.height, accuracy: 1)
+        XCTAssertTrue(path.contains(CGPoint(x: 102, y: 120)), "looking out through the left eye")
+        XCTAssertTrue(path.contains(CGPoint(x: 218, y: 120)), "and the right")
+        XCTAssertEqual(path.boundingRect.height, pose.height, accuracy: 2)
     }
 
     func testLidsCloseFromTheTopAndShrinkAllTheWay() {
         let pose = EyePose.of(.normal)
-        let heights = [0.5, 0.35, 0.2, 0.08].map {
+        let heights = [0.78, 0.5, 0.3, 0.1].map {
             EyelidShape(openness: $0, pose: pose).path(in: frame).boundingRect.height
         }
         XCTAssertEqual(heights, heights.sorted(by: >), "each step is more closed than the last")
         XCTAssertLessThan(heights.last!, 12)
         // The remaining slit sits below the eye's centre: the upper lid travels.
-        let slit = EyelidShape(openness: 0.1, pose: pose).path(in: frame).boundingRect
+        let slit = EyelidShape(openness: 0.12, pose: pose).path(in: frame).boundingRect
         XCTAssertGreaterThan(slit.midY, 120)
     }
 
@@ -63,7 +69,7 @@ final class EyelidTests: XCTestCase {
             throw XCTSkip("set STANBOT_EYELID_SHEET to write the frames")
         }
         let picture = Image(nsImage: Self.checkerboard())
-        for step in [1.0, 0.85, 0.7, 0.5, 0.35, 0.2, 0.08, 0.0] {
+        for step in [1.0, 0.92, 0.85, 0.78, 0.6, 0.4, 0.15, 0.0] {
             let view = picture
                 .resizable()
                 .frame(width: 320, height: 240)

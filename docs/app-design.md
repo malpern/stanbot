@@ -5,11 +5,14 @@ the robot's view, with a little of the robot's character in it.
 
 ## Structure
 
-- **Falling asleep is seen through Stanbot's eyes.** When the robot sleeps the
-  picture narrows to two windows the shape of its own eyes, the lids fall (the
-  upper lid travelling, gathering speed at the end) and it loses focus: blur,
-  a little less light and colour. Waking reverses it, a touch faster and with
-  the smallest overshoot. Both take exactly as long as the robot's own eyes
+- **Falling asleep is seen through Stanbot's eyes.** For most of the animation
+  the picture is visible *only* through two windows the shape of the robot's own
+  eyes, where the robot draws them, and it is out of focus until they are open:
+  a first-person point of view, not a widening rectangle. The lids fall (the
+  upper lid travelling, gathering speed at the end); only in the last fifth does
+  the darkness around the eyes dissolve into the whole picture, while the eye
+  windows swell slightly, as if leaning into the view. Waking reverses it, a
+  touch faster and with the smallest overshoot. Both take exactly as long as the robot's own eyes
   (`EyelidVeil.swift` against `SleepCurtain.h`; `EyelidTests` checks the
   timings and the geometry). The last frame is held while the lids close,
   because the robot stops sending as soon as it is asked to sleep, and the app
