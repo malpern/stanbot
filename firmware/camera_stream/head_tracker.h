@@ -69,6 +69,8 @@ struct FollowLimits {
 // only way `measured` becomes true before the checklist is done. It narrows yaw
 // to centre +-48 per checklist step 1 and comes from a committed tree, so V
 // reports its commit and follow_limits_measured:true, and the app flags it.
+// The pitch maximum, shared by both builds; measured below.
+constexpr int kFollowPitchMax = 870;
 #if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
 // Checklist step 4 widens yaw one supervised session at a time without editing
 // source: STANBOT_FOLLOW_YAW_RANGE=96 firmware/build.sh, then 144, 192, 240,
@@ -80,22 +82,23 @@ constexpr int kFollowYawRange = 48;
 #endif
 // The calibration build halves pitch travel for the first sessions that power it.
 // Pitch level MEASURED 2026-09-17 by eye with find_pitch_level.py: raw 634
-// tilted up, 614 level (calibration-pitch-level.jsonl). Up: to vertical, level
-// +288 (90 deg at this servo's 3.2 raw per degree), after the operator reported
-// the +32 (~10 deg) of the first session barely tilted and that the head can
-// point straight up. Down: level -16 (~5 deg) until the room before the head
+// tilted up, 614 level (calibration-pitch-level.jsonl). Up: 870, just short of
+// vertical. Steered all the way up on 2026-09-17, the head met a hard stop at
+// raw ~885 (stall_detected, goal 902), which the operator saw as vertical: 271
+// raw for 90 deg, so this servo is ~3.0 raw/deg, not the yaw servo's 3.2. The
+// 15 raw of margin keeps steering from grinding into the stop. Down: level -16 (~5 deg) until the room before the head
 // meets the body has been seen; the unpowered head droops to 594, and a
 // session still never pushes pitch below where it found it.
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
-  614 - 16, 614 + 288, 614,
+  614 - 16, kFollowPitchMax, 614,
   +1, true,
   320, 32, true};
 #else
 constexpr int kFollowYawRange = 144;
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
-  614 - 16, 614 + 288, 614,
+  614 - 16, kFollowPitchMax, 614,
   +1, false,
   320, 32, true};
 #endif

@@ -13,10 +13,11 @@ flashed over Wi-Fi and verified (`V` reports `follow_limits_measured:true`,
 
 - **Yaw** +-96 raw (~30 deg) around 460. Operator: "left and right looking good".
 - **Pitch** level measured by eye at raw **614** (`calibration-pitch-level.jsonl`).
-  Limits 598..902: down to level -16, up to level +288, intended as vertical at
-  the yaw servo's 3.2 raw/deg. **Not yet confirmed on the pitch axis**; the BSP
-  README says pitch travels 90 degrees. Unpowered the head droops to 594, which
-  is accepted as a start and never pushed lower.
+  Limits 598..870. Up was verified 2026-09-17: steered all the way up, the head
+  met a hard stop at ~885 that the owner saw as vertical (`stall_detected`,
+  power off verified), so pitch is ~3.0 raw/deg and the maximum is 870, 15 short
+  of the stop. Unpowered the head droops to 594, accepted as a start and never
+  pushed lower. A head left resting above 870 is refused until lowered by hand.
 - **Following** is continuous: sessions repeat without reboots (3 s cooldown),
   each on a renewable power lease with a 3-minute hard maximum, and end after
   12 s with no face. Corrections use the head position when the frame was
@@ -26,7 +27,7 @@ flashed over Wi-Fi and verified (`V` reports `follow_limits_measured:true`,
   to following 1.5 s after release.
 - **Light bar:** soft blue while a face is attended to; a gentle orange breath
   (5 s) while the camera streams with no face; dark otherwise. The eyes stay
-  grey. **Not yet confirmed by eye** (the owner has not reported on the bar).
+  grey. Confirmed by the owner 2026-09-17.
 - **Eyes:** calm tuning (slow glides, 5-10 s holds, rare looks).
 - **Wi-Fi security:** only stream/display commands and `C,UNFOLLOW` are
   accepted over Wi-Fi; `C,FOLLOW` and `C,REBOOT` need an HMAC challenge keyed
@@ -40,8 +41,7 @@ has a red dot (only when the robot is unreachable for 3 s, details on hover),
 the direction-pad joystick, and Follow/Stop. Settings: transport (Wi-Fi with USB
 fallback by default), Follow automatically (on at every launch; Stop pauses it
 until the next launch), firmware-change sound (Purr), video enhancement,
-mirror. **Not yet confirmed by eye:** the toolbar redesign, the direction pad,
-the red dot and mirroring (agent screen capture is blocked on this Mac).
+mirror. Toolbar, direction pad and mirroring confirmed by the owner 2026-09-17.
 
 **Cable:** the owner moved it to the back (power-only) port. Everything works
 over Wi-Fi except `companion/find_pitch_level.py` and other USB probes, which
@@ -49,18 +49,16 @@ need the side (head) port.
 
 ## Next, in order
 
-1. **Confirm what has not been seen.** Light bar blue with a face and orange
-   breathing without one; the toolbar; mirroring. Ask the owner; adjust colour
-   or brightness constants in `firmware/camera_stream/light_bar.h`.
-2. **Verify vertical.** Steer up with the joystick. If the head stops short of
-   straight up, or strains past it, correct the pitch maximum in
-   `head_tracker.h` (both limit blocks) and its test.
-3. **Widen pitch down** in small steps, watching for the head meeting the body.
-4. **Widen yaw** one supervised session per step:
+1. **Done 2026-09-17:** light bar, toolbar, mirroring confirmed; vertical
+   verified (stop at ~885, maximum now 870). Also watch for a repeat of the one
+   `position_status_error` so far (yaw servo stopped answering at pitch 710,
+   session ended safely); if it recurs at high pitch, suspect cable tension.
+2. **Widen pitch down** in small steps, watching for the head meeting the body.
+3. **Widen yaw** one supervised session per step:
    `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept).
-5. **When calibration is done**, decide whether `measured` can be true in the
+4. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-6. **Gaze / Studio Display camera: paused.** Nothing has been measured. If gaze
+5. **Gaze / Studio Display camera: paused.** Nothing has been measured. If gaze
    matters for a feature, first build a 2-minute prompted test (look at robot /
    screen / away) that logs the robot-only engaged flag against the prompt; only
    if errors come from small or dim faces is the desk camera worth its Meet-call
