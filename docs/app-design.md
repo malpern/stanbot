@@ -62,24 +62,55 @@ interruptible, and is skipped or reduced to a fade under Reduce Motion.
 Reactions are tables of six keyframes (`Reactions.swift`), and which one fires
 for a change is a pure rule (`ReactionFacts.reaction`), both tested.
 
+## The screen look (Metal)
+
+The eyes glow a little and, when drawn large, carry a faint LCD pixel grid with
+red/green/blue subpixel stripes, so the Mac face reads as the robot's own
+screen. The grid is a SwiftUI `colorEffect` backed by a Metal function,
+`Shaders/StanbotScreen.metal`; `build-app.sh` compiles it into
+`Stanbot.app/Contents/Resources/StanbotShaders.metallib`. Without that file
+(`swift test`, `swift run`) the effect is simply off. The glow is a SwiftUI
+shadow on the lit irises. Both are off with Increase Contrast; the grid only
+appears on eyes at least 120 pt wide and not while scanning.
+
+Metal is used only here, deliberately: video display, eye drawing and vision
+already run on the GPU through SwiftUI, VideoToolbox, Vision and Core ML, and
+none of them was a bottleneck.
+
+Checking it: the window snapshot cannot capture shader effects, so an opt-in
+test renders the real eyes with and without it and measures the grid:
+
+```sh
+STANBOT_SHADER_LIBRARY=$PWD/build/Stanbot.app/Contents/Resources/StanbotShaders.metallib \
+  swift test --filter CharacterTests/testScreenLookDrawsTheLCDGrid
+```
+
 ## What it costs
 
 Measured 2026-09-16 on the mini in preview mode (a still preview image, so
-video decoding is not included), 20 one-second `top` samples after 5 s:
+video decoding is not included), 20 one-second `top` samples after 5 s. Energy
+impact tracked CPU in every row.
 
-| Scenario | Before | After |
+| Scenario | First redesign | Now |
 | --- | --- | --- |
 | Asleep | 0.1% CPU | 0.1% |
-| Connecting (two sets of scanning eyes) | 13.4% | 6.6% |
-| Seeing someone | 9.0% | 0.6% |
-| Following | 9.8% | 1.3% |
+| Connecting (large and small eyes scanning) | 13.4% | 6.8% |
+| Connected, camera off (large eyes idle) | 11.0% | 4.9% |
+| Seeing someone | 9.0% | 0.5% |
+| Following | 9.8% | 1.1% |
 
-Two causes. The eyes ran on a 30 fps clock even when nothing moved; blinks,
-idle drift and scanning are now state changes a few times a second, animated
-by SwiftUI, so nothing redraws between them. And the "Head powered" dot's
-repeating pulse cost about 9% for the whole session; it now bounces once when
-power comes on and stays steady, with the red label and timer. Energy impact
-tracked CPU in every row. Check any new continuous animation the same way:
+What mattered, in order:
+- **A 30 fps clock** drove the eyes even when nothing moved (about 9% on its
+  own). Blinks, glances and scanning are now state changes, animated by
+  SwiftUI, a few times a second at most.
+- **A repeating pulse** on the Head powered dot cost about 9% for a whole
+  session. It now bounces once when power comes on.
+- **Constant idle wander** animated about 60% of the time (about 10% with the
+  large eyes). It is now a short glance every 4 to 7 seconds.
+- **The LCD grid** costs about 4% while the eyes move, nothing while they are
+  still; it is skipped while scanning. The glow cost nothing measurable.
+
+Check any new continuous animation the same way:
 `top -pid <pid> -stats pid,cpu,power`.
 
 ## Rules the personality must not break

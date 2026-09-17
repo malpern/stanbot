@@ -23,6 +23,15 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns build/AppIcon.iconset -o "$app_dir/Contents/Resources/AppIcon.icns"
 cp App/Info.plist "$app_dir/Contents/Info.plist"
+# Stanbot's Metal shaders (Shaders/*.metal) into one library in Resources. The
+# app turns the effects off when the library is missing, so a failed compile
+# only costs the look, never the app.
+air_dir=$(mktemp -d)
+for shader in Shaders/*.metal; do
+  xcrun -sdk macosx metal -c "$shader" -o "$air_dir/${shader:t:r}.air"
+done
+xcrun -sdk macosx metallib "$air_dir"/*.air -o "$app_dir/Contents/Resources/StanbotShaders.metallib"
+rm -rf "$air_dir"
 cp .build/release/StanbotCompanion "$app_dir/Contents/MacOS/Stanbot"
 chmod 755 "$app_dir/Contents/MacOS/Stanbot"
 

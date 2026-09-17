@@ -54,6 +54,8 @@ struct StanbotEyesView: View {
     var reaction: EyeReaction? = nil
     /// Look at the pointer while it is over the eyes, and giggle when clicked.
     var interactive = false
+    /// The robot-screen look: glowing irises and, when large, an LCD pixel grid.
+    var screenLook = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointer: CGPoint?
@@ -140,6 +142,9 @@ struct StanbotEyesView: View {
                 .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)
             }
             .frame(width: 320 * scale, height: 240 * scale)
+            // The pixel grid re-renders every frame the eyes move: about 4% CPU
+            // while scanning (measured 2026-09-16), so the loader goes without it.
+            .modifier(ScreenLook(enabled: screenLook && !scanning, width: 320 * scale))
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             .contentShape(Rectangle())
             .onContinuousHover { phase in
@@ -188,10 +193,13 @@ struct StanbotEyesView: View {
                 right.toggle()
                 try? await Task.sleep(for: .milliseconds(1300))
             } else {
-                withAnimation(.easeInOut(duration: 1.6)) {
-                    drift = CGPoint(x: Double.random(in: -0.2...0.2), y: Double.random(in: -0.08...0.08))
+                // An occasional glance, not a constant wander: the wander animated
+                // ~60% of the time and cost ~10% CPU with the large eyes on screen
+                // (measured 2026-09-16). Resting between glances is also calmer.
+                withAnimation(.easeInOut(duration: 0.8)) {
+                    drift = CGPoint(x: Double.random(in: -0.25...0.25), y: Double.random(in: -0.1...0.1))
                 }
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 1800...3200)))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 4000...7000)))
             }
         }
     }
@@ -203,6 +211,7 @@ struct StanbotEyesView: View {
     private func closedEye(width: Double, scale: Double) -> some View {
         ClosedEye()
             .stroke(Color(white: 0.74), style: StrokeStyle(lineWidth: 9 * scale, lineCap: .round))
+            .shadow(color: screenLook ? Color(white: 0.74).opacity(0.3) : .clear, radius: 10 * scale)
             .frame(width: width * 0.8 * scale, height: 22 * scale)
             .frame(width: width * scale)
     }
@@ -216,6 +225,8 @@ struct StanbotEyesView: View {
             RoundedRectangle(cornerRadius: radius * scale, style: .continuous)
                 .fill(iris)
                 .frame(width: pose.width * scale, height: height * scale)
+                // Lit pixels bleed a little light, as on the robot's screen.
+                .shadow(color: screenLook ? iris.opacity(attending ? 0.7 : 0.35) : .clear, radius: 14 * scale)
             Circle()
                 .fill(.black)
                 .frame(width: pupil * 2 * scale, height: pupil * 2 * scale)

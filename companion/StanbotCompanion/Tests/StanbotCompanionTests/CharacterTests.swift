@@ -119,4 +119,39 @@ final class CharacterTests: XCTestCase {
         let rep = NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation))
         try XCTUnwrap(rep?.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: path))
     }
+
+    /// STANBOT_SHADER_LIBRARY=/path/StanbotShaders.metallib renders the real
+    /// eyes with and without the screen look and checks the LCD grid is there:
+    /// neighbouring pixels across a lit iris differ with it, not without.
+    /// Also writes both to $TMPDIR for a look. Skipped otherwise.
+    @MainActor
+    func testScreenLookDrawsTheLCDGrid() throws {
+        guard ProcessInfo.processInfo.environment["STANBOT_SHADER_LIBRARY"] != nil else {
+            throw XCTSkip("set STANBOT_SHADER_LIBRARY to a compiled StanbotShaders.metallib")
+        }
+        XCTAssertNotNil(StanbotShaders.library)
+        func render(_ look: Bool) throws -> NSBitmapImageRep {
+            let view = StanbotEyesView(emotion: .surprised, look: .zero, screenLook: look)
+                .frame(width: 320, height: 240)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 1
+            let rep = NSBitmapImageRep(cgImage: try XCTUnwrap(renderer.cgImage))
+            try rep.representation(using: .png, properties: [:])?
+                .write(to: FileManager.default.temporaryDirectory.appendingPathComponent("stanbot-eyes-\(look).png"))
+            return rep
+        }
+        // A horizontal run across the upper part of the left iris, clear of the pupil.
+        // The subpixel stripes shift one channel at a time, so take the largest
+        // spread of any channel.
+        func spread(_ rep: NSBitmapImageRep) -> Double {
+            let colors = (60..<100).compactMap { rep.colorAt(x: $0, y: 80) }
+            return [\NSColor.redComponent, \NSColor.greenComponent, \NSColor.blueComponent].map { channel in
+                let values = colors.map { $0[keyPath: channel] }
+                return (values.max() ?? 0) - (values.min() ?? 0)
+            }.max() ?? 0
+        }
+        let plain = spread(try render(false)), lcd = spread(try render(true))
+        XCTAssertLessThan(plain, 0.01, "a flat iris without the shader")
+        XCTAssertGreaterThan(lcd, 0.03, "the grid varies the iris with the shader (measured 0.05)")
+    }
 }

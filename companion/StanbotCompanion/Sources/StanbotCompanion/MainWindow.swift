@@ -195,7 +195,7 @@ private struct EmptyState: View {
     var body: some View {
         VStack(spacing: 18) {
             StanbotEyesView(emotion: mood.emotion, asleep: mood.asleep, attending: false, screen: false,
-                            scanning: mood.scanning, reaction: reaction, interactive: true)
+                            scanning: mood.scanning, reaction: reaction, interactive: true, screenLook: true)
                 .frame(width: 220, height: 165)
             VStack(spacing: 6) {
                 Text(headline)
@@ -319,7 +319,7 @@ private struct ControlBar: View {
     var body: some View {
         HStack(spacing: 14) {
             StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, attending: mood.attending,
-                            scanning: mood.scanning, reaction: reaction, interactive: true)
+                            scanning: mood.scanning, reaction: reaction, interactive: true, screenLook: true)
                 .frame(width: 56, height: 42)
                 .help("Stanbot")
             VStack(alignment: .leading, spacing: 1) {
