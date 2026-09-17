@@ -4,7 +4,7 @@ One page for the next time someone is at the robot and at the mini. Written
 2026-09-16. On the robot: calibration + pitch build `7cd5106` (yaw +-48, pitch
 following on, search, easing, eye gaze, renewable power lease, telemetry
 check). The Stanbot app in `companion/StanbotCompanion/build/Stanbot.app` was
-rebuilt from `94b7e68` and has not been launched since.
+rebuilt from `4b5aacd` (adds the desk camera toggle, off) and has not been launched since.
 
 Stay at the robot for every step that moves it. Stop in the app (or unplug the
 robot) if anything looks wrong.
