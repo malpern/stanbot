@@ -159,6 +159,8 @@ private struct LiveView: View {
     /// The last frame before the robot went to sleep, so the lids have something
     /// to close over: the robot stops sending as soon as it is asked to sleep.
     @State private var frozen: NSImage?
+    /// 1 awake, 0 asleep: animated on its own so the mask interpolates.
+    @State private var lids = 1.0
 
     private var picture: NSImage? { robot.cameraImage ?? frozen }
     private var showingVideo: Bool {
@@ -180,6 +182,10 @@ private struct LiveView: View {
                         // on screen. Picture and face boxes flip together; detection
                         // and following use the unmirrored frame.
                         .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
+                        // On the picture itself, not the pane around it: the eyes
+                        // must land where the robot draws them within the frame.
+                        .eyelidVeil(openness: lids, pose: EyePose.of(mood.emotion),
+                                    reduceMotion: reduceMotion)
                         // Top of the window, not centred: the picture stays put
                         // as the window grows.
                         .position(x: proxy.size.width / 2, y: fitted.height / 2)
@@ -188,9 +194,6 @@ private struct LiveView: View {
                 // Falling asleep and waking are seen through Stanbot's own eyes:
                 // the picture narrows to two eye shapes and the lids close,
                 // losing focus as they go (EyelidVeil).
-                .eyelidVeil(openness: robot.asleep ? 0 : 1, pose: EyePose.of(mood.emotion),
-                            reduceMotion: reduceMotion)
-                .animation(Eyelids.animation(asleep: robot.asleep), value: robot.asleep)
                 // The picture clears in, like eyes focusing, rather than popping.
                 .transition(reduceMotion ? .opacity : .modifier(active: Focusing(amount: 1), identity: Focusing(amount: 0)))
             } else {
@@ -199,7 +202,8 @@ private struct LiveView: View {
             }
         }
         .animation(.smooth(duration: 0.45), value: showingVideo)
-        .onChange(of: robot.asleep) { _, sleeping in
+        .onChange(of: robot.asleep, initial: true) { _, sleeping in
+            withAnimation(Eyelids.animation(asleep: sleeping)) { lids = sleeping ? 0 : 1 }
             if sleeping {
                 frozen = robot.cameraImage       // hold the last frame while the lids close
             } else {
@@ -406,6 +410,8 @@ struct SleepWakeButton: View {
                 .contentTransition(.symbolEffect(.replace))
                 .frame(maxWidth: prominent ? .infinity : nil)
         }
+        .buttonStyle(.bordered)
+        .controlSize(prominent ? .large : .regular)
         .disabled(!connected)
         .help(robot.asleep
               ? "Wake the robot: its screen and camera come back"

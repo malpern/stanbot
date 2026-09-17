@@ -95,9 +95,11 @@ struct EyelidVeil: ViewModifier {
     func body(content: Content) -> some View {
         if reduceMotion {
             content.opacity(openness)
-        } else if openness >= 0.999 {
-            content
         } else {
+            // One view tree for every openness, deliberately: an `if` that
+            // skipped the mask while awake made SwiftUI rebuild the subtree when
+            // sleep began, so the mask appeared already closed and the picture
+            // just went black with no animation (2026-09-17).
             let closing = 1 - openness
             let surround = Eyelids.surroundOpacity(openness)
             content

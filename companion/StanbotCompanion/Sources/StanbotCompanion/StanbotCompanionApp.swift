@@ -1350,7 +1350,8 @@ extension RobotConnection {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+        let delay = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 3
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             // STANBOT_SNAPSHOT_WINDOW names another window to capture: a window
             // title, e.g. Diagnostics, or "sheet" for whatever sheet is open.
             let title = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] ?? "Stanbot"
@@ -1372,6 +1373,13 @@ extension RobotConnection {
 
     private func applyPreview(_ scenario: String) {
         scheduleSnapshot()
+        // STANBOT_PREVIEW=sleeping is "seeing", then asleep after a second, so a
+        // snapshot at a chosen delay catches the eyelids part way (docs/app-design.md).
+        if scenario == "sleeping" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.asleep = true }
+            applyPreview("seeing")
+            return
+        }
         // followAutomatically is left alone: it persists, and with no link it does nothing.
         guard scenario != "asleep" else { lastAction = "Waiting to connect"; return }
         guard scenario != "connecting" else {
