@@ -447,6 +447,34 @@ the robot's right, +y tilts up. Release sends one centred line and stops.
   trace shows mode 4, drawn green in `tools/follow_replay.py`.
 - Allowed over Wi-Fi like `T,`: it only acts inside a session.
 
+## The day following died silently, 2026-09-17
+
+From the first sleep after each boot, head following did nothing and the light
+bar stayed dark, for about two and a half hours, and nothing reported it.
+
+- **Cause.** Sleep darkened the screen with `M5.Display.setBrightness`. At
+  startup the sketch releases M5's I2C driver so the camera task owns the
+  internal bus; that call made M5GFX take it back. Every later transaction to
+  the base expander returned `ESP_ERR_INVALID_STATE` (259), so the motor power
+  switch and the light bar were unreachable until reboot. Every flash reboots,
+  so it looked fine after each one.
+- **Why it was silent.** The firmware reported the failed power window with
+  `Serial.println`, which a Wi-Fi viewer never sees. The app saw "authorized"
+  and then nothing, called it `no_result`, which is retryable, and retried for
+  hours. The session logs showed it plainly the whole time: no robot telemetry
+  after 11:42.
+- **Proof.** Read-only probe over USB: a clean base after a fresh boot,
+  `error 259` after one sleep and wake; after the fix, clean after three.
+- **Fix.** The backlight is the same two AXP2101 writes through the camera
+  task's own driver (`backlight.h`), and so is power-off.
+- **So it cannot recur quietly:** `companion/test_i2c_ownership.py` (source
+  guard), `tools/check_sleep_wake.py` (hardware check), `SBHL` base health from
+  the robot, `base_unreachable` over Wi-Fi, and `no_result_repeated` in the app.
+  See "How to work here" in `next-session.md`.
+- **A wrong turn worth remembering:** the USB port enumerating through the back
+  connector for the first time that day looked like the cause (a shifted internal
+  cable). It was a coincidence. The probe, not the theory, settled it.
+
 ## The wake scan, 2026-09-17 (built, not yet run on the robot)
 
 When the owner wakes the robot, it looks around for someone before it settles.

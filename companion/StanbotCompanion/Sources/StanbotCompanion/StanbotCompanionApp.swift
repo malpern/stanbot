@@ -355,6 +355,13 @@ final class RobotConnection: ObservableObject {
     /// network and Wake brings it back (SBSL).
     @Published private(set) var asleep = false
     private var sleepCommandedAt = Date.distantPast
+    /// The robot's own report of whether its head can reach its base (SBHL):
+    /// nil healthy or not yet known, otherwise what is wrong, in words. With the
+    /// base unreachable there is no motor power and no light bar.
+    @Published private(set) var robotFault: String?
+    /// Sessions that were started and never reported back, in a row. One may be
+    /// a lost line; two is a fault and stops the automatic retrying.
+    private var sessionsWithoutResult = 0
     /// When the owner last woke the robot, until the look-around session it asks
     /// for has started (AutoFollow.wakeScanWindow).
     private var wokeAt: Date?
@@ -725,6 +732,15 @@ final class RobotConnection: ObservableObject {
             handleAuthorization(line)
             return
         }
+        if line.hasPrefix("SBHL "),
+           let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
+           let healthy = object["base"] as? Bool {
+            let code = object["esp_err"] as? Int ?? 0
+            robotFault = healthy ? nil
+                : "The robot's head cannot reach its base (I2C error \(code)): no motor power and no light bar. Reboot the robot."
+            if !healthy { lastAction = robotFault ?? lastAction }
+            return
+        }
         if line.hasPrefix("SBSL "),
            let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
            let sleeping = object["asleep"] as? Bool {
@@ -744,6 +760,7 @@ final class RobotConnection: ObservableObject {
             ? object["result"] as? String
             : object["error"] as? String
         guard let code else { return }
+        sessionsWithoutResult = 0   // the robot answered
         follow = .finished(FollowResult(code: code))
         lastFollowEnded = Date()
         lastAction = "Head following: \(FollowResult(code: code).summary)"
@@ -1087,7 +1104,13 @@ final class RobotConnection: ObservableObject {
             follow = .finished(FollowResult(code: "auth_no_reply"))
         }
         if case .following(let since) = follow, Date().timeIntervalSince(since) > Self.followResultTimeout {
-            follow = .finished(FollowResult(code: "no_result"))
+            // Once may be a lost line and is retried; twice running is a fault,
+            // said out loud, and the retrying stops.
+            sessionsWithoutResult += 1
+            let code = sessionsWithoutResult >= 2 ? "no_result_repeated" : "no_result"
+            follow = .finished(FollowResult(code: code))
+            lastFollowEnded = Date()
+            lastAction = "Head following: \(FollowResult(code: code).summary)"
         }
         if firmware == .asking, Date().timeIntervalSince(versionAskedAt) > Self.versionRetryInterval {
             if versionAttempts < Self.versionMaxAttempts {

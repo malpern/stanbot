@@ -23,6 +23,8 @@ constexpr uint8_t kAxpAddress = 0x34;
 constexpr uint8_t kAxpLdoControl = 0x90;    // LDO on/off; bit 7 is DLDO1, the backlight
 constexpr uint8_t kAxpDldo1Voltage = 0x99;  // DLDO1 voltage: the brightness
 constexpr uint8_t kAxpDldo1Bit = 0x80;
+constexpr uint8_t kAxpCommonConfig = 0x10;  // bit 0: soft power off, the whole robot
+constexpr uint8_t kAxpPowerOffBit = 0x01;
 
 struct AxpWrite { uint8_t reg; uint8_t value; };
 

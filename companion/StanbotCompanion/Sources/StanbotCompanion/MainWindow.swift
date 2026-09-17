@@ -35,6 +35,8 @@ struct CompanionView: View {
         var mood = Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
                            box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
                            engaged: robot.engaged, sleeping: robot.asleep)
+        // The robot says it is broken: the trouble face, whatever else is going on.
+        if robot.robotFault != nil, !mood.asleep { mood = Mood(emotion: .trouble, caption: "Something’s wrong") }
         // Found someone on waking: surprised, then glee, then back to the mood
         // (focused, while following), in step with the robot's own face.
         if let foundEmotion { mood.emotion = foundEmotion }
@@ -503,7 +505,10 @@ struct ReachabilityDot: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var showing = false
 
+    /// Reachable and well: connected, and the robot has not reported a fault of
+    /// its own (its head unable to reach its base, SBHL).
     private var reachable: Bool {
+        guard robot.robotFault == nil else { return false }
         if case .connected = robot.connection { return true }
         return false
     }
@@ -516,7 +521,7 @@ struct ReachabilityDot: View {
                     .frame(width: 8, height: 8)
                     .padding(6)
                     .contentShape(Rectangle())
-                    .help("\(robot.connection.title). \(robot.lastAction)")
+                    .help(robot.robotFault ?? "\(robot.connection.title). \(robot.lastAction)")
                     .accessibilityLabel("Robot not reachable")
                     .transition(.opacity)
             }

@@ -4,6 +4,25 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import StanbotCompanion
 
+final class SilentFailureTests: XCTestCase {
+    /// A session that never reports back is retried once; twice running is a
+    /// fault that stops the retrying and is said out loud.
+    func testRepeatedSilenceStopsTheRetrying() {
+        XCTAssertTrue(FollowResult(code: "no_result").retryable, "one lost line is not a fault")
+        let repeated = FollowResult(code: "no_result_repeated")
+        XCTAssertFalse(repeated.retryable, "automatic following must not retry into silence for hours")
+        XCTAssertTrue(repeated.summary.contains("never reported back"))
+        XCTAssertFalse(AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .finished(repeated),
+                                              faceTracked: true, lastEnded: nil, now: Date()))
+    }
+
+    func testAnUnreachableBaseIsAFaultWithAnInstruction() {
+        let result = FollowResult(code: "base_unreachable")
+        XCTAssertFalse(result.retryable)
+        XCTAssertTrue(result.summary.contains("Reboot"))
+    }
+}
+
 final class WakeScanTests: XCTestCase {
     /// Just after a wake a session starts with nobody in view, so the robot can
     /// look around; otherwise a session still needs a face.

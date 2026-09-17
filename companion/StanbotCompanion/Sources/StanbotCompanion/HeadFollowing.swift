@@ -21,6 +21,8 @@ struct FollowResult: Equatable {
     /// Whether starting again straight away makes sense. Refusals about the
     /// firmware, the passphrase or the servos would only repeat.
     var retryable: Bool {
+        // "no_result" once may be a dropped line; "no_result_repeated" is a
+        // fault and stops the retrying, so silence cannot go on for hours.
         ["session_complete", "session_deadline", "session_idle", "session_max_duration",
          "stopped_by_host", "follow_cooldown", "no_result"].contains(code)
     }
@@ -40,6 +42,8 @@ struct FollowResult: Equatable {
         case "power_latched": "Refused: the robot's motor power is latched off. Reboot it."
         case "follow_requires_stream_on": "Refused: the camera stream must be on."
         case "preflight_refused": "Refused before moving: the servos were not where the robot expects."
+        case "base_unreachable": "The robot's head cannot reach its base, so it cannot power the motors. Reboot the robot."
+        case "no_result_repeated": "The robot accepted following and never reported back, twice. Something is wrong: see Diagnostics."
         case "no_result": "No result arrived from the robot."
         case "auth_bad_mac": "Refused: the robot passphrase on this Mac does not match the robot."
         case "auth_no_passphrase_stored": "Refused: the robot has no passphrase stored. Set one over USB."

@@ -25,6 +25,7 @@ struct ControlsPanel: View {
     /// What is wrong, in words, beside the red dot in the title bar: the robot
     /// unreachable, or a refusal that will not clear by itself.
     private var alert: String? {
+        if let fault = robot.robotFault { return fault }
         if case .finished(let result) = robot.follow, !result.retryable { return result.summary }
         switch robot.connection {
         case .connected, .connecting: return nil

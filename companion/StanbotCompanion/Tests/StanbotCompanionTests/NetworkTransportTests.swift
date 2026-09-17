@@ -211,6 +211,27 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertTrue(robot.asleep)
     }
 
+    /// The robot reports when its head cannot reach its base (SBHL). That must be
+    /// an alarm in the app, not a silence: it was hours of dead following, once.
+    @MainActor
+    func testTheRobotsOwnFaultReportIsSurfacedAndClears() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        wait(upTo: 5, tick: robot) { robot.cameraState == .receiving }
+        XCTAssertNil(robot.robotFault)
+
+        fake.sendLine("SBHL {\"base\":false,\"esp_err\":259}")
+        wait(upTo: 2, tick: robot) { robot.robotFault != nil }
+        let fault = try XCTUnwrap(robot.robotFault)
+        XCTAssertTrue(fault.contains("259"), "the error code is there for whoever debugs it")
+        XCTAssertTrue(fault.contains("Reboot"), "and what to do about it")
+
+        fake.sendLine("SBHL {\"base\":true,\"esp_err\":0}")
+        wait(upTo: 2, tick: robot) { robot.robotFault == nil }
+        XCTAssertNil(robot.robotFault)
+    }
+
     @MainActor
     func testTurningTheRobotOffOverWiFiIsAuthorized() throws {
         let fake = try FakeRobot()

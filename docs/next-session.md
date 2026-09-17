@@ -96,6 +96,23 @@ need the side (head) port.
   `c++ -std=c++17 -include initializer_list`. Python: `companion/test_*.py`.
 - **Session logs:** `~/Library/Logs/Stanbot/follow-*.log` (APP lines per frame,
   SBPD trace, SBMV result, SBPW power). `tools/follow_replay.py` renders one.
+- **The camera task owns the internal I2C bus. Nothing in M5Unified may touch
+  it after setup.** On 2026-09-17 sleep called `M5.Display.setBrightness`; M5's
+  driver took the bus back and every transaction to the base failed from the
+  first sleep until the next reboot: no motor power, no light bar, for hours,
+  and each flash's reboot hid it. `companion/test_i2c_ownership.py` fails on any
+  such call (mark a genuinely safe one `// i2c-ok: why`); use the camera task's
+  driver instead, as `backlight.h` does. **After flashing anything that touches
+  sleep, power, the display, the light bar or I2C, run
+  `python3 tools/check_sleep_wake.py`** (robot on USB, Stanbot closed; moves
+  nothing): it reads the base, sleeps and wakes three times, and reads it again.
+- **Failures must be loud.** The robot reports its base link as `SBHL` on every
+  connect and whenever it changes; the app shows it as the orange alert, the red
+  dot and the trouble face. A session refused for lack of motor power says so
+  over Wi-Fi (`base_unreachable`, with the I2C error), not only to USB. Two
+  sessions running with no result from the robot stop the automatic retrying
+  (`no_result_repeated`). If you add a refusal path, send it through `Telemetry`,
+  never `Serial` alone: over Wi-Fi, `Serial` is silence.
 - **Safety:** stay supervised for anything that moves or widens limits. Never
   retry a refusal automatically. `DISABLE LATCH NOT VERIFIED` means power the
   robot off by hand (hold its button; it has a battery). Quit Stanbot before

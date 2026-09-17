@@ -583,6 +583,8 @@ class TelemetryOut : public Print {
   stanbot::TelemetryCheck check;
 } Telemetry;
 
+void emitBaseHealth();   // defined with the base health check, below
+
 void emitSleepState() {
   char line[48];
   const int n = snprintf(line, sizeof line, "SBSL {\"asleep\":%s}\n", asleep.load() ? "true" : "false");
@@ -608,6 +610,7 @@ void emitVersion() {
     transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
   }
   emitSleepState();   // the app learns both on every connect
+  emitBaseHealth();   // and whether the head can reach its base
 }
 
 // Shared by the USB parser (main task) and the TCP parser (camera task).
@@ -1119,6 +1122,48 @@ esp_err_t readBaseRegisters(i2c_master_dev_handle_t device, uint8_t start,
   return ESP_OK;
 }
 
+// Health of the head's link to the base (the expander at 0x6f that switches
+// motor power and drives the light bar). Checked every few seconds outside a
+// session and reported as SBHL whenever it changes and with every version
+// reply, so a dead bus is an alarm in the app, not a silence.
+std::atomic<int> baseHealthError{-1};        // -1 not yet checked, 0 healthy, else esp_err_t
+std::atomic<bool> baseHealthChanged{false};
+uint32_t nextBaseHealthCheckMs = 0;
+constexpr uint32_t kBaseHealthPeriodMs = 5000;
+
+void checkBaseHealth() {
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - nextBaseHealthCheckMs) < 0) return;
+  nextBaseHealthCheckMs = now + kBaseHealthPeriodMs;
+  i2c_master_bus_handle_t master = nullptr;
+  i2c_master_dev_handle_t base = nullptr;
+  i2c_device_config_t config{};
+  config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  config.device_address = 0x6f;
+  config.scl_speed_hz = 100000;
+  esp_err_t result = i2c_master_get_bus_handle(kSccbPort, &master);
+  if (result == ESP_OK) result = i2c_master_bus_add_device(master, &config, &base);
+  if (result == ESP_OK) {
+    uint8_t version = 0;
+    result = readBaseRegisters(base, 0x02, &version, 1);
+    if (result == ESP_OK && (version == 0 || version == 255)) result = ESP_ERR_INVALID_RESPONSE;
+    i2c_master_bus_rm_device(base);
+  }
+  if (baseHealthError.exchange(static_cast<int>(result)) != static_cast<int>(result)) baseHealthChanged.store(true);
+}
+
+void emitBaseHealth() {
+  const int error = baseHealthError.load();
+  if (error < 0) return;   // not checked yet
+  char line[64];
+  const int n = snprintf(line, sizeof line, "SBHL {\"base\":%s,\"esp_err\":%d}\n", error == 0 ? "true" : "false", error);
+  if (n <= 0) return;
+  Serial.print(line);
+  if (streamClient && streamClient.connected()) {
+    transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
+  }
+}
+
 // The screen backlight, for sleep and wake: the AXP2101's DLDO1, written through
 // this task's i2c_master driver (backlight.h says why it must not be
 // M5.Display.setBrightness). Only the camera task calls this.
@@ -1138,6 +1183,24 @@ bool setBacklight(uint8_t brightness) {
     const size_t n = stanbot::backlightWrites(brightness, ldoControl, writes);
     for (size_t i = 0; i < n && ok; ++i) ok = writeBase(axp, writes[i].reg, writes[i].value);
   }
+  i2c_master_bus_rm_device(axp);
+  return ok;
+}
+
+// Turns the whole robot off, as M5.Power.powerOff does, through this task's
+// driver. Only its own button turns it on again.
+bool axpPowerOff() {
+  i2c_master_bus_handle_t master = nullptr;
+  i2c_master_dev_handle_t axp = nullptr;
+  i2c_device_config_t config{};
+  config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  config.device_address = stanbot::kAxpAddress;
+  config.scl_speed_hz = 100000;
+  if (i2c_master_get_bus_handle(kSccbPort, &master) != ESP_OK ||
+      i2c_master_bus_add_device(master, &config, &axp) != ESP_OK) return false;
+  uint8_t common = 0;
+  bool ok = readBaseRegisters(axp, stanbot::kAxpCommonConfig, &common, 1) == ESP_OK &&
+            writeBase(axp, stanbot::kAxpCommonConfig, static_cast<uint8_t>(common | stanbot::kAxpPowerOffBit));
   i2c_master_bus_rm_device(axp);
   return ok;
 }
@@ -1271,8 +1334,13 @@ bool powerWindowUsed = false;
 // task is armed with `deadlineMs`. Nothing is enabled on failure; the SBPW
 // error line is printed here. On success `device` and `off` are valid and the
 // caller owns enabling, disabling and releasing the window.
+// Why the last power window did not open, for whoever has to report it: the
+// I2C error reaching the base (0 if it answered and the refusal was its state).
+esp_err_t lastPowerWindowError = ESP_OK;
+
 bool openPowerWindow(i2c_master_dev_handle_t& device, uint8_t& off, uint32_t deadlineMs, TaskHandle_t& cutoff,
                      uint32_t maxMs = 0) {
+  lastPowerWindowError = ESP_OK;
   i2c_master_bus_handle_t master = nullptr;
   device = nullptr;
   cutoff = nullptr;
@@ -1284,8 +1352,13 @@ bool openPowerWindow(i2c_master_dev_handle_t& device, uint8_t& off, uint32_t dea
   const uint8_t start = 0x02;
   bool ready = prepareServoBus() &&
     i2c_master_get_bus_handle(kSccbPort, &master) == ESP_OK &&
-    i2c_master_bus_add_device(master, &config, &device) == ESP_OK &&
-    readBaseRegisters(device, start, regs, sizeof(regs)) == ESP_OK;
+    i2c_master_bus_add_device(master, &config, &device) == ESP_OK;
+  if (ready) {
+    lastPowerWindowError = readBaseRegisters(device, start, regs, sizeof(regs));
+    ready = lastPowerWindowError == ESP_OK;
+  } else {
+    lastPowerWindowError = ESP_FAIL;
+  }
   // Refuse a base already driving VM high; this test must start from off.
   ready = ready && regs[0] != 0 && regs[0] != 255 && !(regs[3] & 1);
   off = regs[3] & ~1u;
@@ -1923,7 +1996,20 @@ void runFollowSession() {
   TaskHandle_t cutoff = nullptr;
   const MotionGuard guard;   // clears motionRunning when this returns, after the telemetry
   if (!guard.active()) return;   // an update began in between
-  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) return;
+  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) {
+    // openPowerWindow only tells USB. Over Wi-Fi this was silence: the app saw
+    // "authorized" and then nothing, and tried again for hours (2026-09-17).
+    const bool wasStreaming = beginTelemetry();
+    if (lastPowerWindowError != ESP_OK) {
+      Telemetry.printf("SBMV {\"result\":\"base_unreachable\",\"plan\":\"follow\",\"esp_err\":%d}\n",
+                       static_cast<int>(lastPowerWindowError));
+    } else {
+      Telemetry.println("SBMV {\"result\":\"preflight_refused\",\"plan\":\"follow\"}");
+    }
+    endTelemetry(wasStreaming);
+    troubleUntilMs.store(millis() + kTroubleFaceMs);
+    return;
+  }
   servoBus.EnableTorque(0xfe, 0);
   // The sweep's 20 ms bus timeout assumes its own tight loop. This one shares
   // a task with camera capture, so a reply can arrive after a longer pause;
@@ -2345,13 +2431,17 @@ void cameraTask(void*) {
       if (!setBacklight(static_cast<uint8_t>(brightness))) brightnessRequest.store(brightness);   // try again
     }
     if (sleepStateChanged.exchange(false)) emitSleepState();
+    checkBaseHealth();
+    if (baseHealthChanged.exchange(false)) emitBaseHealth();
     if (powerDownRequested.exchange(false)) {
       // Motor power first, then the whole robot. Only its button turns it on again.
       testServoDisable();
       Serial.println("SBPO {\"powering_off\":true}");
       Serial.flush();
       vTaskDelay(pdMS_TO_TICKS(150));
-      M5.Power.powerOff();
+      axpPowerOff();   // through this task's driver; see backlight.h
+      vTaskDelay(pdMS_TO_TICKS(500));
+      M5.Power.powerOff();   // i2c-ok: only reached if the write above failed, and nothing runs after it
     }
     if (followRequested.exchange(false)) {
       if (asleep.load()) Telemetry.println("SBMV {\"result\":\"follow_refused_asleep\",\"plan\":\"follow\"}");
@@ -2430,8 +2520,11 @@ void setup() {
   bootStartedMs = millis();
   bootScreen.begin(bootStartedMs);
   if (eyeFrameReady) { dojoSplash.render(eyeFrame, 0); eyeFrame.pushSprite(0, 0); }
-  // Give the video driver sole ownership of the internal SCCB/I2C bus.
-  M5.In_I2C.release();
+  // Give the video driver sole ownership of the internal SCCB/I2C bus. From
+  // here on nothing in M5Unified may touch that bus again: a later
+  // M5.Display.setBrightness took it back and broke every transaction to the
+  // base (backlight.h; companion/test_i2c_ownership.py enforces it).
+  M5.In_I2C.release();   // i2c-ok: this IS the handover, in setup(), before the camera task exists
   Serial.begin(921600);
   // ROM camera ISR warnings otherwise interleave with binary JPEG payloads
   // on USB Serial/JTAG. Reserve that transport exclusively for our protocol.
