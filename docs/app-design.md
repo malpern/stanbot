@@ -12,18 +12,25 @@ the robot's view, with a little of the robot's character in it.
 - **Title and subtitle:** "Stanbot", with the link and firmware commit as the
   window subtitle. Left of the title, Stanbot's face: the CoreS3 front at
   toolbar size with the live eyes and mouth (`RobotFaceBadge`, docs/voice.md).
-- **Toolbar:** camera on/off, the expression menu, the connection menu, and
-  the inspector toggle.
-- **Nothing over the picture (2026-09-17).** The floating control bar was
-  removed. Follow/Stop, the head-position joystick and the red "Head powered"
-  badge sit at the right of the toolbar; a standing refusal or failure shows as
-  the window subtitle; "Follow automatically" is in Settings, on at every
-  launch (Stop pauses it until the app is next opened).
-- **Inspector** (right, hideable, remembered): Robot, Head, Seeing, Session,
-  Activity. The detail that used to be six status cards.
+- **Toolbar (2026-09-17):** only what must stay one click away with the panel
+  hidden: the red reachability dot, Follow/Stop, and the Controls toggle.
+- **Nothing over the picture.** Controls live in a panel on the right.
+- **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
+  (the CoreS3 front, `RobotFace`) with its mood caption; Head (Follow/Stop,
+  Follow automatically, a round direction pad: press and drag to point the head);
+  Voice (the mouth test, later Talk); Expression (a grid of the 18 faces); Camera
+  (show/hide, mirror). Things to do, not things to read.
+- **Diagnostics window** (Window menu, ⌥⌘D): live status (link, firmware and its
+  warnings, passphrase, following, limits, camera, face, facing), the recent
+  follow sessions read from their logs with each result and a Show button, and
+  the activity log with Copy. Kept out of the main window and out of Settings,
+  which holds only preferences.
+- **Settings** (⌘,) in tabs: General (follow automatically, firmware-change
+  sound), Connection (transport, USB device, Reconnect, Reboot, passphrase),
+  Video (mirror, enhancement).
 - **Menus:** a Robot menu (Follow ⇧⌘F, Stop ⌘., Follow Automatically, camera
-  ⌘K, Expression, Reconnect ⌘R, Reboot Robot) and Show/Hide Inspector ⌥⌘I in
-  View.
+  ⌘K, Expression, Play Mouth Test, Reconnect ⌘R, Reboot Robot), Show/Hide
+  Controls ⌥⌘I in View, Diagnostics ⌥⌘D in Window.
 
 ## Character
 
@@ -113,7 +120,7 @@ the app only learns the head's motion from telemetry after a session.
 
 This is expression, not perception: "engaged" means a face turned toward the
 camera, the caption is "Looking at you" (what Stanbot does), and nothing claims
-eye contact. In the inspector the eyes are small, too small for dilation and
+eye contact. In the title bar the eyes are small, too small for dilation and
 catchlights to read; they show fully where the face is drawn large.
 
 ## The screen look (Metal)
@@ -191,6 +198,9 @@ writes every expression icon to one image.
 
 A snapshot run quits as soon as the picture is written, so it leaves nothing on
 screen; add `-g` to `open` to keep it in the background as well.
+
+`STANBOT_SNAPSHOT_WINDOW=Diagnostics` opens and captures that window instead.
+The snapshot is taken 3 s after launch, which can catch the eyes mid-reaction.
 
 `STANBOT_PREVIEW` fills the model with made-up state and opens no USB, Wi-Fi or
 camera, so nothing can move. `STANBOT_SNAPSHOT` makes the preview write its own

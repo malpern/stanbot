@@ -18,12 +18,14 @@ extension View {
     }
 }
 
-/// The main window: the robot's view fills it, Stanbot's face and the follow
-/// controls float over the bottom, details live in a hideable inspector.
+/// The main window: the robot's view fills it, nothing floats over it, and the
+/// controls live in a hideable panel on the right (ControlsPanel). Status and
+/// logs are in the Diagnostics window.
 struct CompanionView: View {
     @EnvironmentObject private var robot: RobotConnection
     @Environment(SpeechMouth.self) private var speech
-    @AppStorage("StanbotShowInspector") private var showInspector = true
+    @AppStorage("StanbotShowControls") private var showControls = true
+    @Environment(\.openWindow) private var openWindow
     @State private var reaction: EyeReaction?
     @State private var facts: ReactionFacts?
     @State private var lastFaceAt = Date()
@@ -96,9 +98,15 @@ struct CompanionView: View {
             .background(TitlebarFace(content: RobotFaceBadge(mood: mood(at: Date()))
                 .environmentObject(robot)
                 .environment(speech)))
-            .inspector(isPresented: $showInspector) {
-                InspectorView()
-                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            .inspector(isPresented: $showControls) {
+                ControlsPanel(mood: mood(at: Date()), reaction: reaction)
+                    .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
+            }
+            .onAppear {
+                // Preview snapshots of the Diagnostics window (docs/app-design.md).
+                if ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] == "Diagnostics" {
+                    openWindow(id: "diagnostics")
+                }
             }
             .confirmationDialog("Start head following?", isPresented: $robot.confirmingFollow) {
                 Button("Start Following") { robot.startFollowing() }
@@ -120,46 +128,19 @@ struct CompanionView: View {
         }
     }
 
+    /// Only what must stay one click away with the panel hidden: whether the
+    /// robot is reachable, Follow/Stop, and the panel itself.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                robot.cameraState == .off ? robot.startCamera() : robot.stopCamera()
-            } label: {
-                Label(robot.cameraState == .off ? "Show Camera" : "Hide Camera",
-                      systemImage: robot.cameraState == .off ? "video" : "video.slash")
-            }
-            .help(robot.cameraState == .off ? "Show what Stanbot sees" : "Stop the camera stream")
-
-            ExpressionMenu()
-
-            Menu {
-                Picker("USB device", selection: $robot.selectedPort) {
-                    if robot.availablePorts.isEmpty {
-                        Text("No compatible USB device").tag(Optional<String>.none)
-                    } else {
-                        ForEach(robot.availablePorts, id: \.self) { port in
-                            Text(URL(fileURLWithPath: port).lastPathComponent).tag(Optional(port))
-                        }
-                    }
-                }
-                Divider()
-                Button("Reconnect") { robot.connect() }
-            } label: {
-                Label("Connection", systemImage: "cable.connector")
-            }
-            .help("Connection")
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
             ReachabilityIndicator()
-            Joystick()
             FollowButton()
         }
         ToolbarItem(placement: .primaryAction) {
-            Button { showInspector.toggle() } label: {
-                Label("Inspector", systemImage: "sidebar.right")
+            Button { showControls.toggle() } label: {
+                Label("Controls", systemImage: "sidebar.right")
             }
-            .help(showInspector ? "Hide the inspector" : "Show the inspector")
+            .help(showControls ? "Hide the controls" : "Show the controls")
         }
     }
 }
@@ -348,12 +329,14 @@ private struct FaceBoxView: View {
     }
 }
 
-// MARK: - Control bar
+// MARK: - Controls
 
 /// One button that becomes Stop while following, so it stays under the
 /// pointer. Safety stays plain: a literal label, red, always one click away.
-private struct FollowButton: View {
+struct FollowButton: View {
     @EnvironmentObject private var robot: RobotConnection
+    /// Large and full width, for the controls panel.
+    var prominent = false
 
     private var isFollowing: Bool {
         if case .following = robot.follow { return true }
@@ -367,59 +350,13 @@ private struct FollowButton: View {
             Label(isFollowing ? "Stop" : "Follow", systemImage: isFollowing ? "stop.fill" : "scope")
                 .labelStyle(.titleAndIcon)
                 .contentTransition(.symbolEffect(.replace))
+                .frame(maxWidth: prominent ? .infinity : nil)
         }
         .buttonStyle(.borderedProminent)
+        .controlSize(prominent ? .large : .regular)
         .tint(isFollowing ? .red : .stanbot)
         .disabled(!isFollowing && robot.followUnavailableReason != nil)
         .help(isFollowing ? "Stop following and power the head off" : (robot.followUnavailableReason ?? "Turn toward the selected face"))
-    }
-}
-
-/// Drag to point the head, for when the face isn't in view yet. Starts a
-/// session if needed; following resumes a moment after letting go. Arrow keys
-/// do the same while the window is focused.
-private struct Joystick: View {
-    @EnvironmentObject private var robot: RobotConnection
-    @State private var knob = CGSize.zero
-    private let size: CGFloat = 28
-    /// How far the drag has to go for full deflection.
-    private let reach: CGFloat = 18
-
-    var body: some View {
-        // A direction pad, not a circle with a dot (which read as a record
-        // button). It leans a few points toward the drag while steering.
-        // Wrapped in a ZStack on purpose: as a bare Image in the toolbar the
-        // drag never reached the robot (2026-09-17), while the earlier shape
-        // version did; a toolbar item that is only an Image is likely turned
-        // into a native toolbar image, which drops the gesture.
-        ZStack {
-            Color.clear
-            Image(systemName: robot.steering ? "dpad.fill" : "dpad")
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(robot.steering ? Color.stanbot : .primary)
-                .offset(knob)
-        }
-        .frame(width: size, height: size)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    var dx = value.translation.width, dy = value.translation.height
-                    let length = (dx * dx + dy * dy).squareRoot()
-                    if length > reach { dx *= reach / length; dy *= reach / length }
-                    knob = CGSize(width: dx / reach * 3, height: dy / reach * 3)
-                    // Screen y grows downward; dragging up tilts the head up.
-                    robot.steer(x: dx / reach, y: -dy / reach)
-                }
-                .onEnded { _ in
-                    withAnimation(.spring(duration: 0.25, bounce: 0)) { knob = .zero }
-                    robot.endSteering()
-                }
-        )
-        .disabled(robot.followUnavailableReason != nil)
-        .opacity(robot.followUnavailableReason != nil ? 0.4 : 1)
-        .help(robot.followUnavailableReason ?? "Drag to point the head. Following resumes after you let go. Arrow keys work too.")
-        .accessibilityLabel("Head position control")
     }
 }
 
@@ -463,120 +400,6 @@ private struct ReachabilityIndicator: View {
 
 
 // MARK: - Expressions
-
-struct ExpressionMenu: View {
-    @EnvironmentObject private var robot: RobotConnection
-
-    var body: some View {
-        Menu {
-            Picker("Expression", selection: Binding(get: { robot.selectedEmotion }, set: { robot.select($0) })) {
-                ForEach(Emotion.allCases) { emotion in
-                    Label { Text(emotion.title) } icon: { Image(nsImage: ExpressionIcon.image(for: emotion)) }
-                        .tag(emotion)
-                }
-            }
-            .pickerStyle(.inline)
-        } label: {
-            Label("Expression", systemImage: "face.smiling")
-        }
-        .help("Change Stanbot’s expression")
-    }
-}
-
-// MARK: - Inspector
-
-private struct InspectorView: View {
-    @EnvironmentObject private var robot: RobotConnection
-
-    var body: some View {
-        Form {
-            Section("Robot") {
-                LabeledContent("Link", value: robot.linkSummary)
-                LabeledContent("Firmware", value: firmwareValue)
-                ForEach(firmwareWarnings, id: \.self) { warning in
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
-                }
-            }
-            Section("Head") {
-                LabeledContent("Following", value: followValue)
-                LabeledContent("Moves", value: movesValue)
-                if let reason = robot.followUnavailableReason, robot.follow == .idle {
-                    Text(reason).font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            Section("Seeing") {
-                LabeledContent("Camera", value: robot.cameraState.title)
-                LabeledContent("Face", value: robot.faceState.rawValue)
-                if let face = robot.faceBoxes.first {
-                    LabeledContent("Turned toward the camera", value: facingValue(face))
-                }
-            }
-            Section("Session") {
-                if case .finished(let result) = robot.follow {
-                    Text(result.summary).font(.callout)
-                }
-                if let url = robot.followLogURL {
-                    Button("Show Session Log") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                } else {
-                    Text("Stanbot hasn’t followed anyone yet.").foregroundStyle(.secondary)
-                }
-            }
-            Section("Activity") {
-                if robot.activity.isEmpty {
-                    Text("Nothing has happened yet.").foregroundStyle(.secondary)
-                }
-                ForEach(robot.activity.prefix(40)) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.text).font(.callout)
-                        Text(entry.date, style: .time).font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var firmwareValue: String {
-        switch robot.firmware {
-        case .unknown: "Not connected"
-        case .asking: "Asking…"
-        case .reported(let info): "\(info.shortCommit), protocol \(info.protocolVersion)"
-        case .silent: "Unidentified"
-        }
-    }
-
-    private var firmwareWarnings: [String] {
-        switch robot.firmware {
-        case .reported(let info): info.warnings
-        case .silent: ["No reply to V; firmware predates the version command"]
-        default: []
-        }
-    }
-
-    private var followValue: String {
-        switch robot.follow {
-        case .idle: robot.followUnavailableReason == nil ? "Ready" : "Not available"
-        case .following: "Following"
-        case .finished: "Finished"
-        }
-    }
-
-    private var movesValue: String {
-        guard case .reported(let info) = robot.firmware, info.followLimitsMeasured else { return "Nothing (locked)" }
-        let range = info.followYawRange.map { " ±\($0)" } ?? ""
-        return info.followPitch ? "Turn\(range), tilt" : "Turn\(range)"
-    }
-
-    private func facingValue(_ face: FaceBox) -> String {
-        switch Facing.classify(face) {
-        case .toward: "Roughly"
-        case .away: "No"
-        case .unknown: "Can’t tell"
-        }
-    }
-}
 
 /// Tiny drawings of Stanbot's own eyes for each expression, for menus: you pick
 /// the face, not a word. Rendered once and cached.

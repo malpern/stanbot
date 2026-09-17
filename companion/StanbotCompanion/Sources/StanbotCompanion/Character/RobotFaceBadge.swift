@@ -1,57 +1,74 @@
 import AppKit
 import SwiftUI
 
-/// Stanbot in the title bar, left of its name: the front of the robot's CoreS3
-/// head at toolbar size. A light grey rim around black glass, the screen with
-/// the same live eyes and mouth the robot draws, and the copper camera ring
-/// below it, as on the real StackChan (docs/app-design.md). Too small for the
-/// whole robot, so it is the face only.
-struct RobotFaceBadge: View {
+/// The front of Stanbot's CoreS3 head, at any width: a light grey rim around
+/// black glass, the 4:3 screen with the same live eyes and mouth the robot
+/// draws, and the copper camera ring below it, as on the real StackChan
+/// (docs/app-design.md). Proportions are from the 38 pt title-bar version.
+struct RobotFace: View {
     var mood: Mood
+    var width: CGFloat
+    var reaction: EyeReaction? = nil
+    /// Large faces: the LCD grid, the mouth's glow, and eyes that follow the
+    /// pointer. Off for the title bar, where they only blur.
+    var detailed = false
 
-    /// The CoreS3 front is square; the screen is 4:3 in its upper part.
-    static let size = CGSize(width: 38, height: 36)
+    static let aspect: CGFloat = 36.0 / 38.0
 
     var body: some View {
-        let rim: CGFloat = 1.5
-        let glassWidth = Self.size.width - 2 * rim
-        let screenWidth = glassWidth - 5
+        let s = width / 38
+        let rim = 1.5 * s
+        let screenWidth = width - 2 * rim - 5 * s
         let screenHeight = screenWidth * 3 / 4
         // Wrapped in a ZStack: a toolbar item must not be a bare shape or image.
         ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 7 * s, style: .continuous)
                 .fill(Color(white: 0.86))
-            RoundedRectangle(cornerRadius: 5.5, style: .continuous)
+            RoundedRectangle(cornerRadius: 5.5 * s, style: .continuous)
                 .fill(LinearGradient(colors: [Color(white: 0.13), Color(white: 0.02)],
                                      startPoint: .top, endPoint: .bottom))
                 .padding(rim)
             VStack(spacing: 0) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 1.5 * s, style: .continuous)
                         .fill(Color(white: 0.09))
                     StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, screen: false,
-                                    scanning: mood.scanning, engaged: mood.engaged,
-                                    mouthMinimumPoints: 1.2, mouthGlow: false)
+                                    scanning: mood.scanning, reaction: reaction, interactive: detailed,
+                                    screenLook: detailed, engaged: mood.engaged, closeness: mood.closeness,
+                                    mouthMinimumPoints: detailed ? 0 : 1.2, mouthGlow: detailed)
                 }
                 .frame(width: screenWidth, height: screenHeight)
-                .padding(.top, rim + 2.5)
+                .padding(.top, rim + 2.5 * s)
                 Spacer(minLength: 0)
                 // The camera, a copper ring centred under the screen.
                 Circle()
-                    .strokeBorder(Color(red: 0.78, green: 0.42, blue: 0.22), lineWidth: 0.8)
-                    .frame(width: 3.4, height: 3.4)
-                    .padding(.bottom, rim + 2.2)
+                    .strokeBorder(Color(red: 0.78, green: 0.42, blue: 0.22), lineWidth: 0.8 * s)
+                    .frame(width: 3.4 * s, height: 3.4 * s)
+                    .padding(.bottom, rim + 2.2 * s)
             }
         }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .help(mood.caption)
+        .frame(width: width, height: width * Self.aspect)
         .accessibilityElement()
         .accessibilityLabel("Stanbot, \(mood.caption.lowercased())")
     }
 }
 
+/// Stanbot in the title bar, left of its name. Too small for the whole robot,
+/// so it is the face only.
+struct RobotFaceBadge: View {
+    var mood: Mood
+
+    static let size = CGSize(width: 38, height: 36)
+
+    var body: some View {
+        RobotFace(mood: mood, width: Self.size.width)
+            .help(mood.caption)
+    }
+}
+
 /// Puts a SwiftUI view in the window's title bar, left of the title, as a
-/// titlebar accessory, and keeps it updated as `content` changes.
+/// titlebar accessory, and keeps it updated as `content` changes. SwiftUI's
+/// .navigation toolbar placement drew nothing in this window (2026-09-17).
 struct TitlebarFace<Content: View>: NSViewRepresentable {
     var content: Content
 

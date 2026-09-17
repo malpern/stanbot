@@ -11,7 +11,7 @@ struct StanbotCompanionApp: App {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var robot = RobotConnection.fromEnvironment()
     @State private var speech = SpeechMouth()
-    @AppStorage("StanbotShowInspector") private var showInspector = true
+    @AppStorage("StanbotShowControls") private var showControls = true
 
     var body: some Scene {
         WindowGroup("Stanbot") {
@@ -26,8 +26,13 @@ struct StanbotCompanionApp: App {
                 Button("About Stanbot") { openWindow(id: "about") }
             }
             CommandGroup(after: .sidebar) {
-                Button(showInspector ? "Hide Inspector" : "Show Inspector") { showInspector.toggle() }
+                Button(showControls ? "Hide Controls" : "Show Controls") { showControls.toggle() }
                     .keyboardShortcut("i", modifiers: [.command, .option])
+            }
+            CommandGroup(before: .windowList) {
+                Button("Diagnostics") { openWindow(id: "diagnostics") }
+                    .keyboardShortcut("d", modifiers: [.command, .option])
+                Divider()
             }
             CommandMenu("Robot") {
                 if case .following = robot.follow {
@@ -68,6 +73,11 @@ struct StanbotCompanionApp: App {
             TransportSettingsView()
                 .environmentObject(robot)
         }
+        Window("Diagnostics", id: "diagnostics") {
+            DiagnosticsView()
+                .environmentObject(robot)
+        }
+        .defaultSize(width: 820, height: 620)
         Window("About Stanbot", id: "about") {
             AboutView()
         }
@@ -323,6 +333,8 @@ final class RobotConnection: ObservableObject {
     /// Where session logs go. Tests pass a temporary directory so they never
     /// write into the user's Logs folder, as they did on 2026-09-16.
     private let followLogDirectory: URL
+    /// Where follow session logs are written, for Diagnostics.
+    var followLogFolder: URL { followLogDirectory }
     /// The robot passphrase, for authorizing FOLLOW and REBOOT over Wi-Fi.
     private let passphrase: () -> String?
     /// A Wi-Fi command waiting on the robot's challenge or its verdict.
@@ -1261,7 +1273,9 @@ extension RobotConnection {
     private func scheduleSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT"] else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "Stanbot" }),
+            // STANBOT_SNAPSHOT_WINDOW names another window to capture, e.g. Diagnostics.
+            let title = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] ?? "Stanbot"
+            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == title }),
                   let frame = window.contentView?.superview else { return }
             guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
             frame.cacheDisplay(in: frame.bounds, to: rep)

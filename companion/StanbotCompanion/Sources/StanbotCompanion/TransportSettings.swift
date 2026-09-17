@@ -39,35 +39,36 @@ enum TransportPreference: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Settings (⌘,), in tabs: General, Connection, Video. Only preferences live
+/// here; live status and logs are in the Diagnostics window.
 struct TransportSettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            ConnectionSettings()
+                .tabItem { Label("Connection", systemImage: "antenna.radiowaves.left.and.right") }
+            VideoSettings()
+                .tabItem { Label("Video", systemImage: "video") }
+        }
+        .frame(width: 500)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct GeneralSettings: View {
     @EnvironmentObject private var robot: RobotConnection
-    @State private var passphraseStatus: String?
     @State private var chime = FirmwareChime.stored
-    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
 
     var body: some View {
         Form {
-            Picker("Connect to StackChan", selection: $robot.transport) {
-                ForEach(TransportPreference.allCases) { preference in
-                    Text(preference.title).tag(preference)
-                }
-            }
-            .pickerStyle(.radioGroup)
-
-            Text(robot.transport.detail)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            LabeledContent("Now using", value: robot.linkSummary)
-
-            Divider().padding(.vertical, 6)
-
             Section {
                 Toggle("Follow automatically", isOn: $robot.followAutomaticallyOnLaunch)
+            } footer: {
                 Text("Start following whenever Stanbot sees someone. On at every launch; Stop pauses it until the app is next opened.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .settingsFootnote()
+            }
+            Section {
                 Picker("Sound on firmware change", selection: $chime) {
                     ForEach(FirmwareChime.allCases) { option in
                         Text(option.title).tag(option)
@@ -77,58 +78,107 @@ struct TransportSettingsView: View {
                     new.store()
                     new.play()
                 }
-                LabeledContent("Robot passphrase", value: robot.passphraseAvailable ? "Available" : "Not available")
-                HStack {
-                    Button("Re-read from Secrets") {
-                        RobotPassphrase.forget()
-                        robot.refreshPassphrase()
-                        passphraseStatus = RobotPassphrase.status
-                    }
-                    if let passphraseStatus {
-                        Text(passphraseStatus).font(.callout).foregroundStyle(.secondary)
-                    }
-                }
-                Text("Read from ~/dotfiles/secrets.env with sops when needed, and kept only in memory. It lets head following start and the robot reboot over Wi-Fi: the passphrase stays on this Mac, and the robot checks a one-time challenge.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                Text("Head following").font(.headline)
-            }
-
-            Divider().padding(.vertical, 6)
-
-            Section {
-                Toggle("Mirror the video", isOn: $mirrorVideo)
-                Text("Like a selfie camera: when you move right, you move right on screen. Display only.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Toggle("Enhance color", isOn: $robot.enhancement.color)
-                Text("Slightly more saturation and contrast. The camera renders flat and grey.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Group {
-                    Toggle("Reduce noise", isOn: $robot.enhancement.denoise)
-                    Text("Filters grain using the previous frame.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Toggle("Smooth motion", isOn: $robot.enhancement.smoothMotion)
-                    Text("Adds a generated frame between each pair, doubling the displayed rate. Delays the picture by about a tenth of a second, and fast movement can ghost.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Toggle("Upscale", isOn: $robot.enhancement.upscale)
-                    Text("Machine-learning upscaling from 320×240 to 640×480. Sharper, but the added detail is inferred.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .disabled(!VideoEnhancement.videoToolboxAvailable)
-                if !VideoEnhancement.videoToolboxAvailable {
-                    Text("Noise reduction, smooth motion and upscaling need macOS 26 on Apple silicon.")
-                        .font(.callout).foregroundStyle(.orange)
-                }
-                Text("Display only: face detection always uses the frames exactly as the robot sends them.")
-                    .font(.callout).foregroundStyle(.secondary)
-            } header: {
-                Text("Video").font(.headline)
             }
         }
-        .padding(20)
-        .frame(width: 480)
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct ConnectionSettings: View {
+    @EnvironmentObject private var robot: RobotConnection
+    @State private var passphraseStatus: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Connect to StackChan", selection: $robot.transport) {
+                    ForEach(TransportPreference.allCases) { preference in
+                        Text(preference.title).tag(preference)
+                    }
+                }
+                LabeledContent("Now using", value: robot.linkSummary)
+            } footer: {
+                Text(robot.transport.detail).settingsFootnote()
+            }
+            Section {
+                Picker("USB device", selection: $robot.selectedPort) {
+                    if robot.availablePorts.isEmpty {
+                        Text("No compatible USB device").tag(Optional<String>.none)
+                    } else {
+                        ForEach(robot.availablePorts, id: \.self) { port in
+                            Text(URL(fileURLWithPath: port).lastPathComponent).tag(Optional(port))
+                        }
+                    }
+                }
+                LabeledContent("Robot") {
+                    HStack {
+                        Button("Reconnect") { robot.connect() }
+                        Button("Reboot") { robot.rebootRobot() }
+                            .disabled(!(robot.connectedOverUSB || (robot.connectedOverWiFi && robot.passphraseAvailable)))
+                    }
+                }
+            }
+            Section {
+                LabeledContent("Robot passphrase") {
+                    HStack {
+                        Text(passphraseStatus ?? (robot.passphraseAvailable ? "Available" : "Not available"))
+                            .foregroundStyle(.secondary)
+                        Button("Re-read") {
+                            RobotPassphrase.forget()
+                            robot.refreshPassphrase()
+                            passphraseStatus = RobotPassphrase.status
+                        }
+                    }
+                }
+            } footer: {
+                Text("Read from ~/dotfiles/secrets.env with sops and kept only in memory. Over Wi-Fi it lets head following start and the robot reboot: the passphrase stays on this Mac, and the robot checks a one-time challenge.")
+                    .settingsFootnote()
+            }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct VideoSettings: View {
+    @EnvironmentObject private var robot: RobotConnection
+    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Mirror the video", isOn: $mirrorVideo)
+            } footer: {
+                Text("Like a selfie camera: when you move right, you move right on screen.").settingsFootnote()
+            }
+            Section {
+                Toggle("Enhance color", isOn: $robot.enhancement.color)
+                Group {
+                    Toggle("Reduce noise", isOn: $robot.enhancement.denoise)
+                    Toggle("Smooth motion", isOn: $robot.enhancement.smoothMotion)
+                    Toggle("Upscale", isOn: $robot.enhancement.upscale)
+                }
+                .disabled(!VideoEnhancement.videoToolboxAvailable)
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Color adds a little saturation and contrast. Noise reduction filters grain using the previous frame. Smooth motion adds a generated frame between each pair (about 0.1 s delay; fast movement can ghost). Upscale infers detail from 320×240 to 640×480.")
+                    if !VideoEnhancement.videoToolboxAvailable {
+                        Text("Noise reduction, smooth motion and upscaling need macOS 26 on Apple silicon.")
+                            .foregroundStyle(.orange)
+                    }
+                    Text("Display only: face detection always uses the frames exactly as the robot sends them.")
+                }
+                .settingsFootnote()
+            }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private extension View {
+    func settingsFootnote() -> some View {
+        font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
