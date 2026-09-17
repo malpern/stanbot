@@ -4,15 +4,22 @@ One page for the next time someone is at the robot and at the mini. Written
 2026-09-16. On the robot: calibration + pitch build `7cd5106` (yaw +-48, pitch
 following on, search, easing, eye gaze, renewable power lease, telemetry
 check). The Stanbot app in `companion/StanbotCompanion/build/Stanbot.app` was
-rebuilt from `4b5aacd` (adds the desk camera toggle, off) and has not been launched since.
+rebuilt from the latest commit (adds the desk camera toggle, off) and has not been launched since.
 
 Stay at the robot for every step that moves it. Stop in the app (or unplug the
 robot) if anything looks wrong.
 
 ## 0. Before anything moves (2 min)
 
+- [ ] **Flash the review fixes first** (commit `eee768e` or later): the robot
+      still runs `7cd5106`, which lacks the pitch-level travel limit and the
+      OTA motion guard. From Terminal on the mini, app closed:
+      `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 firmware/build.sh`
+      then `python3 firmware/ota.py`; it must print `"verified": true`. Or ask
+      Claude to do it.
+
 - [ ] Find the USB port: `ls /dev/cu.usbmodem*`
-- [ ] Open the app. Firmware card shows `7cd5106`, and lists "tilts up and down".
+- [ ] Open the app. Firmware card shows the commit you just flashed, and lists "tilts up and down".
 - [ ] **Turn Automatic off** in Head following before step 1. Otherwise a
       session starts as soon as it sees a face.
 
