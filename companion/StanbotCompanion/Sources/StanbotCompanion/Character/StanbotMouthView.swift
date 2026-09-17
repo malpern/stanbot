@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// Stanbot's mouth, drawn from `SpeechMouth` in robot display pixels scaled by
-/// `scale` (points per robot pixel). A thin resting line when silent, a shaping
-/// capsule while speaking. With the shader library it is the Metal mouth
+/// `scale` (points per robot pixel), only while Stanbot speaks: it grows in as a
+/// line, shapes with the voice, and shrinks away after. With the shader library it is the Metal mouth
 /// (Shaders/StanbotMouth.metal); without it (swift test, swift run) the same
-/// shape in plain SwiftUI. With no SpeechMouth in the environment, the resting line.
+/// shape in plain SwiftUI. With no SpeechMouth in the environment, nothing.
 ///
 /// Reads SpeechMouth itself, so a 60 Hz mouth re-renders only this view.
 struct StanbotMouthView: View {
@@ -19,12 +19,18 @@ struct StanbotMouthView: View {
     private static let box = CGSize(width: 96, height: 56)
 
     var body: some View {
-        let opening = speech?.opening ?? 0
-        let mouth = MouthModel.size(open: opening, shape: speech?.shape ?? 0)
+        if let speech, speech.presence > 0 {
+            mouth(speech)
+        }
+    }
+
+    private func mouth(_ speech: SpeechMouth) -> some View {
+        var mouth = MouthModel.size(open: speech.opening, shape: speech.shape)
+        mouth.width *= speech.presence   // grows in from the centre, as on the robot
         let size = CGSize(width: Self.box.width * scale, height: Self.box.height * scale)
-        ZStack {
+        return ZStack {
             if glow, let shader = StanbotShaders.mouth(size: size, unit: scale, mouth: mouth, rim: MouthModel.rim,
-                                                       level: speech?.level ?? 0, presence: 1, time: speech?.time ?? 0) {
+                                                       level: speech.level, presence: speech.presence, time: speech.time) {
                 Rectangle().fill(.white).colorEffect(shader)
             } else {
                 Capsule().fill(Color(white: glow ? 0.60 : 0.66))

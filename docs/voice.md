@@ -170,18 +170,21 @@ constants against the firmware as it already does for the eye poses.
 
 ## Phase 1, as built (2026-09-17, mouth revised the same day)
 
-The first mouth (a capsule that appeared with speech and vanished after) looked
+The first mouth (a capsule that popped in with speech and vanished after) looked
 plain and abrupt. After research into robot and character mouths (m5stack-avatar,
 Moxie, KITT, uLipSync, Rhubarb, OVRLipSync, ITU-R BT.1359 sync tolerances) the
-owner chose a **shaping capsule that is always there**:
+owner chose a **shaping capsule**, and then asked that it show **only while
+speaking**:
 
-- **At rest** a thin grey line, 40x4 robot pixels, like the stock StackChan face.
+- **Silent:** no mouth at all. Speech grows it in from the centre over 150 ms as
+  a thin grey line (40x4 robot pixels); after speech it eases back to the line
+  and shrinks away the same way.
 - **Speaking** it opens with loudness (to 22 px tall, the corners drawing in as it
   opens) and changes shape with how bright the sound is: wider and flatter for
   "ee" and "s", narrower and rounder for "oo".
 - **Pauses** under 400 ms keep the lips parted; after that it eases back to the
-  line. A dip well below the recent peak closes it quickly, standing in for
-  consonants. It never disappears.
+  line and goes. A dip well below the recent peak closes it quickly, standing in
+  for consonants.
 - **Timing:** quick attack (40 ms), a 70 ms hold at each peak, slower release
   (150 ms). The picture leads the sound slightly (app 30 ms, robot 60 ms): people
   forgive a mouth that leads far more than one that lags.

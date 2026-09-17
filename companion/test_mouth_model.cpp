@@ -34,14 +34,19 @@ void parsesOnlyWellFormedPackets() {
   assert(!stanbot::parseMouthPacket(nullptr, 11, sequence, open, shape));
 }
 
-void restsAsAThinLine() {
+void hiddenUntilSpeechThenGrowsIn() {
   MouthModel mouth;
   uint32_t now = 1000;
   mouth.update(now);
   runFor(mouth, now, 2000);
-  const auto rest = mouth.shape();
-  assert(rest.width == 40 && rest.height == 4);   // always drawn, never gone
-  assert(rest.innerWidth == 0 && rest.innerHeight == 0);
+  assert(!mouth.shape().visible);            // silent: no mouth at all
+  mouth.receive(1, 0, 0, now);               // speech starting, still quiet
+  now += 33; mouth.update(now);
+  const auto growing = mouth.shape();
+  assert(growing.visible && growing.width < 40);   // growing in from the centre
+  runFor(mouth, now, 200);
+  const auto line = mouth.shape();
+  assert(line.visible && line.width == 40 && line.height == 4);
 }
 
 void opensWithLoudnessAndShapesWithTheVoice() {
@@ -72,10 +77,21 @@ void returnsToTheLineWhenPacketsStop() {
   mouth.receive(1, 100, 80, now);
   runFor(mouth, now, 300);
   assert(mouth.opening() > 0.5f);
-  // The link drops with no final packet: back to the resting line within a second.
+  // The link drops with no final packet: eases back to the line, then goes.
+  runFor(mouth, now, 400);
+  assert(mouth.shape().visible);
   runFor(mouth, now, 1000);
-  const auto rest = mouth.shape();
-  assert(rest.width == 40 && rest.height == 4);
+  assert(!mouth.shape().visible);
+}
+
+void staysThroughShortPauses() {
+  MouthModel mouth;
+  uint32_t now = 1000;
+  mouth.update(now);
+  uint32_t seq = 0;
+  for (int i = 0; i < 6; ++i) { mouth.receive(++seq, 70, 0, now); runFor(mouth, now, 66); }
+  runFor(mouth, now, 300);   // a pause: no packets, still inside the silence timeout
+  assert(mouth.shape().visible);
 }
 
 void staleAndRepeatedSequencesAreIgnored() {
@@ -105,7 +121,8 @@ void stalledLoopDoesNotFlingTheSprings() {
 
 int main() {
   parsesOnlyWellFormedPackets();
-  restsAsAThinLine();
+  hiddenUntilSpeechThenGrowsIn();
+  staysThroughShortPauses();
   opensWithLoudnessAndShapesWithTheVoice();
   returnsToTheLineWhenPacketsStop();
   staleAndRepeatedSequencesAreIgnored();

@@ -30,17 +30,18 @@ final class MouthTests: XCTestCase {
             ("kRoundWidth", MouthModel.roundWidth), ("kOpenNarrowing", MouthModel.openNarrowing),
             ("kWideFlatten", MouthModel.wideFlatten), ("kRoundDeepen", MouthModel.roundDeepen),
             ("kRim", MouthModel.rim), ("kSilenceRestMs", MouthModel.silenceRestMs),
-            ("kSpringOmega", MouthModel.springOmega),
+            ("kSpringOmega", MouthModel.springOmega), ("kFadeMs", MouthModel.fadeMs),
         ]
         for (name, value) in pairs { XCTAssertEqual(try constant(name), value, name) }
         XCTAssertTrue(source.contains("kMouthPort = \(MouthSender.port);"))
     }
 
-    func testModelRestsAsALineAndShapesWithTheVoice() {
+    func testModelShowsOnlyWhileSpeakingAndShapesWithTheVoice() {
         var model = MouthModel()
         var now = 100.0
         model.update(at: now)
-        XCTAssertEqual(MouthModel.size(open: model.opening, shape: model.shape), CGSize(width: 40, height: 4))
+        XCTAssertEqual(model.presence, 0, "no mouth while silent")
+        XCTAssertTrue(model.settled)
         func hold(_ frame: MouthEnvelope.Frame, _ seconds: Double) {
             for _ in 0..<Int(seconds * 60) { now += 1.0 / 60; model.receive(frame, at: now); model.update(at: now) }
         }
@@ -54,11 +55,11 @@ final class MouthTests: XCTestCase {
         XCTAssertGreaterThan(ee.width, 46)
         XCTAssertLessThan(ee.height, ah.height)
         XCTAssertLessThan(oo.width, 30)
-        // No more targets: back to the resting line, never gone.
-        for _ in 0..<90 { now += 1.0 / 60; model.update(at: now) }
-        let rest = MouthModel.size(open: model.opening, shape: model.shape)
-        XCTAssertEqual(rest.width, 40, accuracy: 0.2)
-        XCTAssertEqual(rest.height, 4, accuracy: 0.2)
+        XCTAssertEqual(model.presence, 1)
+        // No more targets: eases back to the line, then goes.
+        for _ in 0..<120 { now += 1.0 / 60; model.update(at: now) }
+        XCTAssertEqual(model.presence, 0)
+        XCTAssertTrue(model.settled)
     }
 
     /// Mirrors test_mouth_model.cpp's sizes, so the two implementations agree.
@@ -144,7 +145,7 @@ final class MouthTests: XCTestCase {
     }
 
     /// Opt-in, like testScreenLookDrawsTheLCDGrid: renders the face with the Metal
-    /// mouth resting, open, wide and round to $TMPDIR/stanbot-mouth-*.png, and
+    /// mouth as a line, open, wide and round to $TMPDIR/stanbot-mouth-*.png, and
     /// checks the open mouth is a lit rim around a dark opening where the robot
     /// draws it.
     @MainActor

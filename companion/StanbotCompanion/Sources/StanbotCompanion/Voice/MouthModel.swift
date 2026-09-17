@@ -20,9 +20,12 @@ struct MouthModel {
     static let rim = 3.0
     static let silenceRestMs = 400.0
     static let springOmega = 26.0
+    static let fadeMs = 150.0
 
     private(set) var opening = 0.0
     private(set) var shape = 0.0
+    /// 0 silent (no mouth) ... 1 speaking; the mouth grows in and shrinks away with it.
+    private(set) var presence = 0.0
     private var openVelocity = 0.0
     private var shapeVelocity = 0.0
     private var target = MouthEnvelope.Frame.rest
@@ -50,11 +53,13 @@ struct MouthModel {
         if opening > 1 { opening = 1; openVelocity = min(openVelocity, 0) }
         if shape < -1 { shape = -1; shapeVelocity = max(shapeVelocity, 0) }
         if shape > 1 { shape = 1; shapeVelocity = min(shapeVelocity, 0) }
+        let present = speaking || opening > 0.02 || abs(shape) > 0.02
+        presence = min(max(presence + (present ? 1 : -1) * dt * 1000 / Self.fadeMs, 0), 1)
     }
 
-    /// True while the mouth is still moving toward rest or a target.
+    /// True once the mouth has gone: nothing left to animate.
     var settled: Bool {
-        abs(opening) < 0.001 && abs(shape) < 0.001 && abs(openVelocity) < 0.001 && abs(shapeVelocity) < 0.001
+        presence == 0 && abs(opening) < 0.001 && abs(shape) < 0.001
     }
 
     /// Width and height in robot display pixels, exactly as MouthModel::size.

@@ -58,6 +58,8 @@ final class SpeechMouth {
     private(set) var opening = 0.0
     /// -1 round ... +1 wide.
     private(set) var shape = 0.0
+    /// 0 silent, no mouth ... 1 speaking.
+    private(set) var presence = 0.0
     /// How open the voice wants the mouth right now, for the shader's inner light.
     private(set) var level = 0.0
     /// Seconds since this mouth first moved, for gentle shader motion.
@@ -98,6 +100,7 @@ final class SpeechMouth {
         self.opening = min(max(opening, 0), 1)
         self.shape = min(max(shape, -1), 1)
         self.level = min(max(level, 0), 1)
+        presence = 1
         time = 1
     }
 
@@ -178,6 +181,7 @@ final class SpeechMouth {
         model.update(at: now)
         opening = model.opening
         shape = model.shape
+        presence = model.presence
         time = now - started
         return playing || !model.settled
     }

@@ -1,10 +1,10 @@
 #pragma once
 
-// Stanbot's mouth: a soft capsule that is always there. At rest it is a thin
-// line; while the Mac plays speech it opens with loudness and changes shape
-// with the voice's brightness (wider and flatter for "ee" and "s", narrower and
-// rounder for "oo"). Through short pauses it stays parted; after speech it eases
-// back to the line. It never appears or disappears. See docs/voice.md.
+// Stanbot's mouth, shown only while it speaks. Speech grows it in from the
+// centre as a thin line; it opens with loudness and changes shape with the
+// voice's brightness (wider and flatter for "ee" and "s", narrower and rounder
+// for "oo"), stays parted through short pauses, and after speech eases back to
+// the line and shrinks away. See docs/voice.md.
 //
 // Plain C++ with no Arduino dependency, so companion/test_mouth_model.cpp runs
 // it on the Mac. The app mirrors these constants (MouthModel.swift) and
@@ -20,6 +20,7 @@
 namespace stanbot {
 
 struct MouthShape {
+  bool visible;
   int centerX, centerY;          // robot display pixels, 320x240
   int width, height;             // the outer grey capsule
   int innerWidth, innerHeight;   // the dark opening inside it; 0 when too small
@@ -60,6 +61,7 @@ class MouthModel {
   // Timing.
   static constexpr uint32_t kSilenceRestMs = 400;  // no packet this long: back to the line
   static constexpr float kSpringOmega = 26.0f;     // rad/s: syllables, without snapping
+  static constexpr uint32_t kFadeMs = 150;         // grow in from the centre / shrink away
   // A sequence this far behind the last, or any sequence after this long a
   // silence, is taken as the app starting over.
   static constexpr uint32_t kRestartGap = 1000;
@@ -96,7 +98,16 @@ class MouthModel {
     }
     clamp(open_, openVelocity_, 0.0f, 1.0f);
     clamp(shape_, shapeVelocity_, -1.0f, 1.0f);
+
+    // Present while speaking, and until it has eased back to the resting line.
+    const bool present = speaking || open_ > 0.02f || shape_ > 0.02f || shape_ < -0.02f;
+    const float fade = dt * 1000.0f / kFadeMs;
+    presence_ += present ? fade : -fade;
+    if (presence_ < 0.0f) presence_ = 0.0f;
+    if (presence_ > 1.0f) presence_ = 1.0f;
   }
+
+  float presence() const { return presence_; }
 
   float opening() const { return open_; }
   float shapeValue() const { return shape_; }
@@ -116,7 +127,9 @@ class MouthModel {
     s.centerY = kCenterY;
     float width = 0.0f, height = 0.0f;
     size(open_, shape_, width, height);
+    width *= presence_;   // grows in from the centre: no alpha on a 16-bit display
     s.width = static_cast<int>(width + 0.5f);
+    s.visible = presence_ > 0.0f && s.width >= 2;
     s.height = static_cast<int>(height + 0.5f);
     const int innerHeight = s.height - 2 * kRim;
     const int innerWidth = s.width - 2 * kRim;
@@ -141,6 +154,7 @@ class MouthModel {
   float targetOpen_ = 0.0f, targetShape_ = 0.0f;
   float open_ = 0.0f, openVelocity_ = 0.0f;
   float shape_ = 0.0f, shapeVelocity_ = 0.0f;
+  float presence_ = 0.0f;
   uint32_t lastPacketMs_ = 0;
   uint32_t lastUpdateMs_ = 0;
   uint32_t lastSequence_ = 0;

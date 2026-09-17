@@ -176,11 +176,12 @@ class StanbotEyes {
     drawMouth(display);
   }
 
-  // The mouth: a grey capsule a little dimmer than the irises, a thin line at
-  // rest, with a dark opening once it is tall enough (MouthModel.h).
+  // The mouth, only while speaking: a grey capsule a little dimmer than the
+  // irises, with a dark opening once it is tall enough (MouthModel.h).
   template <typename Display>
   void drawMouth(Display& display) {
     const stanbot::MouthShape m = mouth_.shape();
+    if (!m.visible) return;
     constexpr uint16_t kMouthGrey = 0x9CD3;   // about 60% grey; the irises are 0xBDF7
     display.fillRoundRect(m.centerX - m.width / 2, m.centerY - m.height / 2, m.width, m.height,
                           min(m.width, m.height) / 2, kMouthGrey);
