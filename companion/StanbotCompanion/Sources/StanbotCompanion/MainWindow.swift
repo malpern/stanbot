@@ -293,11 +293,7 @@ private struct EmptyState: View {
     }
 
     private var headline: String {
-        switch robot.connection {
-        case .disconnected, .unavailable: "Stanbot is asleep"
-        case .connecting: "Waking up…"
-        case .connected: robot.cameraState == .waiting ? "Opening my eyes…" : "My eyes are closed"
-        }
+        Mood.placeholderHeadline(connection: robot.connection, camera: robot.cameraState)
     }
 
     private var detail: String {

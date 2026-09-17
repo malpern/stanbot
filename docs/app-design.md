@@ -39,8 +39,8 @@ the robot's view, with a little of the robot's character in it.
   selected face outlined. No sidebar: there is one robot and no
   hierarchy to navigate. If several robots or recorded sessions arrive, a
   sidebar comes back with real places in it.
-- **Title bar:** Stanbot's live eyes and mouth, an icon for the link (Wi-Fi or
-  USB), its name, and the red dot when it cannot be reached — all one titlebar
+- **Title bar:** Stanbot's live eyes and mouth, its name, and the red dot when
+  it cannot be reached (no icon for a working link: nothing to say) — all one titlebar
   accessory (`RobotFaceBadge`); the window's own title is a single space so the
   dot can sit right of the name. (Hiding the title instead, with
   `titleVisibility`, let the content slide up under the toolbar: the video was
@@ -102,7 +102,7 @@ interruptible, and is skipped or reduced to a fade under Reduce Motion.
 | --- | --- |
 | Looking for the robot | Eyes glance side to side ("Waking up…"). No spinner: the eyes are the loader. |
 | Connected | Eyes flutter open (`wake`). |
-| Camera starting | Squints ("Opening my eyes…"); the video then clears in from a blur, like eyes focusing. |
+| Camera starting | Squints ("Opening my eyes…"); the video then clears in from a blur, like eyes focusing. The empty state says it once — the right-hand panel drops its caption whenever the two would say the same words. |
 | A face is selected | Eyes widen and lift (`surprise`); the face outline draws itself around the face and its label pops up from the top edge, once per person. |
 | While following | Eyes attend (cyan) and look toward the face; Follow morphs into a red Stop in place, and the "Head powered" dot pulses. |
 | Session ends normally | A slow double blink (`content`). |

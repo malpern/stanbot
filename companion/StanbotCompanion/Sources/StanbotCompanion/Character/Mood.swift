@@ -25,6 +25,19 @@ struct Mood: Equatable {
     /// No face for this long, camera on and nothing to do: Stanbot gets drowsy.
     static let drowsyAfter: TimeInterval = 90
 
+    /// What the big empty state in the video area says when there is no picture.
+    /// The right-hand panel compares its caption against this and stays quiet
+    /// when the two would say the same thing, so the window never repeats
+    /// itself (e.g. "Opening my eyes…" in both places at once).
+    static func placeholderHeadline(connection: RobotConnection.ConnectionState,
+                                    camera: RobotConnection.CameraState) -> String {
+        switch connection {
+        case .disconnected, .unavailable: return "Stanbot is asleep"
+        case .connecting: return "Waking up…"
+        case .connected: return camera == .waiting ? "Opening my eyes…" : "My eyes are closed"
+        }
+    }
+
     static func of(connection: RobotConnection.ConnectionState, camera: RobotConnection.CameraState,
                    face: FaceSelection.State, box: FaceBox?, follow: FollowState,
                    noFaceFor: TimeInterval = 0, engaged: Bool = false, sleeping: Bool = false) -> Mood {

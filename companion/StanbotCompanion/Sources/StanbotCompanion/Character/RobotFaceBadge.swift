@@ -55,15 +55,16 @@ struct RobotFace: View {
     }
 }
 
-/// The whole title bar's left side: Stanbot's live eyes and mouth, an icon for
-/// how it is connected, its name, and the red dot when it cannot be reached.
+/// The whole title bar's left side: Stanbot's live eyes and mouth, its name,
+/// and the red dot when it cannot be reached — the only connection signal; a
+/// working link shows nothing (the link is in Diagnostics and Details).
 /// The window's own title is hidden so the dot can sit right of the name.
 /// Connection details are in Diagnostics; hovering the dot says what is wrong.
 struct RobotFaceBadge: View {
     @EnvironmentObject private var robot: RobotConnection
     var mood: Mood
 
-    static let size = CGSize(width: 150, height: 26)
+    static let size = CGSize(width: 130, height: 26)
 
     var body: some View {
         HStack(spacing: 6) {
@@ -72,11 +73,6 @@ struct RobotFaceBadge: View {
                             mouthMinimumPoints: 1.2, mouthGlow: false)
                 .frame(width: 34, height: 26)
                 .help(mood.caption)
-            Image(systemName: linkSymbol)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .help(robot.linkSummary)
-                .accessibilityHidden(true)
             Text("Stanbot")
                 .font(.headline)
             ReachabilityDot()
@@ -87,11 +83,6 @@ struct RobotFaceBadge: View {
         .accessibilityLabel("Stanbot, \(mood.caption.lowercased()), \(robot.linkSummary)")
     }
 
-    private var linkSymbol: String {
-        if robot.connectedOverWiFi { return "wifi" }
-        if robot.connectedOverUSB { return "cable.connector" }
-        return "wifi.slash"
-    }
 }
 
 /// Puts a SwiftUI view in the window's title bar, left of the title, as a

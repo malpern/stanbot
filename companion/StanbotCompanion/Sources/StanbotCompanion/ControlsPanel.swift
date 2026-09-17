@@ -12,6 +12,12 @@ struct ControlsPanel: View {
 
     private var connected: Bool { robot.connectedOverUSB || robot.connectedOverWiFi }
 
+    /// The video area's empty state already says this, in bigger type: one
+    /// message, not two. Every other caption still shows here.
+    private var repeatsPlaceholder: Bool {
+        mood.caption == Mood.placeholderHeadline(connection: robot.connection, camera: robot.cameraState)
+    }
+
     /// What is wrong, in words, beside the red dot in the title bar: the robot
     /// unreachable, or a refusal that will not clear by itself.
     private var alert: String? {
@@ -63,11 +69,13 @@ struct ControlsPanel: View {
             .frame(height: min(max(0, 260 * RobotFace.aspect), 260 * RobotFace.aspect))
             .frame(maxWidth: .infinity)
 
-            Text(mood.caption)
-                .font(.title3.weight(.semibold))
-                .fontDesign(.rounded)
-                .contentTransition(.opacity)
-                .animation(.smooth(duration: 0.25), value: mood.caption)
+            if !repeatsPlaceholder {
+                Text(mood.caption)
+                    .font(.title3.weight(.semibold))
+                    .fontDesign(.rounded)
+                    .contentTransition(.opacity)
+                    .animation(.smooth(duration: 0.25), value: mood.caption)
+            }
 
         }
         .padding(20)
