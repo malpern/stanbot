@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
 
 namespace stanbot {
@@ -57,27 +58,72 @@ inline size_t ledColorWrites(uint16_t color565, uint8_t config, ExpanderWrite ou
   return n;
 }
 
-// When the bar should be lit. On as soon as a face is attended to; off only
-// after `holdMs` without one, so a missed frame or two does not make it flicker.
+// All twelve LEDs' colour as one block for the LED RAM, so an update is two
+// small I2C transfers (this block, then the refresh) rather than 25. Pulsing
+// rewrites it several times a second on the bus the camera and motor power
+// share, so the transfer count matters. Returns the byte count (24).
+inline size_t ledRamBlock(uint16_t color565, uint8_t out[24]) {
+  for (uint8_t i = 0; i < kLedCount; ++i) {
+    out[i * 2] = static_cast<uint8_t>(color565 & 0xFF);
+    out[i * 2 + 1] = static_cast<uint8_t>(color565 >> 8);
+  }
+  return static_cast<size_t>(kLedCount) * 2;
+}
+
+enum class LightMode { Off, Face, Searching };
+
+// What the bar shows:
+//  - Face: soft blue while a face is attended to, held 1.5 s after the last one
+//    so a missed frame does not make it flicker.
+//  - Searching: the camera is streaming to the app and no face is in view. A
+//    very gentle orange breath, 5 s per cycle, between a faint glow and a dim
+//    orange. Never fully off, so it reads as waiting, not blinking.
+//  - Off: nobody is watching through the camera. Dark, so it does not pulse all
+//    night on a desk.
 struct LightBar {
   static constexpr uint32_t kHoldMs = 1500;
-  // A soft blue: this sits on the desk all day, so no glare.
-  static constexpr uint8_t kBlueR = 0, kBlueG = 24, kBlueB = 96;
+  static constexpr uint8_t kBlueR = 0, kBlueG = 24, kBlueB = 96;       // desk-friendly
+  static constexpr uint8_t kOrangeR = 96, kOrangeG = 32, kOrangeB = 0;  // the breath's peak
+  static constexpr uint32_t kBreathMs = 5000;
+  static constexpr float kBreathFloor = 0.2f;                           // faintest point of the breath
 
-  bool lit = false;
+  LightMode mode = LightMode::Off;
   uint32_t lastFaceMs = 0;
   bool seenFace = false;
 
-  // Returns whether the desired state changed.
-  bool update(bool attending, uint32_t nowMs) {
+  // `attending`: a face is attended to now. `looking`: the camera is streaming.
+  // Returns whether the mode changed.
+  bool update(bool attending, bool looking, uint32_t nowMs) {
     if (attending) {
       lastFaceMs = nowMs;
       seenFace = true;
     }
-    const bool want = seenFace && nowMs - lastFaceMs < kHoldMs;
-    if (want == lit) return false;
-    lit = want;
+    const LightMode want = seenFace && nowMs - lastFaceMs < kHoldMs ? LightMode::Face
+                         : looking ? LightMode::Searching : LightMode::Off;
+    if (want == mode) return false;
+    mode = want;
     return true;
+  }
+
+  // Brightness of the breath at `nowMs`, kBreathFloor..1, a raised cosine so it
+  // eases through both ends instead of turning around sharply.
+  static float breath(uint32_t nowMs) {
+    const float phase = static_cast<float>(nowMs % kBreathMs) / kBreathMs;
+    const float wave = 0.5f - 0.5f * static_cast<float>(cos(6.2831853 * phase));
+    return kBreathFloor + (1.0f - kBreathFloor) * wave;
+  }
+
+  uint16_t color(uint32_t nowMs) const {
+    switch (mode) {
+      case LightMode::Face: return rgb565(kBlueR, kBlueG, kBlueB);
+      case LightMode::Searching: {
+        const float b = breath(nowMs);
+        return rgb565(static_cast<uint8_t>(kOrangeR * b + 0.5f), static_cast<uint8_t>(kOrangeG * b + 0.5f),
+                      static_cast<uint8_t>(kOrangeB * b + 0.5f));
+      }
+      case LightMode::Off: return 0;
+    }
+    return 0;
   }
 };
 

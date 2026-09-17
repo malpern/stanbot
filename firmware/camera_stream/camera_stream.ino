@@ -1028,12 +1028,24 @@ esp_err_t readBaseRegisters(i2c_master_dev_handle_t device, uint8_t start,
 // opens its own short-lived handle to the expander, and inside a follow session
 // it borrows the session's, so it never competes with a power window for the
 // device. What it writes is light_bar.h, tested never to touch motor power.
+// Blue with a face, a gentle orange breath while the camera looks and finds
+// none, dark when nobody is watching.
 stanbot::LightBar lightBar;
-bool lightBarApplied = false;     // the LEDs match lightBar.lit
+bool lightBarApplied = false;     // the LEDs show appliedLightColor
+uint16_t appliedLightColor = 0;
 bool ledPinReady = false;         // pin 13 set up as the BSP does
+uint8_t ledConfig = 0;            // LED config register after setup, for the refresh
 uint32_t nextLightBarCheckMs = 0;
 
-bool applyLightBar(i2c_master_dev_handle_t device, bool lit) {
+bool writeBaseBlock(i2c_master_dev_handle_t device, uint8_t reg, const uint8_t* data, size_t length) {
+  uint8_t bytes[1 + 24];
+  if (length > 24) return false;
+  bytes[0] = reg;
+  memcpy(bytes + 1, data, length);
+  return i2c_master_transmit(device, bytes, 1 + length, 100) == ESP_OK;
+}
+
+bool applyLightBar(i2c_master_dev_handle_t device, uint16_t color) {
   if (!ledPinReady) {
     uint8_t dirH = 0, pullUpH = 0, pullDownH = 0, driveH = 0;
     if (readBaseRegisters(device, stanbot::kRegDirH, &dirH, 1) != ESP_OK ||
@@ -1044,28 +1056,26 @@ bool applyLightBar(i2c_master_dev_handle_t device, bool lit) {
     const size_t n = stanbot::ledSetupWrites(dirH, pullUpH, pullDownH, driveH, setup);
     for (size_t i = 0; i < n; ++i)
       if (!writeBase(device, setup[i].reg, setup[i].value)) return false;
+    if (readBaseRegisters(device, stanbot::kRegLedConfig, &ledConfig, 1) != ESP_OK) return false;
     ledPinReady = true;
   }
-  uint8_t config = 0;
-  if (readBaseRegisters(device, stanbot::kRegLedConfig, &config, 1) != ESP_OK) return false;
-  const uint16_t color = lit ? stanbot::rgb565(stanbot::LightBar::kBlueR, stanbot::LightBar::kBlueG,
-                                               stanbot::LightBar::kBlueB) : 0;
-  stanbot::ExpanderWrite writes[25];
-  const size_t n = stanbot::ledColorWrites(color, config, writes);
-  for (size_t i = 0; i < n; ++i)
-    if (!writeBase(device, writes[i].reg, writes[i].value)) return false;
-  return true;
+  uint8_t block[24];
+  const size_t length = stanbot::ledRamBlock(color, block);
+  return writeBaseBlock(device, stanbot::kRegLedRam, block, length) &&
+         writeBase(device, stanbot::kRegLedConfig, static_cast<uint8_t>(ledConfig | stanbot::kLedRefreshBit));
 }
 
-// Checks ten times a second; writes only when the state changes, or to retry a
-// write that failed. The first call turns the bar off, whatever it showed.
+// Eight checks a second, enough for the breath to look smooth; a write happens
+// only when the colour differs from what the LEDs show, or to retry a failed
+// one. The first check sets the bar whatever it showed before.
 void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   const uint32_t now = millis();
   if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
-  nextLightBarCheckMs = now + 100;
+  nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
-  const bool changed = lightBar.update(attending, now);
-  if (!changed && lightBarApplied) return;
+  lightBar.update(attending, streamEnabled.load(), now);
+  const uint16_t color = lightBar.color(now);
+  if (lightBarApplied && color == appliedLightColor) return;
   i2c_master_dev_handle_t device = sessionDevice;
   i2c_master_bus_handle_t master = nullptr;
   if (device == nullptr) {
@@ -1079,7 +1089,8 @@ void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
       return;
     }
   }
-  lightBarApplied = applyLightBar(device, lightBar.lit);
+  lightBarApplied = applyLightBar(device, color);
+  if (lightBarApplied) appliedLightColor = color;
   if (sessionDevice == nullptr) i2c_master_bus_rm_device(device);
 }
 
