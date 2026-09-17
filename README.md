@@ -20,7 +20,8 @@ eyes that look at the face, telling several people apart, continuous following
 under a renewable power lease, telemetry integrity checks, staged yaw widening,
 a guided pitch-level finder, and stopping a session before an OTA update. A
 replay tool turns each session log into a chart. See
-[head following](docs/head-following.md).
+[head following](docs/head-following.md), and
+[next session](docs/next-session.md) for the checklist to run at the robot.
 
 Not yet verified: pitch following on the robot, pitch travel beyond 5°, yaw
 beyond centre ±48, image quality under varied lighting, and following started
