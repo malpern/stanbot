@@ -296,8 +296,25 @@ class HeadTracker {
     goalYaw_ = clamp(yawAt(capturedMs) + dx, limits_.yawMin, limits_.yawMax);
     goalPitch_ = config_.pitchEnabled ? clamp(pitchAt(capturedMs) + dy, pitchLow_, pitchHigh_) : pitch_;
     haveGoal_ = true;
+    // Where someone actually was: where the head would have to point to look
+    // straight at them. The next look around starts here rather than at a
+    // limit, because the answer is usually where the answer was last time.
+    lastSeenYaw_ = goalYaw_;
+    lastSeenPitch_ = goalPitch_;
+    haveLastSeen_ = true;
     mode_ = FollowMode::Attending;
     return true;
+  }
+
+  // Where a face was last seen, carried between sessions by the sketch so a
+  // look around can start there. Cleared by a reboot, never written to flash.
+  bool haveLastSeen() const { return haveLastSeen_; }
+  int lastSeenYaw() const { return lastSeenYaw_; }
+  int lastSeenPitch() const { return lastSeenPitch_; }
+  void rememberLastSeen(int yaw, int pitch) {
+    lastSeenYaw_ = clamp(yaw, limits_.yawMin, limits_.yawMax);
+    lastSeenPitch_ = clamp(pitch, pitchLow_, pitchHigh_);
+    haveLastSeen_ = true;
   }
 
   // Joystick deflection, each in [-1, 1]: +x turns to the robot's right, +y
@@ -388,10 +405,21 @@ class HeadTracker {
   // One look around on waking: to the left limit, the right limit, back to
   // centre and up, then down, then home. Every waypoint is inside the session's
   // limits. Any accepted observation ends it at once, as it does a search.
+  // A look around with nobody to lose: on waking, or the first session after a
+  // boot. It starts wherever someone was last seen, if this boot has seen
+  // anyone, because that is usually where they still are -- the owner asked
+  // for it 2026-09-17: "Remember where I was last time and start the search in
+  // that general area. Only if that fails, then do a full scan search."
   void beginScan(uint32_t nowMs) {
-    // No one has been lost, so there is nothing to glance at: straight to the
-    // whole range. The wake scan always starts robot-left.
-    waypointCount_ = layOutLookAround(-1, 0);
+    unsigned n = 0;
+    int first = -1;   // with nothing remembered, sweep robot-left first
+    if (haveLastSeen_) {
+      waypoints_[n++] = {clamp(lastSeenYaw_, limits_.yawMin, limits_.yawMax),
+                         config_.pitchEnabled ? clamp(lastSeenPitch_, pitchLow_, pitchHigh_) : pitch_};
+      // Carry on outward from that side rather than crossing the room first.
+      first = lastSeenYaw_ < limits_.yawRest ? -1 : +1;
+    }
+    waypointCount_ = layOutLookAround(first, n);
     mode_ = FollowMode::Searching;
     scanning_ = true;
     foundDuringScan_ = false;
@@ -550,8 +578,12 @@ class HeadTracker {
   int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
   float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
   struct Waypoint { int yaw, pitch; };
-  Waypoint waypoints_[6] = {};   // a search: two glances, then the four of a look around
+  // A search: two glances then a look around. A scan: the remembered place,
+  // then a look around. Six either way.
+  Waypoint waypoints_[6] = {};
   bool scanning_ = false;
+  bool haveLastSeen_ = false;
+  int lastSeenYaw_ = 0, lastSeenPitch_ = 0;
   bool foundDuringScan_ = false;
   unsigned waypoint_ = 0, waypointCount_ = 0;
   uint32_t searchStartMs_ = 0, arrivedMs_ = 0;

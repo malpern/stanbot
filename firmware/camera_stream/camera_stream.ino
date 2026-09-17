@@ -246,6 +246,15 @@ std::atomic<bool> headLookingAround{false};
 // reacts: surprised, then glee, then focused for as long as it follows.
 std::atomic<uint32_t> wokeAtMs{0};
 constexpr uint32_t kWakeScanWindowMs = 20000;
+// The first session after a boot looks around too: the robot has just come
+// back from a flash or a power cycle and has never seen anyone. Consumed once.
+std::atomic<bool> scanOnFirstSession{true};
+// Where a face was last seen, carried from one session to the next so a look
+// around can start there instead of at a limit. RAM only, deliberately: this
+// is a guess about a person's whereabouts, not a calibration, and it is not
+// worth a flash write. A reboot forgets, and then the sweep starts robot-left.
+std::atomic<bool> haveLastSeen{false};
+std::atomic<int> lastSeenYaw{0}, lastSeenPitch{0};
 std::atomic<uint32_t> reactionStartedMs{0};
 constexpr uint32_t kReactionSurprisedMs = 700;
 constexpr uint32_t kReactionGleeMs = 900;
@@ -604,10 +613,12 @@ void emitVersion() {
   char line[320];
   const int n = snprintf(line, sizeof line,
       "SBVR {\"sketch\":\"camera_stream\",\"commit\":\"%s\",\"dirty\":%s,\"built\":\"%s\","
-      "\"protocol\":%d,\"follow_limits_measured\":%s,\"follow_pitch\":%s,\"follow_yaw_range\":%d}\n",
+      "\"protocol\":%d,\"follow_limits_measured\":%s,\"follow_pitch\":%s,\"follow_yaw_range\":%d,"
+      "\"uptime_ms\":%lu}\n",
       STANBOT_GIT_COMMIT, dirtyKnown ? STANBOT_GIT_DIRTY : "null", STANBOT_BUILD_TIME,
       kProtocolVersion, stanbot::kFollowLimits.measured ? "true" : "false",
-      stanbot::kFollowPitchEnabled ? "true" : "false", stanbot::kFollowYawRange);
+      stanbot::kFollowPitchEnabled ? "true" : "false", stanbot::kFollowYawRange,
+      (unsigned long)millis());
   if (n <= 0 || n >= static_cast<int>(sizeof line)) return;
   Serial.print(line);
   if (streamClient && streamClient.connected()) {
@@ -2094,10 +2105,14 @@ void runFollowSession() {
     yawPos = yaw.position;
     pitchPos = pitch.position;
     tracker.begin(yawPos, pitchPos, millis());
-    // Just woken, and nobody to look at yet: look around for someone first.
-    if (const uint32_t woke = wokeAtMs.exchange(0); woke != 0 && millis() - woke < kWakeScanWindowMs) {
-      tracker.beginScan(millis());
-    }
+    // Whatever this session knows about where the person was last time.
+    if (haveLastSeen.load()) tracker.rememberLastSeen(lastSeenYaw.load(), lastSeenPitch.load());
+    // Nobody to look at yet: look around for someone first, starting where
+    // they were last seen. Either just woken, or just back from a reboot.
+    const uint32_t woke = wokeAtMs.exchange(0);
+    const bool justWoke = woke != 0 && millis() - woke < kWakeScanWindowMs;
+    const bool firstSinceBoot = scanOnFirstSession.exchange(false);
+    if (justWoke || firstSinceBoot) tracker.beginScan(millis());
     // Hold each powered servo exactly where it is before torque, so enabling
     // cannot move anything; then verify torque. Yaw only while pitch is off.
     positionCommands += pitchOn ? 2 : 1;
@@ -2276,6 +2291,12 @@ void runFollowSession() {
   // bar pulsing orange here and it would pulse until the next session, long
   // after the head had stopped moving.
   headLookingAround.store(false);
+  // Hand what this session learned to the next one.
+  if (tracker.haveLastSeen()) {
+    lastSeenYaw.store(tracker.lastSeenYaw());
+    lastSeenPitch.store(tracker.lastSeenPitch());
+    haveLastSeen.store(true);
+  }
   servoBus.EnableTorque(0xfe, 0);
   xTaskNotifyGive(cutoff);
   while (!powerCutoff.done.load()) vTaskDelay(1);

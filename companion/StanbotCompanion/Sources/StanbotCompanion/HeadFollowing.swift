@@ -66,13 +66,24 @@ enum AutoFollow {
     /// robot can look around for someone (the firmware's wake scan).
     static let wakeScanWindow: TimeInterval = 12
 
-    /// `wokeAt`: when the owner last woke the robot. Just after a wake a session
-    /// starts even with no face: the robot looks around for one. Otherwise a
-    /// session needs a face to follow.
+    /// A robot reporting an uptime under this has just booted -- a flash, a
+    /// power cycle -- rather than having been up while the app reconnected to
+    /// it. The firmware looks around on its first session after a boot, so the
+    /// app asks for that session; matching the two is the point of the test,
+    /// since a session started for a scan that never runs would power the head
+    /// and do nothing for 12 s.
+    static let justBootedUptime: TimeInterval = 30
+
+    /// `wokeAt`: when the owner last woke the robot. `bootedAt`: when the app
+    /// learned the robot had just come back (nil if it had been up a while).
+    /// After either, a session starts even with no face and the robot looks
+    /// around for someone. Otherwise a session needs a face to follow.
     static func shouldStart(enabled: Bool, unavailableReason: String?, state: FollowState,
-                            faceTracked: Bool, lastEnded: Date?, now: Date, wokeAt: Date? = nil) -> Bool {
+                            faceTracked: Bool, lastEnded: Date?, now: Date, wokeAt: Date? = nil,
+                            bootedAt: Date? = nil) -> Bool {
         let justWoke = wokeAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
-        guard enabled, unavailableReason == nil, faceTracked || justWoke else { return false }
+        let justBooted = bootedAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
+        guard enabled, unavailableReason == nil, faceTracked || justWoke || justBooted else { return false }
         switch state {
         case .following: return false
         case .idle: break
@@ -81,7 +92,7 @@ enum AutoFollow {
             guard result.retryable else { return false }
         }
         // The gap between sessions still applies, except to the one a wake asks for.
-        if !justWoke, let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
+        if !justWoke, !justBooted, let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
         return true
     }
 }

@@ -87,6 +87,37 @@ final class WakeScanTests: XCTestCase {
         XCTAssertFalse(start(faceTracked: false, wokeAt: now, enabled: false))
         XCTAssertFalse(start(faceTracked: false, wokeAt: now, reason: "Connect to the robot first."))
     }
+
+    /// A robot that has just come back from a reboot gets the same allowance as
+    /// a wake: one session with nobody in view, in which it looks around.
+    func testASessionStartsWithoutAFaceJustAfterABoot() {
+        let now = Date()
+        func start(faceTracked: Bool, bootedAt: Date?, lastEnded: Date? = nil) -> Bool {
+            AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
+                                   faceTracked: faceTracked, lastEnded: lastEnded, now: now,
+                                   wokeAt: nil, bootedAt: bootedAt)
+        }
+        XCTAssertFalse(start(faceTracked: false, bootedAt: nil), "no face, no boot: nothing to do")
+        XCTAssertTrue(start(faceTracked: false, bootedAt: now.addingTimeInterval(-2)), "just back: look around")
+        XCTAssertFalse(start(faceTracked: false, bootedAt: now.addingTimeInterval(-AutoFollow.wakeScanWindow - 1)),
+                       "the boot was a while ago")
+        // Nor is it held back by the gap after the last session.
+        XCTAssertTrue(start(faceTracked: false, bootedAt: now.addingTimeInterval(-1),
+                            lastEnded: now.addingTimeInterval(-1)))
+    }
+
+    /// The uptime that tells a reboot from a reconnection.
+    func testTheVersionReportCarriesUptime() {
+        let line = #"SBVR {"sketch":"camera_stream","commit":"abc","dirty":false,"built":"x","protocol":1,"# +
+                   #""follow_limits_measured":true,"follow_pitch":true,"follow_yaw_range":288,"uptime_ms":6200}"#
+        let info = FirmwareInfo.parse(line)
+        XCTAssertEqual(info?.uptimeMs, 6200)
+        XCTAssertLessThan(Double(info!.uptimeMs!) / 1000, AutoFollow.justBootedUptime, "a fresh boot")
+        // Firmware that predates the field still parses, and claims nothing.
+        let older = #"SBVR {"sketch":"camera_stream","commit":"abc","dirty":false,"built":"x","protocol":1,"# +
+                    #""follow_limits_measured":true}"#
+        XCTAssertNil(FirmwareInfo.parse(older)?.uptimeMs)
+    }
 }
 
 final class HeadFollowingTests: XCTestCase {

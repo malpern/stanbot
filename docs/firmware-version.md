@@ -3,7 +3,7 @@
 The robot reports what it is running in reply to `V`:
 
 ```
-SBVR {"sketch":"camera_stream","commit":"3aaa2f989b4e","dirty":false,"built":"2026-09-16T18:20:00Z","protocol":1,"follow_limits_measured":false}
+SBVR {"sketch":"camera_stream","commit":"3aaa2f989b4e","dirty":false,"built":"2026-09-16T18:20:00Z","protocol":1,"follow_limits_measured":false,"follow_pitch":true,"follow_yaw_range":288,"uptime_ms":6231}
 ```
 
 ## Why it exists
@@ -30,6 +30,9 @@ mistaken for the committed one again.
 | `built` | UTC build time from the script, or the compiler's date and time otherwise. |
 | `protocol` | `kProtocolVersion`. Bump it when a command, a reply line, or the SBFR packet format changes in a way the app must know about, and bump `FirmwareInfo.expectedProtocol` in the app with it. |
 | `follow_limits_measured` | `stanbot::kFollowLimits.measured`. `true` means head following can enable motor power. |
+| `follow_pitch` | A `STANBOT_FOLLOW_PITCH=1` build: following tilts the head as well as turning it. Absent on older firmware, which means yaw only. |
+| `follow_yaw_range` | Yaw travel either side of centre, in raw steps. Absent on older firmware. |
+| `uptime_ms` | `millis()` when the line was sent. It tells a robot that has just rebooted from one that was up all along and the app merely reconnected to: the app gives the first kind a look around and the second nothing (`AutoFollow.justBootedUptime`, 30 s). An uptime that has gone backwards since the last report is a new boot. Absent on older firmware, which claims nothing. |
 
 ## How the commit gets in
 

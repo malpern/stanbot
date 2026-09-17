@@ -301,11 +301,38 @@ so the 12 s is 12 s of *resting* after the look has finished. Host tests:
 `searchLooksUpAndDown`, `searchNeverMovesDisabledPitch`,
 `searchIsClampedAndFinite`.
 
-**Nothing searches until something has been lost.** A session is what powers
-the head, and the app starts one only when it has a confirmed face, or within
-12 s of a wake (`AutoFollow.shouldStart`). So a robot that has just rebooted --
-after a flash, say -- sits perfectly still with nobody in view, however long it
-waits. That is the design, not a fault: there is no target to lose.
+## Looking around with nobody to lose (a wake, or a reboot)
+
+`beginScan` is the look around for a robot that has not lost anybody: it has
+just woken, or just come back from a reboot. It **starts where someone was last
+seen**, if this boot has seen anyone, and carries on outward from that side
+rather than crossing the room first; then the ordinary look around, then home.
+The owner asked for it on 2026-09-17, having watched a scan sweep past where
+they were sitting: "Remember where I was last time and start the search in that
+general area. Only if that fails, then do a full scan search."
+
+The remembered place is where the head would have had to point to look straight
+at the last accepted observation. `HeadTracker` records it; the sketch carries
+it from one session to the next in RAM (`lastSeenYaw`/`lastSeenPitch`). **A
+reboot forgets it**, deliberately: it is a guess about where a person was, not a
+calibration, and it is not worth a flash write. With nothing remembered the
+sweep starts robot-left as before.
+
+**The reboot's own look around** takes two agreeing halves, and they have to
+agree or the head powers up and does nothing for 12 s:
+
+- The robot looks around on the **first session after a boot**
+  (`scanOnFirstSession`, consumed once), as well as within 20 s of a `C,WAKE`.
+- The app **asks for that session**. A session is what powers the head, and the
+  app starts one only for a confirmed face, or now also within 12 s of a wake or
+  of learning the robot has just booted (`AutoFollow.shouldStart`). It tells a
+  reboot from a reconnection by the `uptime_ms` the robot reports in `V`: under
+  30 s is a fresh boot, and an uptime that has gone *backwards* since the last
+  report is a new one. Reconnecting to a robot that has been up for hours buys
+  nothing -- it has been sitting there with nobody to find.
+
+Before this, a just-flashed robot sat perfectly still with nobody in view,
+however long it waited, because nothing had been lost and so nothing searched.
 
 ## The light bar (running on the robot; `light_bar.h`)
 

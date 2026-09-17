@@ -870,6 +870,62 @@ void measuredPitchLevelFromDroop() {
   assert(tracker.commandedPitch() == 594);
 }
 
+// A look around starts where someone was last seen, when this boot has seen
+// anyone: the owner asked for it after watching a scan sweep past them.
+void aScanStartsWhereSomeoneWasLastSeen() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(kLimits.yawRest, 630, now);
+  // Seen well to the robot's right, then gone.
+  assert(tracker.observe(1, 0.9f, 0.0f, 0.95f, now));
+  assert(tracker.haveLastSeen());
+  const int remembered = tracker.lastSeenYaw();
+  assert(remembered > kLimits.yawRest);
+
+  // A fresh session that remembers: the first place it goes is that one, and
+  // it gets there before it reaches either limit.
+  HeadTracker next(kLimits, kConfig);
+  next.begin(kLimits.yawRest, 630, now);
+  next.rememberLastSeen(remembered, 630);
+  next.beginScan(now);
+  int arrivedAt = -1;
+  for (int i = 0; i < 400 && arrivedAt < 0; ++i) {
+    now += kConfig.controlPeriodMs;
+    next.step(now);
+    const int yaw = next.commandedYaw();
+    assert(yaw > kLimits.yawMin && yaw < kLimits.yawMax);     // no limit reached first
+    if (std::abs(yaw - remembered) <= kConfig.deadbandRaw) arrivedAt = i;
+  }
+  assert(arrivedAt >= 0);
+  std::printf("  scan reached the remembered %d raw after %d ms\n",
+              remembered, arrivedAt * static_cast<int>(kConfig.controlPeriodMs));
+  // And it is still a full look around if nobody is there: both limits, then home.
+  int lowest = kLimits.yawMax, highest = kLimits.yawMin;
+  for (int i = 0; i < 700 && next.mode() != FollowMode::Idle; ++i) {
+    now += kConfig.controlPeriodMs;
+    next.step(now);
+    lowest = next.commandedYaw() < lowest ? next.commandedYaw() : lowest;
+    highest = next.commandedYaw() > highest ? next.commandedYaw() : highest;
+  }
+  assert(next.mode() == FollowMode::Idle);
+  assert(lowest <= kLimits.yawMin + kConfig.deadbandRaw);
+  assert(highest >= kLimits.yawMax - kConfig.deadbandRaw);
+
+  // Nothing remembered (a fresh boot): straight to the sweep, robot-left first.
+  HeadTracker blank(kLimits, kConfig);
+  blank.begin(kLimits.yawRest, 630, now);
+  assert(!blank.haveLastSeen());
+  blank.beginScan(now);
+  int lowAt = -1, highAt = -1;
+  for (int i = 0; i < 700 && blank.mode() != FollowMode::Idle; ++i) {
+    now += kConfig.controlPeriodMs;
+    blank.step(now);
+    if (lowAt < 0 && blank.commandedYaw() <= kLimits.yawMin + kConfig.deadbandRaw) lowAt = i;
+    if (highAt < 0 && blank.commandedYaw() >= kLimits.yawMax - kConfig.deadbandRaw) highAt = i;
+  }
+  assert(lowAt >= 0 && highAt >= 0 && lowAt < highAt);
+}
+
 // The wake scan: one look around the whole allowed range and home again, never
 // outside the limits, over in good time; a face ends it at once and says so.
 void wakeScanLooksAroundWithinLimits() {
@@ -922,6 +978,7 @@ void wakeScanLooksAroundWithinLimits() {
 }
 
 int main() {
+  aScanStartsWhereSomeoneWasLastSeen();
   wakeScanLooksAroundWithinLimits();
   measuredPitchLevelFromDroop();
   lowPitchRestIsAcceptedAndNeverPushedLower();

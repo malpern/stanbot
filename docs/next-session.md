@@ -32,9 +32,12 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   wake scan's whole-range look -- out to one yaw limit, out to the other, up,
   down -- and only then back to rest. At yaw 143..719 the whole thing is 14.3 s,
   so the session holds its idle clock while it runs. Built, NOT yet seen.
-- **Nothing searches until something is lost.** The app starts a session only
-  on a confirmed face or within 12 s of a wake, so a just-rebooted robot with
-  nobody in view sits still indefinitely. Asked about 2026-09-17 after a flash.
+- **A reboot now gets a look around too**, like a wake: the robot scans on its
+  first session after a boot, and the app asks for that session on seeing a
+  small `uptime_ms` in `V`. Reconnecting to a robot that was already up does
+  nothing. Built, NOT yet seen.
+- **A look around starts where someone was last seen**, carried between
+  sessions in RAM and forgotten by a reboot. Built, NOT yet seen.
 - **The light bar** now separates looking from not finding: blue with a face,
   orange pulsing every 900 ms while the head hunts, dim purple when the camera
   is on and nobody has been found, dark otherwise. Built, NOT yet seen.

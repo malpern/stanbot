@@ -360,6 +360,13 @@ final class RobotConnection: ObservableObject {
     /// When the owner last woke the robot, until the look-around session it asks
     /// for has started (AutoFollow.wakeScanWindow).
     private var wokeAt: Date?
+    /// When the app learned the robot had just come back (a flash, a power
+    /// cycle), from the uptime in its own version report. Like a wake, this
+    /// buys one session with nobody in view, in which the robot looks around.
+    /// Consumed once per boot: `bootSessionRequested`.
+    private var bootedAt: Date?
+    private var bootSessionRequested = false
+    private var lastReportedUptimeMs: Int?
     private var lookingAroundSince: Date?
     /// The look-around session has been asked for and not refused. A refusal
     /// for cooldown does not use the wake up: the robot will not start a session
@@ -727,6 +734,20 @@ final class RobotConnection: ObservableObject {
         if let info = FirmwareInfo.parse(line) {
             firmware = .reported(info)
             announceFirmwareChange(info)
+            // A robot that has only just booted gets a look around, the way a
+            // wake does. Reconnecting to one that has been up for hours does
+            // not: it has been sitting there with nobody to find. A report
+            // whose uptime has gone backwards is a new boot; one that has only
+            // gone up is the same boot reporting again, and must not buy a
+            // second session.
+            if let uptime = info.uptimeMs {
+                let newBoot = lastReportedUptimeMs.map { uptime < $0 } ?? true
+                lastReportedUptimeMs = uptime
+                if newBoot, Double(uptime) / 1000 < AutoFollow.justBootedUptime {
+                    bootedAt = Date()
+                    bootSessionRequested = false
+                }
+            }
             return
         }
         if line.hasPrefix("SBAC ") || line.hasPrefix("SBAU ") {
@@ -1240,17 +1261,21 @@ final class RobotConnection: ObservableObject {
                 // The wake's own session: until it has been asked for and not
                 // refused, and not more often than the robot's cooldown allows.
                 let wake = (self.wakeSessionRequested || Date() < self.nextWakeAttempt) ? nil : self.wokeAt
+                let boot = self.bootSessionRequested ? nil : self.bootedAt
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
                                           state: self.follow, faceTracked: self.faceSelection.state == .tracking,
-                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake) {
-                    // Just woken with nobody in view, this session is the robot
-                    // looking around; the first face it then finds is a finding.
-                    let lookingAround = wake != nil && self.faceSelection.state != .tracking
+                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake, bootedAt: boot) {
+                    // Just woken or just back, with nobody in view: this session
+                    // is the robot looking around; the first face it then finds
+                    // is a finding.
+                    let lookingAround = (wake != nil || boot != nil) && self.faceSelection.state != .tracking
                     if wake != nil { self.wakeSessionRequested = true }
+                    if boot != nil { self.bootSessionRequested = true }
                     self.lookingAroundSince = lookingAround ? Date() : nil
                     self.startFollowing()
                 }
                 if let woke = self.wokeAt, Date().timeIntervalSince(woke) > AutoFollow.wakeScanWindow { self.wokeAt = nil }
+                if let booted = self.bootedAt, Date().timeIntervalSince(booted) > AutoFollow.wakeScanWindow { self.bootedAt = nil }
                 if let since = self.lookingAroundSince {
                     if self.faceSelection.state == .tracking {
                         self.foundSomeoneAt = Date()

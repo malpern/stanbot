@@ -24,6 +24,11 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
     /// Yaw travel either side of centre, in raw steps. Older firmware does not
     /// send it; nil then.
     let followYawRange: Int?
+    /// How long the robot has been up when it sent this. Tells a robot that has
+    /// just rebooted from one that was up all along and the app merely
+    /// reconnected to -- the difference between wanting a look around and not.
+    /// Older firmware does not send it; nil then.
+    let uptimeMs: Int?
 
     private enum CodingKeys: String, CodingKey {
         case sketch, commit, dirty, built
@@ -31,6 +36,7 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         case followLimitsMeasured = "follow_limits_measured"
         case followPitch = "follow_pitch"
         case followYawRange = "follow_yaw_range"
+        case uptimeMs = "uptime_ms"
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +49,7 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         followLimitsMeasured = try c.decode(Bool.self, forKey: .followLimitsMeasured)
         followPitch = try c.decodeIfPresent(Bool.self, forKey: .followPitch) ?? false
         followYawRange = try c.decodeIfPresent(Int.self, forKey: .followYawRange)
+        uptimeMs = try c.decodeIfPresent(Int.self, forKey: .uptimeMs)
     }
 
     static func parse(_ line: String) -> FirmwareInfo? {
