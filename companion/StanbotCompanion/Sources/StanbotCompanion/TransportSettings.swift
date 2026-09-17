@@ -39,19 +39,6 @@ enum TransportPreference: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// The desk camera's state, observed separately so it updates live.
-struct DeskCameraStatus: View {
-    @ObservedObject var camera: DeskCamera
-
-    var body: some View {
-        switch camera.state {
-        case .off: EmptyView()
-        case .running(let format): LabeledContent("Desk camera", value: "On, \(format)")
-        case .unavailable(let reason): Text(reason).font(.callout).foregroundStyle(.orange)
-        }
-    }
-}
-
 struct TransportSettingsView: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var passphraseStatus: String?
@@ -106,18 +93,6 @@ struct TransportSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text("Head following").font(.headline)
-            }
-
-            Divider().padding(.vertical, 6)
-
-            Section {
-                Toggle("Log the Studio Display camera during sessions", isOn: $robot.deskCameraEnabled)
-                DeskCameraStatus(camera: robot.deskCamera)
-                Text("A second view of the desk for comparing with the robot's camera. Faces, head angles and whether each is turned toward the camera go into the session log; no images are saved and nothing controls the robot. It never changes the camera's settings, so a video call keeps its picture, but test that with tools/desk_camera/probe.sh during a call before leaving this on. The camera light is on while it runs.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                Text("Desk camera").font(.headline)
             }
 
             Divider().padding(.vertical, 6)

@@ -78,7 +78,7 @@ range). There is no ground truth, so this is not accuracy. It shows two things:
   was steadier on the smallest faces here (15 degrees), on too few frames to
   prefer it.
 
-Next (see [desk camera](desk-camera.md) for using the Studio Display camera to label them): record labelled clips from the robot's own camera (looking at the robot,
+Next: record labelled clips from the robot's own camera (looking at the robot,
 looking away, at several distances) and run the probe on them; that is what
 decides whether the gaze model adds anything over head pose, and at what face
 size.

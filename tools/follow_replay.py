@@ -29,7 +29,7 @@ MODES = {0: ("idle", "#9aa0a6"), 1: ("attending", "#1a73e8"), 2: ("returning", "
 
 def parse(lines):
     """Everything the page needs, from the log's lines."""
-    session = {"trace": [], "frames": [], "desk": [], "result": None, "loop": None, "power": None,
+    session = {"trace": [], "frames": [], "result": None, "loop": None, "power": None,
                "check": None, "telemetry": [], "in_block": False, "end": None}
     for raw in lines:
         line = raw.rstrip("\r\n")
@@ -58,8 +58,6 @@ def parse(lines):
             session["power"] = data
         elif tag == "APP" and "telemetry_check" in data:
             session["check"] = data["telemetry_check"]
-        elif tag == "DESK" and "t" in data:
-            session["desk"].append(data)
         elif tag == "APP" and "t" in data:
             session["frames"].append(data)
     if session["check"] is None and session["end"] is not None:
@@ -93,12 +91,6 @@ def summarize(session):
         name = MODES.get(a.get("mode"), ("?", ""))[0]
         modes[name] = modes.get(name, 0) + b["elapsed_ms"] - a["elapsed_ms"]
     out["mode_ms"] = modes
-    desk = session["desk"]
-    classes = [face[7] for d in desk for face in d.get("faces", []) if len(face) > 7]
-    out["desk"] = {"frames": len(desk),
-                   "faces_by_facing": {c: classes.count(c) for c in sorted(set(classes))},
-                   "frames_during_call": sum(1 for d in desk if d.get("in_use_by_another_app")),
-                   "frames_center_stage": sum(1 for d in desk if d.get("center_stage_active"))}
     out["result"] = (session["result"] or {}).get("result")
     out["telemetry"] = session["check"] or "not in log"
     return out
@@ -181,10 +173,7 @@ def render(session, name):
                          ("Yaw range, reversals", f'{summary["yaw"]["range"]}, {summary["yaw"]["reversals"]}'),
                          ("Pitch error median / max", f'{summary["pitch"]["median_error"]} / {summary["pitch"]["max_error"]}'),
                          ("Pitch range, reversals", f'{summary["pitch"]["range"]}, {summary["pitch"]["reversals"]}'),
-                         ("Time by mode (ms)", ", ".join(f"{k} {v}" for k, v in summary["mode_ms"].items())),
-                         ("Desk camera", f'{summary["desk"]["frames"]} frames, faces {summary["desk"]["faces_by_facing"]}, '
-                                         f'{summary["desk"]["frames_during_call"]} during a call, '
-                                         f'{summary["desk"]["frames_center_stage"]} with Center Stage')]:
+                         ("Time by mode (ms)", ", ".join(f"{k} {v}" for k, v in summary["mode_ms"].items()))]:
         rows.append(f"<tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>")
     warn = ""
     if summary["telemetry"] == "corrupted":

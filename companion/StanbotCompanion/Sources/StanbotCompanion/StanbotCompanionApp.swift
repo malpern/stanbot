@@ -288,15 +288,6 @@ final class RobotConnection: ObservableObject {
     /// Robot menu and the control bar ask the same way.
     @Published var confirmingFollow = false
     /// Start a session whenever a face is confirmed, without pressing Follow.
-    /// The Studio Display camera as a second view for the session logs. Off by
-    /// default; see DeskCamera and docs/desk-camera.md.
-    let deskCamera = DeskCamera()
-    @Published var deskCameraEnabled: Bool = UserDefaults.standard.bool(forKey: "StanbotDeskCamera") {
-        didSet {
-            UserDefaults.standard.set(deskCameraEnabled, forKey: "StanbotDeskCamera")
-            deskCameraEnabled ? deskCamera.start() : deskCamera.stop()
-        }
-    }
     /// Whether a session starts by itself when a face is confirmed, for this
     /// run of the app. Starts from the Settings preference on every launch, so
     /// a Stop (which turns it off) lasts only until the app is next opened.
@@ -425,13 +416,7 @@ final class RobotConnection: ObservableObject {
         self.persistTransport = transport == nil
         self.wifiRetryInterval = wifiRetryInterval
         selectedPort = port ?? availablePorts.first
-        deskCamera.onAnalysis = { [weak self] analysis in
-            guard let self, let followLog = self.followLog, Date() < self.followLogUntil,
-                  case .following = self.follow else { return }
-            followLog.write(Data((analysis.logLine + "\n").utf8))
-        }
         guard connectOnStart else { return }
-        if deskCameraEnabled { deskCamera.start() }
         connect()
         guard automaticPolling else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in

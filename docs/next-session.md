@@ -63,11 +63,12 @@ need the side (head) port.
    `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept).
 4. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-5. **Gaze / Studio Display camera: paused.** Nothing has been measured. If gaze
-   matters for a feature, first build a 2-minute prompted test (look at robot /
-   screen / away) that logs the robot-only engaged flag against the prompt; only
-   if errors come from small or dim faces is the desk camera worth its Meet-call
-   risk. See `docs/desk-camera.md` and `docs/gaze.md`.
+5. **Gaze: paused.** Nothing has been measured. If gaze matters for a feature,
+   first build a 2-minute prompted test (look at robot / screen / away) that logs
+   the robot-only engaged flag against the prompt. See `docs/gaze.md`. The Studio
+   Display (desk) camera code was removed 2026-09-17 to keep the app to the
+   robot's camera; `92ab70b` is the last commit with it (`DeskCamera.swift`,
+   `tools/desk_camera/`, `docs/desk-camera.md`) if it is ever wanted back.
 
 ## How to work here
 

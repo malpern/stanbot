@@ -30,8 +30,6 @@
   <string>NSApplication</string>
   <!-- Shown in the Local Network permission prompt. Without this key macOS
        will not ask, and the app silently fails to reach the robot. -->
-  <key>NSCameraUsageDescription</key>
-  <string>Stanbot can use the Studio Display camera as a second view of the desk, to compare with the robot's own camera. It never changes the camera's settings and saves no images.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Stanbot connects to your StackChan robot on this network to show its camera and send display commands. Nothing leaves your network.</string>
   <!-- The robot advertises itself over Bonjour as _stanbot._tcp; macOS requires
