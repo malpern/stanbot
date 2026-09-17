@@ -119,7 +119,7 @@ both, because they decide whether Live is usable at all.
 - **Head following** carries on unchanged: it follows a face it sees, ends a
   session after 12 s without one and at its 3-minute cap, and starts again as
   usual. Nothing new is promised about looking at the speaker.
-- **Light bar:** unchanged (blue with a face, orange breath without).
+- **Light bar:** unchanged by voice (see `head-following.md` for its states).
 - **Eyes:** keep blinking; while Stanbot speaks they make no darting looks (a
   `speaking` flag into `GazeBrain`). No "listening" indicator on the robot: the
   macOS microphone indicator is the truthful one.

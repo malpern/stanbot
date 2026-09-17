@@ -175,7 +175,7 @@ struct FollowConfig {
   uint32_t searchHoldMs = 600;       // a beat first: the face may simply have been missed
   uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
   // The look around itself, shared by a search and the wake scan (beginScan).
-  int scanStepRaw = 5;               // ~18 deg/s
+  int scanStepRaw = 10;              // ~39 deg/s: brisk, well under the 58 the sweep ran at
   int scanPitchUpRaw = 90;           // how far above level the upward look goes
   uint32_t scanHoldMs = 300;         // a beat before the first turn
 

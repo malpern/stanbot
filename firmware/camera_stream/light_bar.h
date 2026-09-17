@@ -70,22 +70,30 @@ inline size_t ledRamBlock(uint16_t color565, uint8_t out[24]) {
   return static_cast<size_t>(kLedCount) * 2;
 }
 
-enum class LightMode { Off, Face, Searching };
+enum class LightMode { Off, Face, Looking, Lost };
 
 // What the bar shows:
 //  - Face: soft blue while a face is attended to, held 1.5 s after the last one
 //    so a missed frame does not make it flicker.
-//  - Searching: the camera is streaming to the app and no face is in view. A
-//    very gentle orange breath, 5 s per cycle, between a faint glow and a dim
-//    orange. Never fully off, so it reads as waiting, not blinking.
-//  - Off: nobody is watching through the camera. Dark, so it does not pulse all
+//  - Looking: the head is actively looking around for someone (a search or the
+//    wake scan). A quick orange pulse, 900 ms per cycle -- the one lively thing
+//    the robot does, and it lasts only as long as the hunt.
+//  - Lost: the camera is streaming and nobody has been found. Dim, steady
+//    purple: waiting, not searching. Never fully off, so it reads as awake.
+//  - Off: nobody is watching through the camera. Dark, so it does not glow all
 //    night on a desk.
+//
+// The orange used to be a 5 s breath meaning "streaming, no face", covering
+// both of the middle states at once. The owner asked for them apart on
+// 2026-09-17: "different colors for looking for you (pulsing orange rapidly),
+// and can't find you (dark purple)".
 struct LightBar {
   static constexpr uint32_t kHoldMs = 1500;
-  static constexpr uint8_t kBlueR = 0, kBlueG = 24, kBlueB = 96;       // desk-friendly
-  static constexpr uint8_t kOrangeR = 96, kOrangeG = 32, kOrangeB = 0;  // the breath's peak
-  static constexpr uint32_t kBreathMs = 5000;
-  static constexpr float kBreathFloor = 0.2f;                           // faintest point of the breath
+  static constexpr uint8_t kBlueR = 0, kBlueG = 24, kBlueB = 96;        // desk-friendly
+  static constexpr uint8_t kOrangeR = 96, kOrangeG = 32, kOrangeB = 0;  // the pulse's peak
+  static constexpr uint8_t kPurpleR = 40, kPurpleG = 0, kPurpleB = 56;  // dim enough to sit next to all evening
+  static constexpr uint32_t kPulseMs = 900;                             // a hunting pulse, not a breath
+  static constexpr float kPulseFloor = 0.15f;                           // faintest point of the pulse
   // Waking: the bar comes up from dark over this long, orange rising, the
   // moment the robot wakes — before the app has even restarted the camera —
   // so the light reads as waking too. Then the ordinary rules apply.
@@ -112,29 +120,32 @@ struct LightBar {
     return t * t * (3.0f - 2.0f * t);   // eased, so it does not snap on at the end
   }
 
-  // `attending`: a face is attended to now. `looking`: the camera is streaming.
+  // `attending`: a face is attended to now. `streaming`: the camera is on.
+  // `lookingAround`: the head is sweeping for someone (HeadTracker mode 3).
   // Returns whether the mode changed.
-  bool update(bool attending, bool looking, uint32_t nowMs) {
+  bool update(bool attending, bool streaming, bool lookingAround, uint32_t nowMs) {
     if (attending) {
       lastFaceMs = nowMs;
       seenFace = true;
     }
     if (waking && nowMs - wokeMs >= kWakeRampMs) waking = false;
-    // While waking the bar shows the searching orange even before the app has
-    // restarted the camera, so the light comes up with the eyes.
+    // While waking the bar shows the hunting orange even before the app has
+    // restarted the camera, so the light comes up with the eyes -- and a wake
+    // is about to start a scan anyway.
     const LightMode want = seenFace && nowMs - lastFaceMs < kHoldMs ? LightMode::Face
-                         : (looking || waking) ? LightMode::Searching : LightMode::Off;
+                         : (lookingAround || waking) ? LightMode::Looking
+                         : streaming ? LightMode::Lost : LightMode::Off;
     if (want == mode) return false;
     mode = want;
     return true;
   }
 
-  // Brightness of the breath at `nowMs`, kBreathFloor..1, a raised cosine so it
+  // Brightness of the pulse at `nowMs`, kPulseFloor..1, a raised cosine so it
   // eases through both ends instead of turning around sharply.
-  static float breath(uint32_t nowMs) {
-    const float phase = static_cast<float>(nowMs % kBreathMs) / kBreathMs;
+  static float pulse(uint32_t nowMs) {
+    const float phase = static_cast<float>(nowMs % kPulseMs) / kPulseMs;
     const float wave = 0.5f - 0.5f * static_cast<float>(cos(6.2831853 * phase));
-    return kBreathFloor + (1.0f - kBreathFloor) * wave;
+    return kPulseFloor + (1.0f - kPulseFloor) * wave;
   }
 
   uint16_t color(uint32_t nowMs) const {
@@ -143,13 +154,16 @@ struct LightBar {
       case LightMode::Face:
         return rgb565(static_cast<uint8_t>(kBlueR * ramp + 0.5f), static_cast<uint8_t>(kBlueG * ramp + 0.5f),
                       static_cast<uint8_t>(kBlueB * ramp + 0.5f));
-      case LightMode::Searching: {
-        // Through the ramp the breath is held at its peak, so what rises is
-        // the light itself, not a breath caught at its faintest.
-        const float b = (waking ? 1.0f : breath(nowMs)) * ramp;
+      case LightMode::Looking: {
+        // Through the ramp the pulse is held at its peak, so what rises is
+        // the light itself, not a pulse caught at its faintest.
+        const float b = (waking ? 1.0f : pulse(nowMs)) * ramp;
         return rgb565(static_cast<uint8_t>(kOrangeR * b + 0.5f), static_cast<uint8_t>(kOrangeG * b + 0.5f),
                       static_cast<uint8_t>(kOrangeB * b + 0.5f));
       }
+      case LightMode::Lost:
+        return rgb565(static_cast<uint8_t>(kPurpleR * ramp + 0.5f), static_cast<uint8_t>(kPurpleG * ramp + 0.5f),
+                      static_cast<uint8_t>(kPurpleB * ramp + 0.5f));
       case LightMode::Off: return 0;
     }
     return 0;

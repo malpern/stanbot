@@ -274,7 +274,8 @@ allowed range for the person:
 This is the same motion as the wake scan (`layOutLookAround`), and the two now
 differ only in what happens on finding someone: the wake scan reacts surprised
 and reports it, an ordinary search simply resumes following. It dwells 400 ms
-at each waypoint and moves at `scanStepRaw` 5 raw per tick (~18 deg/s). Every
+at each waypoint and moves at `scanStepRaw` 10 raw per tick (~39 deg/s, well under the 58 the
+2026-09-15 sweep ran smoothly at). Every
 waypoint is clamped to the limits. Any accepted target ends it immediately.
 
 **It used to be a local glance**, 32 raw toward the side the face left on and
@@ -284,8 +285,11 @@ waypoint is clamped to the limits. Any accepted target ends it immediately.
 should it go back to center and rest."
 
 **It is no longer well inside the idle timeout, and that matters.** At the
-limits now on the robot (yaw 143..719) a whole look around takes **21.2 s** from
-the last target to resting, against 8.9 s at +-96 and 4.6 s for the old glance.
+limits now on the robot (yaw 143..719) a whole look around takes **12.4 s** from
+the last target to resting, against 6.5 s at +-96 and 4.6 s for the old glance.
+It was 21.2 s at the old `scanStepRaw` 5, which the owner found too slow; the
+fixed overhead (a 600 ms hold and four 400 ms dwells) is why a faster sweep
+does not shorten it much further.
 `kFollowIdleEndMs` is 12 s, so the session would have ended mid-sweep; the loop
 holds that clock while `tracker.lookingAround()`, which is true for a search as
 well as a wake scan, so the 12 s is 12 s of *resting* after the look has
@@ -293,6 +297,35 @@ finished. Host tests: `searchHoldsThenLooksAroundEverything`,
 `searchStartsLeftWhenTheFaceLeftLeft`, `searchEndsWhenTheFaceReturns`,
 `searchLooksUpAndDown`, `searchNeverMovesDisabledPitch`,
 `searchIsClampedAndFinite`.
+
+## The light bar (running on the robot; `light_bar.h`)
+
+The twelve LEDs say what the robot is doing about you, which is otherwise only
+legible from the head's motion:
+
+| state | colour | when |
+|---|---|---|
+| Face | soft blue, steady | a face is attended to, held 1.5 s past the last one |
+| Looking | orange, pulsing every 900 ms | the head is looking around for someone (tracker mode 3: a search or a wake scan) |
+| Lost | dim purple, steady | the camera is streaming and nobody has been found |
+| Off | dark | nobody is watching through the camera, or the robot is asleep |
+
+The orange was a single 5 s breath meaning "streaming, no face", which covered
+looking and not-finding at once. The owner asked for them apart on 2026-09-17:
+"different colors for looking for you (pulsing orange rapidly), and can't find
+you (dark purple)."
+
+**The service rate follows the state, deliberately.** The bar is serviced every
+125 ms, which is seven samples of a 900 ms pulse and visibly steps (0.36 of the
+brightness range per step). While Looking it is serviced every 50 ms instead
+(0.15 per step). That is extra traffic on the bus the camera and motor power
+share -- the bus whose ownership caused the 2026-09-17 outage -- so it is
+bounded to the one state that needs it, which lasts about 13 s. A write still
+happens only when the colour actually changes.
+
+`headLookingAround` carries the tracker's state from the session loop to
+`serviceLightBar`, which also runs outside a session; it is cleared in the
+session teardown, or the bar would pulse orange long after the head stopped.
 
 ## Continuous following (running on the robot since 2026-09-17)
 

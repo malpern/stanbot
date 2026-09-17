@@ -235,6 +235,10 @@ constexpr uint8_t kAwakeBrightness = 255;
 std::atomic<bool> asleep{false};
 std::atomic<bool> sleepRequested{false};   // the eyes are closing; the screen darkens after
 std::atomic<bool> lightBarWakeRequested{false};   // the bar ramps up from dark on wake
+// The head is sweeping for someone (HeadTracker mode 3), so the bar pulses
+// orange rather than sitting on the "nobody found" purple. Written by the
+// session loop, read by serviceLightBar, which also runs outside a session.
+std::atomic<bool> headLookingAround{false};
 // A follow session that ended in a fault shows the trouble face until this
 // millis() time (0: none). Normal endings — idle, deadline, stopped — do not.
 // Waking: a session that starts soon after a wake looks around first
@@ -1265,10 +1269,15 @@ bool applyLightBar(i2c_master_dev_handle_t device, uint16_t color) {
 void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   const uint32_t now = millis();
   if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
-  nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
   if (lightBarWakeRequested.exchange(false)) lightBar.wake(now);
-  lightBar.update(attending, streamEnabled.load(), now);
+  lightBar.update(attending, streamEnabled.load(), headLookingAround.load(), now);
+  // The hunting pulse is 900 ms, so eight checks a second is seven samples a
+  // cycle and the brightness visibly steps. While it pulses, check more often;
+  // everywhere else the colour is steady or a slow ramp and 125 ms is plenty.
+  // This is traffic on the bus the camera and motor power share, so it is
+  // deliberately bounded to the state that needs it, which lasts ~13 s.
+  nextLightBarCheckMs = now + (lightBar.mode == stanbot::LightMode::Looking ? 50 : 125);
   // Asleep the bar is off, whatever the bar's own rules would show.
   const uint16_t color = asleep.load() ? 0 : lightBar.color(now);
   if (lightBarApplied && color == appliedLightColor) return;
@@ -2149,6 +2158,7 @@ void runFollowSession() {
           // +-288 a full look takes longer than the 12 s idle timeout, so
           // holding the clock is what lets it finish before the head rests.
           if (tracker.lookingAround()) lastTargetAt = now;
+          headLookingAround.store(tracker.lookingAround());
           if (tracker.takeFoundDuringScan()) { const uint32_t t = millis(); reactionStartedMs.store(t == 0 ? 1 : t); }
           const uint32_t manualSeq = manualSequence.load();
           if (manualSeq != lastManualSequence) {
@@ -2262,6 +2272,10 @@ void runFollowSession() {
       }
     }
   }
+  // The session is over, so nothing is looking around any more: leave the
+  // bar pulsing orange here and it would pulse until the next session, long
+  // after the head had stopped moving.
+  headLookingAround.store(false);
   servoBus.EnableTorque(0xfe, 0);
   xTaskNotifyGive(cutoff);
   while (!powerCutoff.done.load()) vTaskDelay(1);

@@ -45,39 +45,48 @@ int main() {
   for (int i = 0; i < 24; i += 2) assert(block[i] == (blue & 0xFF) && block[i + 1] == (blue >> 8));
   for (uint8_t reg : kMotorPowerRegisters) assert(reg < kRegLedRam || reg >= kRegLedRam + 24);
 
-  // Modes: dark while nobody watches, orange while looking, blue with a face.
+  // Modes: dark while nobody watches, purple when nobody has been found,
+  // orange while the head hunts, blue with a face.
   LightBar bar;
-  assert(!bar.update(false, false, 1000) && bar.mode == LightMode::Off && bar.color(1000) == 0);
-  assert(bar.update(false, true, 1100) && bar.mode == LightMode::Searching);
-  assert(bar.update(true, true, 2000) && bar.mode == LightMode::Face);
+  assert(!bar.update(false, false, false, 1000) && bar.mode == LightMode::Off && bar.color(1000) == 0);
+  assert(bar.update(false, true, false, 1100) && bar.mode == LightMode::Lost);
+  assert(bar.update(false, true, true, 1200) && bar.mode == LightMode::Looking);   // off it goes
+  assert(bar.update(true, true, true, 2000) && bar.mode == LightMode::Face);       // found, and that wins
   assert(bar.color(2000) == blue);
-  assert(!bar.update(false, true, 2000 + 800) && bar.mode == LightMode::Face);   // a missed frame or two
-  assert(!bar.update(true, true, 3000));
-  assert(!bar.update(false, true, 3000 + LightBar::kHoldMs - 1) && bar.mode == LightMode::Face);
-  assert(bar.update(false, true, 3000 + LightBar::kHoldMs) && bar.mode == LightMode::Searching);
-  assert(bar.update(false, false, 9000) && bar.mode == LightMode::Off);        // the app stopped watching
+  assert(!bar.update(false, true, false, 2000 + 800) && bar.mode == LightMode::Face);   // a missed frame or two
+  assert(!bar.update(true, true, false, 3000));
+  assert(!bar.update(false, true, false, 3000 + LightBar::kHoldMs - 1) && bar.mode == LightMode::Face);
+  // The face is gone for good: hunting, and only then the "nobody here" purple.
+  assert(bar.update(false, true, true, 3000 + LightBar::kHoldMs) && bar.mode == LightMode::Looking);
+  assert(bar.update(false, true, false, 8000) && bar.mode == LightMode::Lost);
+  assert(bar.color(8000) == rgb565(LightBar::kPurpleR, LightBar::kPurpleG, LightBar::kPurpleB));
+  assert(bar.color(8000) == bar.color(8400));                                 // steady, not pulsing
+  assert(bar.update(false, false, false, 9000) && bar.mode == LightMode::Off);   // the app stopped watching
 
-  // The breath: gentle, never off, never brighter than the peak, and smooth
-  // enough that eight updates a second show no visible steps.
-  float lowest = 1, highest = 0, biggestStep = 0, last = LightBar::breath(0);
-  for (uint32_t t = 0; t <= 2 * LightBar::kBreathMs; t += 125) {
-    const float b = LightBar::breath(t);
+  // The hunting pulse: quick, never off, never brighter than the peak. Eight
+  // updates a second is the service rate, so a step that size is what the eye
+  // gets; at 900 ms a cycle it is a pulse, so a bigger step than the old
+  // breath's is the point, but it must still not jump.
+  float lowest = 1, highest = 0, biggestStep = 0, last = LightBar::pulse(0);
+  for (uint32_t t = 0; t <= 2 * LightBar::kPulseMs; t += 125) {
+    const float b = LightBar::pulse(t);
     lowest = b < lowest ? b : lowest;
     highest = b > highest ? b : highest;
     const float step = b > last ? b - last : last - b;
     biggestStep = step > biggestStep ? step : biggestStep;
     last = b;
   }
-  std::printf("  breath: %.2f..%.2f, largest step per 125 ms %.3f\n", lowest, highest, biggestStep);
-  assert(lowest >= LightBar::kBreathFloor - 0.001f && highest <= 1.001f);
-  assert(highest > 0.95f && lowest < LightBar::kBreathFloor + 0.05f);
-  assert(biggestStep < 0.1f);
+  std::printf("  pulse: %.2f..%.2f over %u ms, largest step per 125 ms %.3f\n",
+              lowest, highest, LightBar::kPulseMs, biggestStep);
+  assert(lowest >= LightBar::kPulseFloor - 0.001f && highest <= 1.001f);
+  assert(highest > 0.95f && lowest < LightBar::kPulseFloor + 0.05f);
+  assert(biggestStep < 0.45f);
   // Eased at the ends: the change near the peak is small.
-  assert(LightBar::breath(LightBar::kBreathMs / 2 + 125) > 0.98f);
+  assert(LightBar::pulse(LightBar::kPulseMs / 2 + 30) > 0.98f);
   // Orange at its peak is the dim orange, and it never exceeds it.
-  bar.update(false, true, 20000);
+  bar.update(false, true, true, 20000);
   uint16_t peak = 0;
-  for (uint32_t t = 0; t < LightBar::kBreathMs; t += 50) {
+  for (uint32_t t = 0; t < LightBar::kPulseMs; t += 10) {
     const uint16_t c = bar.color(t);
     assert(((c >> 11) & 0x1F) <= (LightBar::kOrangeR >> 3));
     if (c > peak) peak = c;
@@ -86,10 +95,10 @@ int main() {
   // Waking: from dark, orange rising over the ramp even before the camera is
   // back, eased, reaching the full orange, then the ordinary rules again.
   LightBar woke;
-  woke.update(false, false, 30000);
+  woke.update(false, false, false, 30000);
   assert(woke.mode == LightMode::Off && woke.color(30000) == 0);
   woke.wake(30000);
-  assert(woke.update(false, false, 30000) && woke.mode == LightMode::Searching);   // no stream yet, still lit
+  assert(woke.update(false, false, false, 30000) && woke.mode == LightMode::Looking);   // no stream yet, still lit
   assert(woke.color(30000) == 0);                                                   // but from dark
   const uint16_t quarter = woke.color(30000 + LightBar::kWakeRampMs / 4);
   const uint16_t half = woke.color(30000 + LightBar::kWakeRampMs / 2);
@@ -98,11 +107,11 @@ int main() {
   assert(((half >> 11) & 0x1F) < ((full >> 11) & 0x1F));
   assert(full == rgb565(LightBar::kOrangeR, LightBar::kOrangeG, LightBar::kOrangeB));   // all the way up
   // Ramp over and the app still has not restarted the camera: dark again, as the rules say.
-  assert(woke.update(false, false, 30000 + LightBar::kWakeRampMs) && woke.mode == LightMode::Off);
-  // With the camera back it breathes as usual; a face during the ramp comes up blue.
+  assert(woke.update(false, false, false, 30000 + LightBar::kWakeRampMs) && woke.mode == LightMode::Off);
+  // A face during the ramp comes up blue.
   LightBar faced;
   faced.wake(40000);
-  faced.update(true, true, 40000);
+  faced.update(true, true, false, 40000);
   assert(faced.mode == LightMode::Face && faced.color(40000) == 0);
   assert(faced.color(40000 + LightBar::kWakeRampMs) == blue);
 
