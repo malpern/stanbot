@@ -19,9 +19,9 @@ the robot's view, with a little of the robot's character in it.
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption; Follow/Stop and
-  Sleep/Wake; Voice (the mouth test, later Talk); Expression (a grid of the 18
-  faces); and **Details…**, a sheet with the head settings (Follow
-  automatically, the round direction pad) and the camera (show/hide, mirror).
+  Sleep/Wake; and **Details…**, a sheet with the head settings (Follow
+  automatically, the round direction pad), the expression grid (the 18 faces)
+  and the camera (show/hide, mirror). The mouth test is in the Robot menu.
   Things to do, not things to read. Turning the robot off completely is Turn
   Robot Off… in the Robot menu, with a confirmation: only its own button turns
   it on again.

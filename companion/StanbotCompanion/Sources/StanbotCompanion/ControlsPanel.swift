@@ -5,7 +5,6 @@ import SwiftUI
 /// then head, voice, expression and camera controls. Hideable and remembered.
 struct ControlsPanel: View {
     @EnvironmentObject private var robot: RobotConnection
-    @Environment(SpeechMouth.self) private var speech
     @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
     let mood: Mood
     let reaction: EyeReaction?
@@ -39,21 +38,6 @@ struct ControlsPanel: View {
                 }
             }
 
-            Section("Voice") {
-                if speech.playing {
-                    Button("Stop Mouth Test", systemImage: "stop.fill") { speech.stop() }
-                } else {
-                    Button("Play Mouth Test", systemImage: "waveform") { speech.playTest(robotHost: robot.mouthHost) }
-                }
-                if let error = speech.lastError {
-                    Text(error).font(.callout).foregroundStyle(.orange)
-                }
-            }
-
-            Section("Expression") {
-                ExpressionGrid()
-            }
-
             Section {
                 Button("Details…") { showingDetails = true }
                     .frame(maxWidth: .infinity)
@@ -84,6 +68,9 @@ private struct DetailsSheet: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                Section("Expression") {
+                    ExpressionGrid()
+                }
                 Section("Camera") {
                     Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera",
                            systemImage: robot.cameraState == .off ? "video" : "video.slash") {
@@ -100,7 +87,7 @@ private struct DetailsSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 360, height: 430)
+        .frame(width: 380, height: 560)
     }
 }
 
