@@ -18,11 +18,26 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
     let built: String
     let protocolVersion: Int
     let followLimitsMeasured: Bool
+    /// Following tilts the head up and down too (a STANBOT_FOLLOW_PITCH=1 build).
+    /// Older firmware does not send it, which means yaw only.
+    let followPitch: Bool
 
     private enum CodingKeys: String, CodingKey {
         case sketch, commit, dirty, built
         case protocolVersion = "protocol"
         case followLimitsMeasured = "follow_limits_measured"
+        case followPitch = "follow_pitch"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sketch = try c.decode(String.self, forKey: .sketch)
+        commit = try c.decode(String.self, forKey: .commit)
+        dirty = try c.decodeIfPresent(Bool.self, forKey: .dirty)
+        built = try c.decode(String.self, forKey: .built)
+        protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
+        followLimitsMeasured = try c.decode(Bool.self, forKey: .followLimitsMeasured)
+        followPitch = try c.decodeIfPresent(Bool.self, forKey: .followPitch) ?? false
     }
 
     static func parse(_ line: String) -> FirmwareInfo? {
@@ -39,6 +54,9 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         var result: [String] = []
         if followLimitsMeasured {
             result.append("Head-following limits are marked measured")
+        }
+        if followPitch {
+            result.append("Head following tilts up and down (pitch build)")
         }
         if protocolVersion != Self.expectedProtocol {
             result.append("Protocol \(protocolVersion); this app expects \(Self.expectedProtocol)")

@@ -200,6 +200,71 @@ What the trace shows:
    `yaw_fnal`. The firmware prints `yaw_final`. Rare, but telemetry is not yet
    trustworthy byte for byte.
 
+## Sessions 3-5, 2026-09-16: faster, steadier, then no overshoot
+
+Recorded from the commit messages of that afternoon; the logs are in
+`~/Library/Logs/Stanbot/`.
+
+- **Session 3 (768e540):** capture moved to its own task, so the control loop
+  ticked every ~7 ms (worst 20) instead of ~192 ms, turning at up to ~21 deg/s.
+  Targets rose from 21 to 36, but the face lock still dropped in 94 of 98
+  frames; the match gate got a floor of 0.2 of the frame (2bbb39b).
+- **Session 4:** a face high in the frame was rejected for 3.5 s because its
+  box ran past the top edge. Boxes are now clipped to the frame (c9237f4).
+- **Session 5:** the head hunted across its whole range, about a 3 s period.
+  Targets now carry the frame's sequence number and the correction is applied
+  relative to where the head was when that frame was sent, at 0.6 gain
+  (136488b). **A later supervised test confirmed the overshoot is gone.**
+
+Session 2's open problems 1 (sparse targets) and 2 (slow motion) are
+addressed; 3 (the +-48 limit) and 4 (a lost telemetry byte) remain.
+
+## Pitch following (built, not yet run on the robot)
+
+Up and down now follows the same way as left and right, in a build made with
+`STANBOT_FOLLOW_PITCH=1 firmware/build.sh` (add `STANBOT_FOLLOW_CALIBRATION=1`
+for the narrowed first session). The normal build is still yaw only. The robot
+reports `follow_pitch` in `V`, `build_info.json` records it, `ota.py` checks it,
+and the app lists it as a Firmware warning.
+
+Because no pitch rest has been confirmed by eye, pitch is bounded **relative to
+where each session finds the head** rather than to a fixed rest:
+
+- **Up:** at most `pitchUpTravel` above the start (16 raw, 5 degrees, in the
+  calibration build; 32 otherwise), and never above `pitchMax` (672).
+- **Down:** no lower than the lower of the start and 620 (the BSP's 0
+  degrees). A head resting at 601, as in session 2, is never pressed lower; one
+  resting tilted up at 640 may come down to 620.
+- **Start:** preflight accepts a pitch between 596 (620 less
+  `pitchStartSlack`) and 672. Unpowered rests seen so far: 601, 620, 621, 639,
+  640.
+- **Lost target:** pitch returns to where the session started, not to
+  `pitchRest`, until `pitchRestConfirmed` is set.
+- **Delay:** pitch uses the same frame-time compensation as yaw, since without
+  it yaw hunted in session 5.
+- **Envelope:** the firmware aborts if pitch feedback leaves this session's
+  bounds by more than 16 raw.
+
+Host tests in `companion/test_head_tracker.cpp` cover following up and down, the
+travel bound, a low rest never pressed lower, the return to the start, start
+acceptance, and a closed loop with 300 ms of delay on pitch alone and on both
+axes. Simulated with compensation, pitch settles 10 raw short of the face with
+no reversals; without it, it overshoots once and travels 60% further. Both
+firmware variants compile. **Nothing about pitch following has run on the
+robot.**
+
+First supervised pitch session: flash a calibration + pitch build, stand so
+your face is above the camera's centre, and confirm the head tilts up and
+returns to where it started when you step away.
+
+## No search when the face is lost
+
+There is no search behaviour. When no target arrives for 900 ms the head
+returns to rest at the slower rest step and waits, still for the rest of
+the session (20 s). The app's "No stable face detected" state is a label, not a
+motion, and auto-follow only starts a session once a face is confirmed. A
+search (a slow scan when the face is lost, for example) would be a new feature.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in
@@ -217,9 +282,8 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
    unit's standing error; if it lags, raise `rawPerUnitX/Y` a little.
 4. **Widen.** Extend the limits toward what the sweep traversed (yaw +-288),
    one session per step, watching for the head meeting the body.
-5. **Companion.** The app computes a selected face but sends no `T,` lines
-   yet. That is the remaining software step; it belongs after 1-2 so the
-   first targets are sent into a controller whose signs are known.
+5. **Companion.** Done: the app sends `T,` targets with the frame's sequence
+   number (sessions 2-5).
 
 Only after 1-4 have been run on this unit and written down does `measured`
 become true. Until then the command exists so that everything around it can

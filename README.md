@@ -13,11 +13,15 @@ workflow, a local camera stream, and supervised bounded head motion. Verified on
 the attached robot: USB flashing and factory restore, the animated display, live
 640×480 capture streamed as QVGA JPEG, and a full 180° yaw sweep plus a first 5°
 pitch move, both observed physically. The companion app locks onto a face and
-holds it.
+holds it, and supervised head following turns the head toward it (yaw) without
+overshooting. Up-and-down following is built and host-tested in a
+`STANBOT_FOLLOW_PITCH=1` build but has not run on the robot; there is no search
+when the face is lost. See [head following](docs/head-following.md).
 
-Not yet verified: sustained head following, pitch travel beyond 5°, image quality
-under varied lighting, and anything over Wi-Fi. Head following remains off, and
-servo travel is bounded by explicit guards rather than by a measured calibration.
+Not yet verified: pitch following on the robot, pitch travel beyond 5°, yaw
+beyond centre ±48, image quality under varied lighting, and following started
+over Wi-Fi. Servo travel is bounded by explicit guards rather than by a measured
+calibration.
 Every servo position settles 2–6 raw steps short of its goal, which is the
 factory configuration rather than a fault; see
 [servo startup review](docs/servo-startup-review.md).

@@ -30,6 +30,15 @@ struct FollowLimits {
   int pitchMin, pitchMax, pitchRest;  // raw servo units, ID 2
   int pitchUpSign;                    // +1 if +raw tilts the head up, -1 if down
   bool measured;                      // the per-unit calibration checklist is done
+  // Pitch travel is bounded per session, relative to where the head was found
+  // resting, because no fixed rest position has been confirmed by eye. A
+  // session may tilt up by at most pitchUpTravel from its start, and down no
+  // further than the lower of its start and the down-side limit. So a head
+  // resting below 620 is never pushed further down, and one resting tilted up
+  // may still come down to 620.
+  int pitchUpTravel = 32;             // raw above the session start, never more
+  int pitchStartSlack = 24;           // a start this far past the down-side limit is still accepted
+  bool pitchRestConfirmed = false;    // true: a lost target returns pitch to pitchRest, not the session start
 };
 
 // Directions below are MEASURED on this unit (2026-09-15, supervised, with the
@@ -45,7 +54,10 @@ struct FollowLimits {
 //  - pitch rest is NOT established. Raw 642 was reported as still tilted up,
 //    so level is at or below it; 620 is the BSP's 0 degrees and the candidate,
 //    but nothing has ever been observed at 620 and it must be confirmed by eye
-//    before it becomes the position a lost target returns to.
+//    before it becomes the position a lost target returns to. Until then
+//    (pitchRestConfirmed false) a lost target returns pitch to where the
+//    session found it, and travel is bounded relative to that start. Unpowered
+//    rests seen so far: 601, 620, 621, 639, 640.
 //  - yaw travel starts at half the +-288 the 2026-09-15 sweep traversed.
 //  - gains and hunting remain untested: every follow session so far aborted
 //    before settling, so rawPerUnitX/Y are still guesses.
@@ -55,22 +67,30 @@ struct FollowLimits {
 // to centre +-48 per checklist step 1 and comes from a committed tree, so V
 // reports its commit and follow_limits_measured:true, and the app flags it.
 #if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
+// The calibration build halves pitch travel for the first sessions that power it.
 constexpr FollowLimits kFollowLimits = {
   460 - 48, 460 + 48, 460,
-  620, 620 + 32, 620,
-  +1, true};
+  620, 640 + 32, 620,
+  +1, true,
+  16, 24, false};
 #else
 constexpr FollowLimits kFollowLimits = {
   460 - 144, 460 + 144, 460,
-  620, 620 + 32, 620,
-  +1, false};
+  620, 640 + 32, 620,
+  +1, false,
+  32, 24, false};
 #endif
 
-// Pitch stays out of following until its rest position is confirmed by eye.
-// On 2026-09-15 a "yaw-only" session still drove pitch, because return-to-rest
-// moved both axes; with this false the pitch servo is never commanded, never
-// clamped and never given torque, so it stays exactly as it is at rest.
+// Pitch follows only in a build made with STANBOT_FOLLOW_PITCH=1. It has
+// never been powered through a follow session. On 2026-09-15 a "yaw-only"
+// session still drove pitch, because return-to-rest moved both axes; with this
+// false the pitch servo is never commanded, never clamped and never given
+// torque, so it stays exactly as it is at rest. V reports which build this is.
+#if defined(STANBOT_FOLLOW_PITCH) && STANBOT_FOLLOW_PITCH
+constexpr bool kFollowPitchEnabled = true;
+#else
 constexpr bool kFollowPitchEnabled = false;
+#endif
 
 struct FollowConfig {
   float confidenceToAttend = 0.70f;  // face-detection.md's starting threshold
@@ -107,22 +127,44 @@ class HeadTracker {
   // yanks the head from wherever it was resting.
   // Where the head was commanded to be at `whenMs`, from the recent history.
   // Older than the history reaches, or empty: the oldest sample, or now.
-  int yawAt(uint32_t whenMs) const {
-    if (historyCount_ == 0) return yaw_;
-    int best = -1;
-    for (unsigned i = 0; i < historyCount_; ++i) {
-      const Sample& sample = history_[(historyStart_ + i) % kHistory];
-      if (static_cast<int32_t>(whenMs - sample.ms) >= 0) best = static_cast<int>(i);
-    }
-    if (best < 0) return history_[historyStart_].yaw;          // before anything recorded
-    return history_[(historyStart_ + static_cast<unsigned>(best)) % kHistory].yaw;
+  int yawAt(uint32_t whenMs) const { return sampleAt(whenMs, yaw_).yaw; }
+  // The same for pitch: it has the same frame delay, so it needs the same
+  // compensation or it hunts the way yaw did in session 5.
+  int pitchAt(uint32_t whenMs) const { return sampleAt(whenMs, pitch_).pitch; }
+
+  // Whether pitch may start a session at this raw position: inside the limits,
+  // or resting at most pitchStartSlack past the down-side one. A rest of 601
+  // has been observed, below the BSP's 0 degrees at 620.
+  static bool pitchStartAcceptable(const FollowLimits& limits, int position) {
+    if (limits.pitchUpSign > 0)
+      return position >= limits.pitchMin - limits.pitchStartSlack && position <= limits.pitchMax;
+    return position >= limits.pitchMin && position <= limits.pitchMax + limits.pitchStartSlack;
   }
 
   void begin(int yawNow, int pitchNow, uint32_t nowMs) {
     yaw_ = goalYaw_ = clamp(yawNow, limits_.yawMin, limits_.yawMax);
     // A disabled pitch is left exactly where it is: clamping it would make the
     // commanded position differ from the real one, which is itself a move.
-    pitch_ = goalPitch_ = config_.pitchEnabled ? clamp(pitchNow, limits_.pitchMin, limits_.pitchMax) : pitchNow;
+    if (config_.pitchEnabled) {
+      const int slack = limits_.pitchStartSlack;
+      const int start = limits_.pitchUpSign > 0 ? clamp(pitchNow, limits_.pitchMin - slack, limits_.pitchMax)
+                                                : clamp(pitchNow, limits_.pitchMin, limits_.pitchMax + slack);
+      // Up is bounded by the travel allowance and the limit; down by the lower
+      // of the start and the down-side limit, so a low rest is never pressed lower.
+      if (limits_.pitchUpSign > 0) {
+        pitchLow_ = start < limits_.pitchMin ? start : limits_.pitchMin;
+        pitchHigh_ = start + limits_.pitchUpTravel < limits_.pitchMax ? start + limits_.pitchUpTravel : limits_.pitchMax;
+        if (pitchHigh_ < start) pitchHigh_ = start;
+      } else {
+        pitchHigh_ = start > limits_.pitchMax ? start : limits_.pitchMax;
+        pitchLow_ = start - limits_.pitchUpTravel > limits_.pitchMin ? start - limits_.pitchUpTravel : limits_.pitchMin;
+        if (pitchLow_ > start) pitchLow_ = start;
+      }
+      pitchHome_ = start;
+      pitch_ = goalPitch_ = start;
+    } else {
+      pitch_ = goalPitch_ = pitchHome_ = pitchLow_ = pitchHigh_ = pitchNow;
+    }
     mode_ = FollowMode::Idle;
     lastControlMs_ = nowMs - config_.controlPeriodMs;
     lastTargetMs_ = 0;
@@ -161,7 +203,7 @@ class HeadTracker {
     const int dy = config_.pitchEnabled && (y > config_.centreDeadband || y < -config_.centreDeadband)
                        ? roundToInt(-y * config_.rawPerUnitY * config_.gain) * limits_.pitchUpSign : 0;
     goalYaw_ = clamp(yawAt(capturedMs) + dx, limits_.yawMin, limits_.yawMax);
-    goalPitch_ = config_.pitchEnabled ? clamp(pitch_ + dy, limits_.pitchMin, limits_.pitchMax) : pitch_;
+    goalPitch_ = config_.pitchEnabled ? clamp(pitchAt(capturedMs) + dy, pitchLow_, pitchHigh_) : pitch_;
     haveGoal_ = true;
     mode_ = FollowMode::Attending;
     return true;
@@ -174,7 +216,9 @@ class HeadTracker {
     if (mode_ == FollowMode::Attending && nowMs - lastTargetMs_ >= config_.targetTimeoutMs) {
       mode_ = FollowMode::Returning;
       goalYaw_ = limits_.yawRest;
-      goalPitch_ = config_.pitchEnabled ? limits_.pitchRest : pitch_;
+      goalPitch_ = !config_.pitchEnabled ? pitch_
+                 : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
+                 : pitchHome_;
       haveGoal_ = true;
     }
     if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
@@ -199,6 +243,10 @@ class HeadTracker {
 
   int commandedYaw() const { return yaw_; }
   int commandedPitch() const { return pitch_; }
+  // This session's pitch bounds, for the firmware's feedback envelope.
+  int pitchLow() const { return pitchLow_; }
+  int pitchHigh() const { return pitchHigh_; }
+  int pitchHome() const { return pitchHome_; }
   FollowMode mode() const { return mode_; }
 
  private:
@@ -209,15 +257,26 @@ class HeadTracker {
     return static_cast<int>(value >= 0.0f ? value + 0.5f : value - 0.5f);
   }
 
-  // Commanded yaw over the last few seconds, for yawAt().
-  struct Sample { uint32_t ms; int yaw; };
+  // Commanded position over the last few seconds, for yawAt() and pitchAt().
+  struct Sample { uint32_t ms; int yaw; int pitch; };
   static constexpr unsigned kHistory = 48;
   Sample history_[kHistory] = {};
   unsigned historyStart_ = 0, historyCount_ = 0;
 
+  Sample sampleAt(uint32_t whenMs, int fallback) const {
+    if (historyCount_ == 0) return {whenMs, fallback, fallback};
+    int best = -1;
+    for (unsigned i = 0; i < historyCount_; ++i) {
+      const Sample& sample = history_[(historyStart_ + i) % kHistory];
+      if (static_cast<int32_t>(whenMs - sample.ms) >= 0) best = static_cast<int>(i);
+    }
+    if (best < 0) return history_[historyStart_];               // before anything recorded
+    return history_[(historyStart_ + static_cast<unsigned>(best)) % kHistory];
+  }
+
   void record(uint32_t nowMs) {
     const unsigned index = (historyStart_ + historyCount_) % kHistory;
-    history_[index] = {nowMs, yaw_};
+    history_[index] = {nowMs, yaw_, pitch_};
     if (historyCount_ < kHistory) ++historyCount_;
     else historyStart_ = (historyStart_ + 1) % kHistory;
   }
@@ -226,6 +285,7 @@ class HeadTracker {
   FollowConfig config_;
   int yaw_ = 0, pitch_ = 0;          // last commanded, the controller's own state
   int goalYaw_ = 0, goalPitch_ = 0;  // where the current observation asked to go
+  int pitchHome_ = 0, pitchLow_ = 0, pitchHigh_ = 0;  // this session's pitch start and bounds
   bool haveGoal_ = false;
   FollowMode mode_ = FollowMode::Idle;
   uint32_t lastControlMs_ = 0;

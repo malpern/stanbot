@@ -32,6 +32,12 @@ final class FirmwareVersionTests: XCTestCase {
             clean.replacingOccurrences(of: #""follow_limits_measured":false"#, with: #""follow_limits_measured":true"#)))
         XCTAssertEqual(calibration.warnings.first, "Head-following limits are marked measured")
 
+        XCTAssertFalse(try XCTUnwrap(FirmwareInfo.parse(clean)).followPitch)   // older firmware: yaw only
+        let pitch = try XCTUnwrap(FirmwareInfo.parse(
+            clean.replacingOccurrences(of: #""follow_limits_measured":false"#, with: #""follow_limits_measured":false,"follow_pitch":true"#)))
+        XCTAssertTrue(pitch.followPitch)
+        XCTAssertEqual(pitch.warnings, ["Head following tilts up and down (pitch build)"])
+
         let newer = try XCTUnwrap(FirmwareInfo.parse(clean.replacingOccurrences(of: #""protocol":1"#, with: #""protocol":2"#)))
         XCTAssertEqual(newer.warnings, ["Protocol 2; this app expects 1"])
     }

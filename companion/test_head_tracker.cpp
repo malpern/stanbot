@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cmath>
+#include <initializer_list>
 
 using stanbot::FollowCommand;
 using stanbot::FollowConfig;
@@ -337,6 +338,181 @@ void closedLoopSettlesInsteadOfHunting() {
   assert(over.reversals <= 2);
 }
 
+// ---- Pitch following ------------------------------------------------------
+// Pitch rest is not confirmed on this unit, so travel is bounded relative to
+// where each session finds the head, and a lost target returns pitch there.
+
+// Tick until nothing is sent; checks each goal against this session's bounds.
+int drainPitch(HeadTracker& tracker, uint32_t& now, int maxStep) {
+  int sent = 0, lastPitch = tracker.commandedPitch();
+  for (int i = 0; i < 300; ++i) {
+    now += kConfig.controlPeriodMs;
+    const FollowCommand command = tracker.step(now);
+    if (!command.send) return sent;
+    ++sent;
+    assert(std::abs(command.pitch - lastPitch) <= maxStep);
+    assert(command.pitch >= tracker.pitchLow() && command.pitch <= tracker.pitchHigh());
+    lastPitch = command.pitch;
+  }
+  assert(false && "controller never settled");
+  return sent;
+}
+
+// Room to tilt that the fixed test limits do not clip.
+FollowLimits roomyPitch() {
+  FollowLimits limits = kLimits;
+  limits.pitchMax = 700;
+  limits.pitchUpTravel = 64;
+  return limits;
+}
+
+void pitchFollowsUpAndDown() {
+  const FollowLimits limits = roomyPitch();
+  HeadTracker tracker(limits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 640, now);              // resting tilted up a little
+  assert(tracker.pitchLow() == 620 && tracker.pitchHigh() == 704 - 4);
+  // Face high in the frame: tilt up (+raw on this unit).
+  assert(tracker.observe(1, 0.0f, -0.6f, 0.95f, now));
+  assert(drainPitch(tracker, now, kConfig.maxStepRaw) > 0);
+  const int up = tracker.commandedPitch();
+  assert(up > 640 + kConfig.deadbandRaw);
+  assert(tracker.commandedYaw() == 460);      // x was centred: yaw untouched
+  // Face low in the frame: tilt back down, but never below 620.
+  for (uint32_t seq = 2; seq < 12; ++seq) {
+    assert(tracker.observe(seq, 0.0f, 1.0f, 0.95f, now));
+    drainPitch(tracker, now, kConfig.maxStepRaw);
+  }
+  assert(tracker.commandedPitch() < up);
+  assert(tracker.commandedPitch() >= 620 && tracker.commandedPitch() < 620 + kConfig.deadbandRaw);
+}
+
+void pitchUpTravelIsBoundedFromStart() {
+  HeadTracker tracker(kLimits, kConfig);     // upTravel 32, pitchMax 652
+  uint32_t now = 1000;
+  tracker.begin(460, 605, now);
+  assert(tracker.pitchHigh() == 605 + 32);
+  for (uint32_t seq = 1; seq < 20; ++seq) {
+    assert(tracker.observe(seq, 0.0f, -1.0f, 0.95f, now));
+    drainPitch(tracker, now, kConfig.maxStepRaw);
+  }
+  assert(tracker.commandedPitch() <= 605 + 32);
+  assert(tracker.commandedPitch() > 605 + 32 - kConfig.deadbandRaw);
+  // Started high: capped by pitchMax, not by start + travel.
+  HeadTracker high(kLimits, kConfig);
+  high.begin(460, 640, now);
+  assert(high.pitchHigh() == kLimits.pitchMax);
+}
+
+void lowRestIsNeverPressedLower() {
+  // Session 2 found pitch resting at 601, below the BSP's 0 degrees.
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 601, now);
+  assert(tracker.commandedPitch() == 601 && tracker.pitchLow() == 601);
+  for (uint32_t seq = 1; seq < 10; ++seq) {
+    assert(tracker.observe(seq, 0.0f, 1.0f, 0.95f, now));   // face at the bottom
+    for (int i = 0; i < 20; ++i) {
+      now += kConfig.controlPeriodMs;
+      assert(tracker.step(now).pitch >= 601);
+    }
+  }
+  assert(tracker.commandedPitch() == 601);
+}
+
+void lostTargetReturnsPitchToSessionStart() {
+  const FollowLimits limits = roomyPitch();
+  HeadTracker tracker(limits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 640, now);
+  assert(tracker.observe(1, 0.4f, -0.8f, 0.95f, now));
+  drainPitch(tracker, now, kConfig.maxStepRaw);
+  assert(tracker.commandedPitch() > 640 + kConfig.deadbandRaw);
+  now += kConfig.targetTimeoutMs;
+  drainPitch(tracker, now, kConfig.restStepRaw);
+  assert(tracker.mode() == FollowMode::Idle);
+  // Unconfirmed rest: back to where it started, not to pitchRest (620).
+  assert(std::abs(tracker.commandedPitch() - 640) < kConfig.deadbandRaw);
+
+  FollowLimits confirmed = limits;
+  confirmed.pitchRestConfirmed = true;
+  HeadTracker withRest(confirmed, kConfig);
+  withRest.begin(460, 640, now);
+  assert(withRest.observe(1, 0.0f, -0.8f, 0.95f, now));
+  drainPitch(withRest, now, kConfig.maxStepRaw);
+  now += kConfig.targetTimeoutMs;
+  drainPitch(withRest, now, kConfig.restStepRaw);
+  assert(std::abs(withRest.commandedPitch() - confirmed.pitchRest) < kConfig.deadbandRaw);
+}
+
+void pitchStartAcceptance() {
+  assert(HeadTracker::pitchStartAcceptable(kLimits, 620));
+  assert(HeadTracker::pitchStartAcceptable(kLimits, 601));
+  assert(HeadTracker::pitchStartAcceptable(kLimits, 620 - 24));
+  assert(!HeadTracker::pitchStartAcceptable(kLimits, 620 - 25));
+  assert(HeadTracker::pitchStartAcceptable(kLimits, kLimits.pitchMax));
+  assert(!HeadTracker::pitchStartAcceptable(kLimits, kLimits.pitchMax + 1));
+  assert(!HeadTracker::pitchStartAcceptable(kLimits, -1));   // unpowered servo reads -1
+}
+
+// The session-5 hunt, on the pitch axis: frames 200 ms apart arriving 300 ms
+// late, face held above the start. Also both axes at once.
+struct PitchLoop { int finalError; int reversals; int travel; int yawError; };
+
+PitchLoop simulatePitch(bool compensate, int faceYawRaw) {
+  const FollowLimits limits = roomyPitch();
+  HeadTracker tracker(limits, kConfig);
+  uint32_t now = 100000;
+  int yaw = limits.yawRest, pitch = 630;
+  tracker.begin(yaw, pitch, now);
+  const int facePitch = 630 + 40, faceYaw = limits.yawRest + faceYawRaw;
+  struct Frame { uint32_t sentMs; int yawThen, pitchThen; uint32_t seq; };
+  Frame q[8]{};
+  unsigned queued = 0;
+  uint32_t nextFrame = now, seq = 0;
+  int reversals = 0, travel = 0, lastSign = 0;
+  for (int tick = 0; tick < 250; ++tick) {
+    now += kConfig.controlPeriodMs;
+    if (static_cast<int32_t>(now - nextFrame) >= 0) {
+      nextFrame = now + 200;
+      if (queued < 8) q[queued++] = {now, yaw, pitch, ++seq};
+    }
+    if (queued > 0 && static_cast<int32_t>(now - q[0].sentMs) >= 300) {
+      const Frame f = q[0];
+      for (unsigned i = 1; i < queued; ++i) q[i - 1] = q[i];
+      --queued;
+      const float x = static_cast<float>(faceYaw - f.yawThen) / kConfig.rawPerUnitX;
+      const float y = -static_cast<float>(facePitch - f.pitchThen) / kConfig.rawPerUnitY;  // above: negative y
+      const int sign = (facePitch - f.pitchThen) > 0 ? 1 : ((facePitch - f.pitchThen) < 0 ? -1 : 0);
+      if (sign != 0 && lastSign != 0 && sign != lastSign) ++reversals;
+      if (sign != 0) lastSign = sign;
+      tracker.observe(f.seq, x, y, 0.95f, now, compensate ? f.sentMs : now);
+    }
+    const FollowCommand command = tracker.step(now);
+    if (command.send) {
+      travel += std::abs(command.pitch - pitch);
+      pitch = command.pitch;
+      yaw = command.yaw;
+    }
+  }
+  return {facePitch - pitch, reversals, travel, faceYaw - yaw};
+}
+
+void pitchClosedLoopSettles() {
+  const PitchLoop fixed = simulatePitch(true, 0);
+  const PitchLoop raw = simulatePitch(false, 0);
+  std::printf("  pitch compensated:   error %d reversals %d travel %d\n", fixed.finalError, fixed.reversals, fixed.travel);
+  std::printf("  pitch uncompensated: error %d reversals %d travel %d\n", raw.finalError, raw.reversals, raw.travel);
+  // Residual: the raw deadband over the gain, as for yaw.
+  assert(std::abs(fixed.finalError) <= 14);
+  assert(fixed.reversals <= 1);
+  assert(raw.travel > fixed.travel);
+  const PitchLoop both = simulatePitch(true, 50);
+  std::printf("  both axes:           pitch error %d yaw error %d reversals %d\n", both.finalError, both.yawError, both.reversals);
+  assert(std::abs(both.finalError) <= 14 && std::abs(both.yawError) <= 16);
+  assert(both.reversals <= 1);
+}
+
 int main() {
   closedLoopSettlesInsteadOfHunting();
   pitchDisabledNeverMovesPitch();
@@ -350,4 +526,11 @@ int main() {
   timeoutReturnsToRestSlowly();
   controlPeriodIsRespected();
   beginAdoptsCurrentPosition();
+  pitchFollowsUpAndDown();
+  pitchUpTravelIsBoundedFromStart();
+  lowRestIsNeverPressedLower();
+  lostTargetReturnsPitchToSessionStart();
+  pitchStartAcceptance();
+  pitchClosedLoopSettles();
+  std::printf("head tracker: all tests passed\n");
 }

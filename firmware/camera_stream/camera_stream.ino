@@ -455,9 +455,10 @@ void emitVersion() {
   char line[320];
   const int n = snprintf(line, sizeof line,
       "SBVR {\"sketch\":\"camera_stream\",\"commit\":\"%s\",\"dirty\":%s,\"built\":\"%s\","
-      "\"protocol\":%d,\"follow_limits_measured\":%s}\n",
+      "\"protocol\":%d,\"follow_limits_measured\":%s,\"follow_pitch\":%s}\n",
       STANBOT_GIT_COMMIT, dirtyKnown ? STANBOT_GIT_DIRTY : "null", STANBOT_BUILD_TIME,
-      kProtocolVersion, stanbot::kFollowLimits.measured ? "true" : "false");
+      kProtocolVersion, stanbot::kFollowLimits.measured ? "true" : "false",
+      stanbot::kFollowPitchEnabled ? "true" : "false");
   if (n <= 0 || n >= static_cast<int>(sizeof line)) return;
   Serial.print(line);
   if (streamClient && streamClient.connected()) {
@@ -1628,7 +1629,7 @@ void runFollowSession() {
     yaw.position >= limits.yawMin && yaw.position <= limits.yawMax &&
     // A disabled pitch must still answer (a valid reading) but may rest anywhere:
     // it is never powered or commanded, only watched for unexpected movement.
-    (pitchOn ? (pitch.position >= limits.pitchMin && pitch.position <= limits.pitchMax) : pitch.position >= 0);
+    (pitchOn ? stanbot::HeadTracker::pitchStartAcceptable(limits, pitch.position) : pitch.position >= 0);
   if (safe) {
     yawPos = yaw.position;
     pitchPos = pitch.position;
@@ -1710,7 +1711,7 @@ void runFollowSession() {
             pitchPos = servoBus.ReadPos(2);
             if (servoBus.getState() != 0 || servoBus.getLastError() != 0 || pitchPos < 0) { result = "position_status_error"; break; }
             const bool pitchOutside = pitchOn
-              ? (pitchPos < limits.pitchMin - kFollowEnvelopeMargin || pitchPos > limits.pitchMax + kFollowEnvelopeMargin)
+              ? (pitchPos < tracker.pitchLow() - kFollowEnvelopeMargin || pitchPos > tracker.pitchHigh() + kFollowEnvelopeMargin)
               : abs(pitchPos - pitch.position) > kFollowEnvelopeMargin;   // unpowered, so it should not move
             if (yawPos < limits.yawMin - kFollowEnvelopeMargin || yawPos > limits.yawMax + kFollowEnvelopeMargin ||
                 pitchOutside) {
@@ -1766,8 +1767,8 @@ void runFollowSession() {
   printEnable("settled", settled);
   printEnable("after_cutoff", after);
   printReadiness(readings, offVoltage);
-  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
-                result, pitchOn ? "true" : "false", observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
+  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
+                result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
   Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
