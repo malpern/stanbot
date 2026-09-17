@@ -680,7 +680,86 @@ void searchIsClampedAndFinite() {
   assert(ticks * kConfig.controlPeriodMs < 10000);
 }
 
+// Manual control from the app's joystick.
+void manualControl() {
+  FollowConfig config;
+  config.pitchEnabled = true;
+  HeadTracker tracker(kLimits, config);
+  uint32_t now = 10000;
+  tracker.begin(460, 630, now);
+
+  // Full right: moves right at no more than manualStepRaw per tick.
+  assert(tracker.manual(1.0f, 0.0f, now));
+  assert(tracker.mode() == FollowMode::Manual);
+  int last = tracker.commandedYaw();
+  for (int i = 0; i < 3; ++i) {
+    now += config.controlPeriodMs;
+    tracker.manual(1.0f, 0.0f, now);                  // the app resends while held
+    const FollowCommand command = tracker.step(now);
+    assert(command.send);
+    assert(command.yaw - last > 0 && command.yaw - last <= config.manualStepRaw);
+    assert(command.pitch == 630);
+    last = command.yaw;
+  }
+
+  // A face target while steering is consumed, not acted on.
+  assert(!tracker.observe(1, -0.9f, 0.0f, 0.95f, now));
+  assert(tracker.mode() == FollowMode::Manual);
+
+  // Small deflection: finer steps than full deflection, but still moves.
+  now += config.controlPeriodMs;
+  tracker.manual(0.3f, 0.0f, now);
+  FollowCommand small = tracker.step(now);
+  assert(small.send && small.yaw - last >= 1 && small.yaw - last < config.manualStepRaw);
+  last = small.yaw;
+
+  // Up tilts the head up (pitchUpSign +1 means +raw is up).
+  now += config.controlPeriodMs;
+  tracker.manual(0.0f, 1.0f, now);
+  FollowCommand up = tracker.step(now);
+  assert(up.send && up.pitch > 630 && up.yaw == last);
+
+  // Held against the limit: clamped, and nothing is sent once it is there.
+  for (int i = 0; i < 200; ++i) {
+    now += config.controlPeriodMs;
+    tracker.manual(1.0f, 0.0f, now);
+    const FollowCommand command = tracker.step(now);
+    assert(command.yaw <= kLimits.yawMax);
+  }
+  assert(tracker.commandedYaw() == kLimits.yawMax);
+
+  // Input stops: the head holds still (deadman), and stays in manual for a while.
+  const int held = tracker.commandedYaw();
+  const uint32_t released = now;
+  for (; now < released + config.manualResumeMs - config.controlPeriodMs; now += config.controlPeriodMs) {
+    assert(!tracker.step(now).send);
+    assert(tracker.commandedYaw() == held);
+    assert(!tracker.observe(static_cast<uint32_t>(now), 0.5f, 0.0f, 0.95f, now));
+  }
+
+  // Then following resumes from where it was left.
+  now = released + config.manualResumeMs + config.controlPeriodMs;
+  assert(!tracker.step(now).send);
+  assert(tracker.mode() == FollowMode::Idle);
+  assert(tracker.observe(900000, -0.5f, 0.0f, 0.95f, now));
+  assert(tracker.mode() == FollowMode::Attending);
+  assert(tracker.goalYaw() < held);                   // relative to the manual position
+
+  // Garbage is refused.
+  assert(!tracker.manual(1.5f, 0.0f, now));
+  assert(!tracker.manual(NAN, 0.0f, now));
+
+  // A dead zone at the centre of the stick.
+  HeadTracker still(kLimits, config);
+  now = 10000;
+  still.begin(460, 630, now);
+  now += config.controlPeriodMs;
+  still.manual(0.05f, -0.05f, now);
+  assert(!still.step(now).send);
+}
+
 int main() {
+  manualControl();
   closedLoopSettlesInsteadOfHunting();
   pitchDisabledNeverMovesPitch();
   protocolValidation();

@@ -24,7 +24,9 @@ inline bool networkCommandAllowed(const char* line) {
   // commands above: expression, follow target, frame interval, image mode,
   // JPEG quality, eye gaze. T, is only consumed inside C,FOLLOW, which is
   // USB-only; G, moves only the pupils drawn on the display.
-  static const char* const prefixes[] = {"E,", "T,", "R,", "M,", "J,", "G,"};
+  // H, is the app's joystick: like T, it only acts inside a follow session,
+  // and starting one over Wi-Fi needs the passphrase (command_auth.h).
+  static const char* const prefixes[] = {"E,", "T,", "H,", "R,", "M,", "J,", "G,"};
   for (const char* prefix : prefixes) {
     if (strncmp(line, prefix, 2) == 0) return true;
   }

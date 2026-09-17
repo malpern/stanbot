@@ -24,7 +24,7 @@ import json
 import os
 import sys
 
-MODES = {0: ("idle", "#9aa0a6"), 1: ("attending", "#1a73e8"), 2: ("returning", "#f29900"), 3: ("searching", "#9334e6")}
+MODES = {0: ("idle", "#9aa0a6"), 1: ("attending", "#1a73e8"), 2: ("returning", "#f29900"), 3: ("searching", "#9334e6"), 4: ("manual", "#188038")}
 
 
 def parse(lines):

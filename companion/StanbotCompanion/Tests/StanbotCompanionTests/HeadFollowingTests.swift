@@ -205,4 +205,62 @@ final class HeadFollowingTests: XCTestCase {
         robot.stopFollowing()
         XCTAssertFalse(robot.followAutomatically, "Stop means stop, not start again in four seconds")
     }
+
+    // MARK: manual steering
+
+    private func lines(_ text: String, prefix: String) -> [String] {
+        text.split(separator: "\n").map(String.init).filter { $0.hasPrefix(prefix) }
+    }
+
+    @MainActor
+    func testSteeringStartsASessionAndResendsWhileHeld() {
+        let (robot, usb) = connected(measured: true)
+        defer { usb.close() }
+        robot.steer(x: 0.75, y: -0.5)
+        XCTAssertTrue(robot.steering)
+        guard case .following = robot.follow else { return XCTFail("steering should start a session") }
+        var sent = usb.read()
+        XCTAssertTrue(sent.hasPrefix("C,FOLLOW\n"), "no confirmation: grabbing the stick is the intent")
+        XCTAssertEqual(lines(sent, prefix: "H,"), ["H,1,0.75,-0.50"])
+
+        // Held: resent every 100 ms, well inside the robot's 300 ms hold.
+        robot.steer(x: -1, y: 0)
+        wait(upTo: 0.45) { false }
+        sent = usb.read()
+        let held = lines(sent, prefix: "H,")
+        XCTAssertGreaterThanOrEqual(held.count, 3)
+        XCTAssertTrue(held.allSatisfy { $0.hasSuffix(",-1.00,0.00") })
+        let sequences = held.compactMap { UInt32($0.split(separator: ",")[1]) }
+        XCTAssertEqual(sequences, sequences.sorted())
+        XCTAssertEqual(Set(sequences).count, sequences.count, "every resend has a fresh sequence")
+
+        // Released: one centred line, then silence.
+        robot.endSteering()
+        XCTAssertFalse(robot.steering)
+        XCTAssertTrue(lines(usb.read(), prefix: "H,").last?.hasSuffix(",0.00,0.00") ?? false)
+        wait(upTo: 0.35) { false }
+        XCTAssertEqual(lines(usb.read(), prefix: "H,"), [], "nothing after release")
+        guard case .following = robot.follow else { return XCTFail("the session carries on: following resumes") }
+    }
+
+    @MainActor
+    func testSteeringDuringASessionDoesNotStartAnother() {
+        let (robot, usb) = connected(measured: true)
+        defer { usb.close() }
+        robot.startFollowing()
+        _ = usb.read()
+        robot.steer(x: 0.2, y: 0)
+        XCTAssertFalse(usb.read().contains("C,FOLLOW"))
+        robot.endSteering()
+    }
+
+    @MainActor
+    func testSteeringIsRefusedWhenFollowingIsUnavailable() {
+        let (robot, usb) = connected(measured: false)
+        defer { usb.close() }
+        robot.steer(x: 1, y: 0)
+        XCTAssertFalse(robot.steering)
+        XCTAssertEqual(robot.follow, .idle)
+        XCTAssertEqual(usb.read(), "", "nothing sent to a robot that has following disabled")
+    }
 }

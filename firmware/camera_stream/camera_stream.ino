@@ -110,6 +110,10 @@ std::atomic<bool> servoProbeRequested{false};
 // with the sequence written last and read first. C,FOLLOW opens a bounded
 // session that consumes it; C,UNFOLLOW ends the session early.
 std::atomic<uint32_t> targetSequence{0};
+// Manual control: H,<sequence>,<x>,<y> from the app's joystick, each in [-1, 1]
+// (+x robot right, +y head up). Consumed only inside a follow session, like T.
+std::atomic<uint32_t> manualSequence{0};
+std::atomic<int32_t> manualXMilli{0}, manualYMilli{0};
 std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
 // Where the eyes should look, from T, (during a session) or G, (any time).
 // The loop compares gazeSequence with its own copy and calls eyes.attend().
@@ -590,6 +594,16 @@ void handleCommand(const char* line) {
         gazeYMilli.store(lroundf(y * 1000.0f));
         gazeSequence.fetch_add(1);
       }
+    }
+  }
+  else if (strncmp(line, "H,", 2) == 0) {
+    unsigned long sequence = 0;
+    float x = 0, y = 0;
+    if (sscanf(line + 2, "%lu,%f,%f", &sequence, &x, &y) == 3 && x == x && y == y &&
+        x >= -1.0f && x <= 1.0f && y >= -1.0f && y <= 1.0f) {
+      manualXMilli.store(lroundf(x * 1000.0f));
+      manualYMilli.store(lroundf(y * 1000.0f));
+      manualSequence.store(static_cast<uint32_t>(sequence));
     }
   }
   else if (strncmp(line, "G,", 2) == 0) {
@@ -1757,6 +1771,8 @@ void runFollowSession() {
   bool captureDecoupled = false;
   uint32_t captureStopMs = 0, sessionFrames = 0;
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
+  uint32_t lastManualSequence = manualSequence.load();
+  int manualInputs = 0;
 
   // Both servos must start inside the follow limits, torque off and still.
   const bool safe = onVerified && !powerCutoff.done.load() && millis() - started < 1300 &&
@@ -1818,6 +1834,18 @@ void runFollowSession() {
           if (!captureDecoupled) {   // task creation failed: the old, slower path
             pollNetworkCommands();
             serviceFrame(true);
+          }
+
+          // The joystick: steering takes over from face targets, keeps the
+          // session powered like a target would, and hands back to following
+          // manualResumeMs after the last input (HeadTracker::manual).
+          const uint32_t manualSeq = manualSequence.load();
+          if (manualSeq != lastManualSequence) {
+            lastManualSequence = manualSeq;
+            if (tracker.manual(manualXMilli.load() / 1000.0f, manualYMilli.load() / 1000.0f, now)) {
+              ++manualInputs;
+              lastTargetAt = now;
+            }
           }
 
           const uint32_t sequence = targetSequence.load();
@@ -1955,8 +1983,8 @@ void runFollowSession() {
   printEnable("settled", settled);
   printEnable("after_cutoff", after);
   printReadiness(readings, offVoltage);
-  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
-                result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
+  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"manual_inputs\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
+                result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, manualInputs, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
   Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"renewals\":%lu,\"trace_stride\":%u,\"session_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,

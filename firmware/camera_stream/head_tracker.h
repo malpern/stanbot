@@ -142,10 +142,19 @@ struct FollowConfig {
   int searchSweepRaw = 32;           // yaw the other way from where it was lost
   int searchStepRaw = 3;             // ~11 deg/s: slower than attending
   uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
+
+  // Manual control, from the app's joystick (H lines). Full deflection moves
+  // manualStepRaw per tick, about 15 deg/s: calm, like the rest. Deflection is
+  // squared, so small movements of the stick give fine positioning. If H lines
+  // stop for manualHoldMs the head holds still (a dropped link never keeps it
+  // moving); manualResumeMs after the last one, following resumes from there.
+  int manualStepRaw = 4;
+  uint32_t manualHoldMs = 300;
+  uint32_t manualResumeMs = 1500;
 };
 
 // Numbered as reported in telemetry ("mode"); append, never renumber.
-enum class FollowMode { Idle, Attending, Returning, Searching };
+enum class FollowMode { Idle, Attending, Returning, Searching, Manual };
 
 struct FollowCommand {
   bool send;          // false: nothing to write this tick
@@ -233,6 +242,7 @@ class HeadTracker {
     if (confidence < 0.0f || confidence > 1.0f) return false;
     if (sequence <= lastSequence_) return false;
     lastSequence_ = sequence;
+    if (inManual(nowMs)) return false;   // the person steering wins; consumed, not queued
     if (confidence < config_.confidenceToAttend) return false;
     lastTargetMs_ = nowMs;
     // -1 is the left of the image; +1 raw is robot-right on the yaw servo.
@@ -250,9 +260,44 @@ class HeadTracker {
     return true;
   }
 
+  // Joystick deflection, each in [-1, 1]: +x turns to the robot's right, +y
+  // tilts the head up. Returns whether it was accepted.
+  bool manual(float x, float y, uint32_t nowMs) {
+    if (!(x == x) || !(y == y) || x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) return false;
+    manual_ = true;
+    manualMs_ = nowMs;
+    manualX_ = x;
+    manualY_ = y;
+    mode_ = FollowMode::Manual;
+    haveGoal_ = false;
+    lastStepYaw_ = lastStepPitch_ = 0;
+    return true;
+  }
+
+  bool inManual(uint32_t nowMs) const { return manual_ && nowMs - manualMs_ < config_.manualResumeMs; }
+
   FollowCommand step(uint32_t nowMs) {
     if (nowMs - lastControlMs_ < config_.controlPeriodMs) return {false, yaw_, pitch_, mode_};
     lastControlMs_ = nowMs;
+    if (manual_) {
+      if (nowMs - manualMs_ >= config_.manualResumeMs) {
+        // Let go long enough: back to following, from wherever the head is now.
+        manual_ = false;
+        mode_ = FollowMode::Idle;
+        haveGoal_ = false;
+        return {false, yaw_, pitch_, mode_};
+      }
+      if (nowMs - manualMs_ >= config_.manualHoldMs) return {false, yaw_, pitch_, mode_};   // no input: hold
+      const int dy = manualStep(manualX_);
+      const int dp = config_.pitchEnabled ? manualStep(manualY_) * limits_.pitchUpSign : 0;
+      const int nextYaw = clamp(yaw_ + dy, limits_.yawMin, limits_.yawMax);
+      const int nextPitch = config_.pitchEnabled ? clamp(pitch_ + dp, pitchLow_, pitchHigh_) : pitch_;
+      if (nextYaw == yaw_ && nextPitch == pitch_) return {false, yaw_, pitch_, mode_};
+      yaw_ = nextYaw;
+      pitch_ = nextPitch;
+      record(nowMs);
+      return {true, yaw_, pitch_, mode_};
+    }
     if (mode_ == FollowMode::Attending && nowMs - lastTargetMs_ >= config_.targetTimeoutMs) {
       if (config_.search) beginSearch(nowMs);
       else beginReturn();
@@ -305,6 +350,16 @@ class HeadTracker {
   }
   static int roundToInt(float value) {
     return static_cast<int>(value >= 0.0f ? value + 0.5f : value - 0.5f);
+  }
+
+  // Squared deflection for fine control near the centre of the stick; any
+  // deliberate push (past a small dead zone) moves at least one raw step.
+  int manualStep(float deflection) const {
+    const float magnitude = deflection < 0 ? -deflection : deflection;
+    if (magnitude < 0.08f) return 0;
+    int step = roundToInt(magnitude * magnitude * config_.manualStepRaw);
+    if (step < 1) step = 1;
+    return deflection < 0 ? -step : step;
   }
 
   // Commanded position over the last few seconds, for yawAt() and pitchAt().
@@ -411,6 +466,9 @@ class HeadTracker {
   uint32_t lastControlMs_ = 0;
   uint32_t lastTargetMs_ = 0;
   uint32_t lastSequence_ = 0;
+  bool manual_ = false;
+  uint32_t manualMs_ = 0;
+  float manualX_ = 0.0f, manualY_ = 0.0f;
 };
 
 }  // namespace stanbot

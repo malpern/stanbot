@@ -834,6 +834,56 @@ final class RobotConnection: ObservableObject {
         followLog.write(Data("APP {\(fields)}\n".utf8))
     }
 
+    // MARK: Manual steering
+
+    /// True while the joystick or arrow keys are held.
+    @Published private(set) var steering = false
+    private var steerX = 0.0, steerY = 0.0
+    private var steerSequence: UInt32 = 0
+    private var steerTask: Task<Void, Never>?
+    /// How often the stick position is resent while held. The robot holds the
+    /// head still if it hears nothing for 300 ms, so this must be well inside.
+    static let steerInterval: Duration = .milliseconds(100)
+
+    /// Joystick deflection, each in [-1, 1]: +x turns the head to the robot's
+    /// right, +y tilts it up. Starts a session if none is running, without the
+    /// confirmation Follow asks for, since grabbing the stick is the intent.
+    /// Face targets are ignored while steering; 1.5 s after release the robot
+    /// resumes following from wherever the head was left.
+    func steer(x: Double, y: Double) {
+        guard followUnavailableReason == nil else { return }
+        steerX = min(max(x, -1), 1)
+        steerY = min(max(y, -1), 1)
+        if !steering {
+            steering = true
+            if case .following = follow {} else if pendingAuthorization == nil { startFollowing() }
+            sendSteer()
+            steerTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Self.steerInterval)
+                    guard let self, self.steering else { return }
+                    self.sendSteer()
+                }
+            }
+        }
+    }
+
+    func endSteering() {
+        guard steering else { return }
+        steering = false
+        steerTask?.cancel()
+        steerTask = nil
+        steerX = 0
+        steerY = 0
+        sendSteer()   // centred: the head stops now rather than after the hold timeout
+    }
+
+    private func sendSteer() {
+        steerSequence &+= 1
+        if steerSequence == 0 { steerSequence = 1 }
+        _ = send(String(format: "H,%u,%.2f,%.2f\n", steerSequence, steerX, steerY))
+    }
+
     func stopFollowing() {
         // An explicit stop also turns automatic following off: otherwise it
         // would start again a few seconds later, which is not what Stop means.

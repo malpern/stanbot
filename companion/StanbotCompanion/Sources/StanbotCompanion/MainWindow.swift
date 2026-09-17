@@ -26,6 +26,7 @@ struct CompanionView: View {
     @State private var reaction: EyeReaction?
     @State private var facts: ReactionFacts?
     @State private var lastFaceAt = Date()
+    @State private var heldArrows: Set<KeyEquivalent> = []
 
     private func mood(at now: Date) -> Mood {
         Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
@@ -67,6 +68,25 @@ struct CompanionView: View {
                 if state != .searching { lastFaceAt = Date() }
             }
             .onChange(of: robot.cameraState) { _, _ in lastFaceAt = Date() }
+            .focusable()
+            .focusEffectDisabled()
+            .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow], phases: [.down, .repeat, .up]) { press in
+                guard robot.followUnavailableReason == nil else { return .ignored }
+                if press.phase == .up {
+                    heldArrows.remove(press.key)
+                } else {
+                    heldArrows.insert(press.key)
+                }
+                if heldArrows.isEmpty {
+                    robot.endSteering()
+                } else {
+                    // Arrow keys steer at half deflection, for fine positioning.
+                    let x = (heldArrows.contains(.rightArrow) ? 0.5 : 0) - (heldArrows.contains(.leftArrow) ? 0.5 : 0)
+                    let y = (heldArrows.contains(.upArrow) ? 0.5 : 0) - (heldArrows.contains(.downArrow) ? 0.5 : 0)
+                    robot.steer(x: x, y: y)
+                }
+                return .handled
+            }
             // The stage is always black (a camera, or Stanbot asleep), so what
             // floats on it is always dark, whatever the system appearance.
             .environment(\.colorScheme, .dark)
@@ -339,6 +359,7 @@ private struct ControlBar: View {
                 PoweredBadge(since: since)
                     .transition(.scale(scale: 0.8, anchor: .trailing).combined(with: .opacity))
             }
+            Joystick()
             followButton
             Toggle(isOn: $robot.followAutomatically) {
                 Text("Automatic").foregroundStyle(.white)
@@ -383,6 +404,51 @@ private struct ControlBar: View {
         .tint(isFollowing ? .red : .stanbot)
         .disabled(!isFollowing && robot.followUnavailableReason != nil)
         .help(isFollowing ? "Stop following and power the head off" : (robot.followUnavailableReason ?? "Turn toward the selected face"))
+    }
+}
+
+/// Drag to point the head, for when the face isn't in view yet. Starts a
+/// session if needed; following resumes a moment after letting go. Arrow keys
+/// do the same while the window is focused.
+private struct Joystick: View {
+    @EnvironmentObject private var robot: RobotConnection
+    @State private var knob = CGSize.zero
+    private let size: CGFloat = 34
+    private var radius: CGFloat { size / 2 - 5 }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.white.opacity(robot.steering ? 0.22 : 0.12))
+            Circle()
+                .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+            Circle()
+                .fill(robot.steering ? Color.stanbot : .white)
+                .frame(width: 12, height: 12)
+                .offset(knob)
+        }
+        .frame(width: size, height: size)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    var dx = value.translation.width, dy = value.translation.height
+                    let length = (dx * dx + dy * dy).squareRoot()
+                    let limit = radius * 1.6
+                    if length > limit { dx *= limit / length; dy *= limit / length }
+                    knob = CGSize(width: dx * radius / limit, height: dy * radius / limit)
+                    // Screen y grows downward; up on the stick tilts the head up.
+                    robot.steer(x: dx / limit, y: -dy / limit)
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(duration: 0.25, bounce: 0)) { knob = .zero }
+                    robot.endSteering()
+                }
+        )
+        .disabled(robot.followUnavailableReason != nil)
+        .opacity(robot.followUnavailableReason != nil ? 0.4 : 1)
+        .help(robot.followUnavailableReason ?? "Drag to point the head. Following resumes after you let go. Arrow keys work too.")
+        .accessibilityLabel("Head position joystick")
     }
 }
 

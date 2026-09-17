@@ -408,6 +408,28 @@ On session 5's successor (`follow-20260916-165311.log`) it shows yaw holding at
 ~499 against a 506 goal with the face still 0.28 right of centre for 16 s: the
 head was at the calibration build's +48 limit, which is checklist step 4.
 
+## Manual steering, 2026-09-17
+
+For when the face is not in view yet, or the head should start somewhere
+else. The app's joystick (in the control bar) and the arrow keys send
+`H,<sequence>,<x>,<y>` every 100 ms while held, each in [-1, 1]: +x turns to
+the robot's right, +y tilts up. Release sends one centred line and stops.
+
+- **Starts a session if none is running**, without Follow's confirmation
+  (grabbing the stick is the intent), and over Wi-Fi with the passphrase.
+- **Steering wins.** While H lines arrive, face targets are consumed and
+  ignored, and the search does not run. Full deflection moves 4 raw per 80 ms
+  tick, about 15 deg/s; deflection is squared for fine positioning near the
+  centre, with a small dead zone. Always within the session's limits.
+- **Deadman.** No H line for 300 ms: the head holds still, so a dropped link
+  never keeps it moving.
+- **Hands back.** 1.5 s after the last H line the tracker returns to idle and
+  follows the next face from wherever the head was left.
+- **Keeps the session alive.** An H line counts as activity for the lease and
+  the idle ending, like an accepted target. `SBMV` reports `manual_inputs`; the
+  trace shows mode 4, drawn green in `tools/follow_replay.py`.
+- Allowed over Wi-Fi like `T,`: it only acts inside a session.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in
