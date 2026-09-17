@@ -80,23 +80,24 @@ constexpr int kFollowYawRange = 48;
 #endif
 // The calibration build halves pitch travel for the first sessions that power it.
 // Pitch level MEASURED 2026-09-17 by eye with find_pitch_level.py: raw 634
-// tilted up, 614 level (calibration-pitch-level.jsonl). First powered travel
-// around it: up to level +32 (~10 deg) and down to level -16 (~5 deg). Down is
-// the smaller because the unpowered head droops to 594 and the room before it
-// meets the body has not been seen; a session still never pushes pitch below
-// where it found it. Up travel is sized to reach 646 from that droop.
+// tilted up, 614 level (calibration-pitch-level.jsonl). Up: to vertical, level
+// +288 (90 deg at this servo's 3.2 raw per degree), after the operator reported
+// the +32 (~10 deg) of the first session barely tilted and that the head can
+// point straight up. Down: level -16 (~5 deg) until the room before the head
+// meets the body has been seen; the unpowered head droops to 594, and a
+// session still never pushes pitch below where it found it.
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
-  614 - 16, 614 + 32, 614,
+  614 - 16, 614 + 288, 614,
   +1, true,
-  64, 32, true};
+  320, 32, true};
 #else
 constexpr int kFollowYawRange = 144;
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
-  614 - 16, 614 + 32, 614,
+  614 - 16, 614 + 288, 614,
   +1, false,
-  64, 32, true};
+  320, 32, true};
 #endif
 // 288 is what the 2026-09-15 sweep traversed; nothing wider has been observed.
 static_assert(kFollowYawRange >= 48 && kFollowYawRange <= 288 && kFollowYawRange % 48 == 0,
