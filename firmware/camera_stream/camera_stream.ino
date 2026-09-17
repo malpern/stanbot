@@ -114,6 +114,7 @@ std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
 // The loop compares gazeSequence with its own copy and calls eyes.attend().
 std::atomic<int32_t> gazeXMilli{0}, gazeYMilli{0};
 std::atomic<uint32_t> gazeSequence{0};
+std::atomic<bool> gazeEngaged{false};
 std::atomic<bool> followRequested{false};
 std::atomic<bool> followStopRequested{false};
 // True while ANY motion routine (follow, sweeps, nudges, pitch level, power
@@ -586,7 +587,9 @@ void handleCommand(const char* line) {
   }
   else if (strncmp(line, "G,", 2) == 0) {
     float x = 0, y = 0;
-    if (stanbot::parseGazeLine(line + 2, x, y)) {
+    bool engaged = false;
+    if (stanbot::parseGazeLine(line + 2, x, y, engaged)) {
+      gazeEngaged.store(engaged);
       gazeXMilli.store(lroundf(x * 1000.0f));
       gazeYMilli.store(lroundf(y * 1000.0f));
       gazeSequence.fetch_add(1);
@@ -2214,6 +2217,7 @@ void loop() {
     gazeSeen = gaze;
     const stanbot::Gaze look = stanbot::gazeForImage(gazeXMilli.load() / 1000.0f, gazeYMilli.load() / 1000.0f);
     eyes.attend(look.x, look.y, now);
+    eyes.engage(gazeEngaged.load(), now);
   }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {

@@ -73,11 +73,12 @@ enum AutoFollow {
 }
 
 enum Gaze {
-    /// The G line for a face: the same image coordinates as a follow target.
-    static func line(for box: FaceBox) -> String {
+    /// The G line for a face: the same image coordinates as a follow target,
+    /// and 1 when the person faces the robot (the eyes lock on and dilate).
+    static func line(for box: FaceBox, engaged: Bool = false) -> String {
         let x = min(max(box.rect.midX * 2 - 1, -1), 1)
         let y = min(max(1 - box.rect.midY * 2, -1), 1)
-        return String(format: "G,%.3f,%.3f\n", x, y)
+        return String(format: "G,%.3f,%.3f,%d\n", x, y, engaged ? 1 : 0)
     }
 }
 

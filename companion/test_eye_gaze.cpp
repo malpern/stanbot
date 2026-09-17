@@ -19,9 +19,17 @@ int main() {
   float x = 9, y = 9;
   assert(parseGazeLine("0.250,-0.500", x, y) && x == 0.25f && y == -0.5f);
   assert(parseGazeLine("-1,1", x, y));
-  for (const char* bad : {"", "0.2", "1.1,0", "0,-1.01", "nan,0", "0,0,0", "0.1,0.2x", "a,b"}) {
+  for (const char* bad : {"", "0.2", "1.1,0", "0,-1.01", "nan,0", "0,0,0,0", "0.1,0.2x", "a,b"}) {
     assert(!parseGazeLine(bad, x, y));
   }
   assert(!parseGazeLine(nullptr, x, y));
+  // The engaged flag: optional, 0 or 1 only.
+  bool engaged = true;
+  assert(parseGazeLine("0.1,0.2", x, y, engaged) && !engaged);
+  assert(parseGazeLine("0.1,0.2,1", x, y, engaged) && engaged);
+  assert(parseGazeLine("0.1,0.2,0", x, y, engaged) && !engaged);
+  for (const char* bad : {"0.1,0.2,2", "0.1,0.2,1x", "0.1,0.2,", "0.1,0.2,1,1", "0.1,0.2,-1"}) {
+    assert(!parseGazeLine(bad, x, y, engaged));
+  }
   std::printf("eye gaze: all tests passed\n");
 }

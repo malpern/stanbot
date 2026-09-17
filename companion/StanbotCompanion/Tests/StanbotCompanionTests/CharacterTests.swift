@@ -154,4 +154,67 @@ final class CharacterTests: XCTestCase {
         XCTAssertLessThan(plain, 0.01, "a flat iris without the shader")
         XCTAssertGreaterThan(lcd, 0.03, "the grid varies the iris with the shader (measured 0.05)")
     }
+
+    func testEngagementNeedsAMomentOfFacingAndLetsGoGently() {
+        func face(yaw: Double, width: Double = 0.2) -> FaceBox {
+            FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: width, height: width), confidence: 0.9,
+                    pose: HeadPose(yaw: yaw, pitch: 0, roll: 0), frameWidth: 640)
+        }
+        var tracker = EngagementTracker()
+        XCTAssertFalse(tracker.update(face(yaw: 5), at: 0))
+        XCTAssertFalse(tracker.update(face(yaw: 5), at: 0.2), "a glance is not engagement")
+        XCTAssertTrue(tracker.update(face(yaw: 5), at: 0.45))
+        XCTAssertTrue(tracker.update(face(yaw: 60), at: 0.6), "a brief turn away does not break it")
+        XCTAssertTrue(tracker.update(face(yaw: 5), at: 0.8))
+        XCTAssertTrue(tracker.update(face(yaw: 0, width: 0.05), at: 2.0), "too small to judge: hold")
+        XCTAssertTrue(tracker.update(face(yaw: 60), at: 2.1))
+        XCTAssertFalse(tracker.update(face(yaw: 60), at: 2.95), "turned away for 0.8 s: let go")
+        XCTAssertFalse(tracker.update(nil, at: 3.5))
+        var lost = EngagementTracker()
+        _ = lost.update(face(yaw: 0), at: 0); _ = lost.update(face(yaw: 0), at: 0.5)
+        XCTAssertTrue(lost.engaged)
+        _ = lost.update(nil, at: 0.6)
+        XCTAssertFalse(lost.update(nil, at: 1.5), "no face for 0.8 s: let go")
+    }
+
+    func testGazePlannerMostlyLooksAwayFromSomeoneNotEngaging() {
+        var planner = GazePlanner(seed: 42)
+        let face = CGPoint(x: 0.3, y: -0.1)
+        var peekTime = 0.0, total = 0.0, awaySide = 0, away = 0
+        for _ in 0..<2000 {
+            let fixation = planner.next(face: face)
+            total += fixation.hold
+            if fixation.isPeek {
+                XCTAssertEqual(fixation.point, face)
+                XCTAssertLessThan(fixation.hold, 0.6, "a glance, not a stare")
+                peekTime += fixation.hold
+            } else {
+                away += 1
+                if fixation.point.x < 0 { awaySide += 1 }
+            }
+        }
+        XCTAssertLessThan(peekTime / total, 0.12, "looking at them a small share of the time")
+        XCTAssertGreaterThan(peekTime, 0)
+        XCTAssertEqual(awaySide, away, "looks to the other side from where they are")
+        var alone = GazePlanner(seed: 7)
+        for _ in 0..<500 {
+            let fixation = alone.next(face: nil)
+            XCTAssertFalse(fixation.isPeek)
+            XCTAssertGreaterThanOrEqual(abs(fixation.point.x), 0.3, "never resting on the middle of the view")
+        }
+    }
+
+    func testEngagedMoodLooksAtYouWithoutClaimingEyeContact() {
+        let face = FaceBox(rect: CGRect(x: 0.4, y: 0.4, width: 0.25, height: 0.25), confidence: 0.9)
+        let engaged = Mood.of(connection: .connected("x"), camera: .receiving, face: .tracking, box: face,
+                              follow: .idle, engaged: true)
+        XCTAssertTrue(engaged.engaged)
+        XCTAssertEqual(engaged.caption, "Looking at you")
+        XCTAssertEqual(engaged.closeness, 0.25, accuracy: 0.001)
+        let noticed = Mood.of(connection: .connected("x"), camera: .receiving, face: .tracking, box: face, follow: .idle)
+        XCTAssertFalse(noticed.engaged)
+        XCTAssertNotNil(noticed.look, "knows where they are, to glance at them")
+        XCTAssertFalse(Mood.of(connection: .connected("x"), camera: .receiving, face: .searching, box: nil,
+                               follow: .idle, engaged: true).engaged, "no face, nothing to lock onto")
+    }
 }

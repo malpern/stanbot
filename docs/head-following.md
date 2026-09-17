@@ -61,7 +61,7 @@ by `companion/test_head_tracker.cpp` in the same way as `session_guard.h`.
 | Line | Transport | Effect |
 | --- | --- | --- |
 | `T,<sequence>,<x>,<y>,<confidence>` | USB or TCP | Latest target. `x`/`y` in `[-1, 1]`, `-1` left/top; confidence in `[0, 1]`; sequence strictly increasing. Only consumed inside a session; anything queued before one is discarded as stale. With confidence at least 0.7 it also points the eyes. |
-| `G,<x>,<y>` | USB or TCP | Eye gaze only, any time: the drawn pupils look toward that image position. Moves nothing. The app sends one per analysed frame with a selected face while no session runs. |
+| `G,<x>,<y>[,<engaged>]` | USB or TCP | Eye gaze only, any time: the drawn eyes attend to that image position. `engaged` 1 means the person faces the robot: the eyes lock on and the pupils dilate; 0 or absent, they mostly look away with occasional glances (GazeBrain.h). Moves nothing. The app sends one per analysed frame with a selected face, during sessions too. |
 | `C,FOLLOW` | either | One bounded following session on both servos. Requires the stream on, an unused power window this boot, and measured limits. |
 | `C,UNFOLLOW` | either | End the session early with torque off. |
 

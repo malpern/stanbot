@@ -9,6 +9,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "GazeBrain.h"
 
 enum class StanbotEmotion : uint8_t {
   Normal, Angry, Glee, Happy, Sad, Worried, Focused, Annoyed, Surprised,
@@ -33,6 +34,13 @@ class StanbotEyes {
     hasTarget_ = true;
   }
 
+  // The person being looked at faces the robot (from the Mac's head-pose
+  // check). Lapses 900 ms after the last report, like attend().
+  void engage(bool engaged, uint32_t now) {
+    engaged_ = engaged;
+    lastEngagedMs_ = now;
+  }
+
   void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
 
   static bool emotionFromName(const char* name, StanbotEmotion& result) {
@@ -55,13 +63,13 @@ class StanbotEyes {
     lastFrameMs_ = now;
 
     const bool attending = hasTarget_ && now - lastTargetMs_ < 900;
-    if (!attending) {
-      // Quiet local idle drift; no network or camera claim is implied.
-      targetX_ = sinf(now / 2400.0f) * 0.18f;
-      targetY_ = sinf(now / 3100.0f) * 0.08f;
-    }
-    lookX_ += (targetX_ - lookX_) * 0.14f;
-    lookY_ += (targetY_ - lookY_) * 0.14f;
+    const bool engaged = attending && engaged_ && now - lastEngagedMs_ < 900;
+    // Saccades between fixations when no one engages (mostly looking away from
+    // a person who is there), smooth pursuit and dilated pupils when someone
+    // faces the robot. See GazeBrain.h; no camera claim is implied.
+    gaze_.update(now, attending, targetX_, targetY_, engaged);
+    lookX_ = gaze_.lookX;
+    lookY_ = gaze_.lookY;
     currentPose_.width += (targetPose_.width - currentPose_.width) * 0.10f;
     currentPose_.height += (targetPose_.height - currentPose_.height) * 0.10f;
     currentPose_.tilt += (targetPose_.tilt - currentPose_.tilt) * 0.10f;
@@ -97,6 +105,9 @@ class StanbotEyes {
   uint32_t blinkStartedMs_ = 0;
   bool blinking_ = false;
   bool hasTarget_ = false;
+  bool engaged_ = false;
+  uint32_t lastEngagedMs_ = 0;
+  stanbot::GazeBrain gaze_{0xC0FFEEu};
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
   Pose targetPose_{86, 112, 0, 1};
@@ -147,7 +158,9 @@ class StanbotEyes {
                int radius, int pupilX, int pupilY, uint16_t iris) {
     const int top = centerY - height / 2;
     display.fillRoundRect(centerX - width / 2, top, width, height, radius, iris);
-    const int pupilRadius = max(6, static_cast<int>(min(18, height / 4) * currentPose_.pupilScale));
+    // Dilation widens the pupil, never past the edge of the eye.
+    const int dilated = static_cast<int>(min(18, height / 4) * currentPose_.pupilScale * gaze_.dilation);
+    const int pupilRadius = max(6, min(dilated, min(width, height) / 2 - 4));
     display.fillCircle(centerX + pupilX, centerY + pupilY, pupilRadius, TFT_BLACK);
     if (height > 24) {
       display.fillCircle(centerX + pupilX - pupilRadius / 3,

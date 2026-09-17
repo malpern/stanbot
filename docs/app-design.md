@@ -62,6 +62,39 @@ interruptible, and is skipped or reduced to a fade under Reduce Motion.
 Reactions are tables of six keyframes (`Reactions.swift`), and which one fires
 for a change is a pure rule (`ReactionFacts.reaction`), both tested.
 
+## Gaze: looking away, then looking at you
+
+Both faces (the robot's and the Mac's) use the same idea of gaze:
+
+- **Nobody there:** quick jumps (saccades) between resting points around the
+  room, never resting on the middle of the view, where a person would stand.
+- **Someone there, not facing Stanbot:** mostly looking away, to the other
+  side and a little down, with an occasional brief, shy glance at them (22% of
+  fixations, each held about a quarter to half a second; about 5% of the time
+  overall on the robot's model).
+- **Someone facing Stanbot for a moment** (`EngagementTracker`: head turned
+  toward the camera for 0.4 s; let go after 0.8 s turned away or gone; faces
+  too small to judge hold the state): the eyes lock on and follow smoothly,
+  with tiny micro-saccades, and the pupils dilate by about 38%, quickly. When
+  the person turns away, the pupils relax slowly.
+
+Robot: `firmware/lib/StanbotEyes/src/GazeBrain.h`, tested natively by
+`companion/test_gaze_brain.cpp`. The app sends `G,<x>,<y>,<engaged>`; the flag
+lapses 900 ms after the last line, and gaze is now sent during follow sessions
+too.
+
+Mac, the fuller version (`StanbotEyesView`): the same planner
+(`GazePlanner`, tested) plus a small recognition widening as the eyes lock on,
+one slow soft blink about two seconds later, fewer blinks while attending, eyes
+drawn slightly together when the face is close (vergence, from face size),
+lids that lower when looking down, and two catchlights that lag the pupil
+slightly. Under Reduce Motion the eyes stay still and centred unless locked on.
+
+This is expression, not perception: "engaged" means a face turned toward the
+camera, the caption is "Looking at you" (what Stanbot does), and nothing claims
+eye contact. In the control bar the eyes are 56 pt, too small for dilation and
+catchlights to read; they show fully where the face is drawn large.
+
 ## The screen look (Metal)
 
 The eyes glow a little and, when drawn large, carry a faint LCD pixel grid with
@@ -98,6 +131,8 @@ impact tracked CPU in every row.
 | Connected, camera off (large eyes idle) | 11.0% | 4.9% |
 | Seeing someone | 9.0% | 0.5% |
 | Following | 9.8% | 1.1% |
+| Someone there, not facing (shy glances) | n/a | 1.6% |
+| Someone facing Stanbot (locked on) | n/a | 0.8% |
 
 What mattered, in order:
 - **A 30 fps clock** drove the eyes even when nothing moved (about 9% on its
@@ -126,7 +161,7 @@ Check any new continuous animation the same way:
 
 ```sh
 cd companion/StanbotCompanion && ./build-app.sh
-open -n --env STANBOT_PREVIEW=seeing build/Stanbot.app      # asleep | connecting | connected | seeing | following | refused
+open -n --env STANBOT_PREVIEW=seeing build/Stanbot.app      # asleep | connecting | connected | seeing | shy | engaged | following | refused
 open -n --env STANBOT_PREVIEW=following --env STANBOT_SNAPSHOT=/tmp/stanbot.png build/Stanbot.app
 ```
 

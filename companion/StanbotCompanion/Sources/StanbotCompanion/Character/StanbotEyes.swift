@@ -40,7 +40,7 @@ struct EyePose: Equatable {
 
 struct StanbotEyesView: View {
     var emotion: Emotion = .normal
-    /// Where to look, -1...1 on each axis (+x right, +y down), or nil to drift idly.
+    /// Where the person is, -1...1 on each axis (+x right, +y down), or nil.
     var look: CGPoint? = nil
     /// Closed eyes: asleep, not connected.
     var asleep = false
@@ -56,67 +56,90 @@ struct StanbotEyesView: View {
     var interactive = false
     /// The robot-screen look: glowing irises and, when large, an LCD pixel grid.
     var screenLook = false
+    /// The person faces Stanbot: lock onto `look`, follow it, dilate.
+    var engaged = false
+    /// How much of the camera frame the face fills, 0...1. Closer draws the eyes together.
+    var closeness = 0.0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointer: CGPoint?
     @State private var tapped: EyeReaction?
-    /// Idle gaze and blink as state changed a few times a second with SwiftUI
-    /// animations, not a 30 fps clock: measured 2026-09-16, the clock cost
-    /// 9-13% CPU with the eyes on screen and nothing happening.
-    @State private var drift = CGPoint.zero
+    @State private var recognized: EyeReaction?
+    /// Gaze and blink are state changed a few times a second and animated by
+    /// SwiftUI, not a 30 fps clock (measured 2026-09-16: the clock cost 9-13% CPU).
+    @State private var fixation = CGPoint.zero
+    @State private var micro = CGPoint.zero
     @State private var blinking = false
+    @State private var dilation = 1.0
+    @State private var latestFace: CGPoint?
+    @State private var planner = GazePlanner()
 
-    /// The newest of the reaction handed in and one from a click.
+    /// The newest of the reactions handed in, from a click, and from recognition.
     private var current: EyeReaction? {
-        [reaction, tapped].compactMap { $0 }.max { $0.date < $1.date }
+        [reaction, tapped, recognized].compactMap { $0 }.max { $0.date < $1.date }
     }
+
+    private var locked: Bool { engaged && look != nil && !asleep }
 
     var body: some View {
         let playing = reduceMotion ? nil : current
         KeyframeAnimator(initialValue: EyeMotion(), trigger: playing?.id) { motion in
             face(motion: motion)
         } keyframes: { _ in
-                let plan = playing?.plan ?? EyeReaction.Plan(durations: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
-                KeyframeTrack(\.openness) {
-                    CubicKeyframe(plan.openness[0], duration: plan.durations[0])
-                    CubicKeyframe(plan.openness[1], duration: plan.durations[1])
-                    CubicKeyframe(plan.openness[2], duration: plan.durations[2])
-                    CubicKeyframe(plan.openness[3], duration: plan.durations[3])
-                    CubicKeyframe(plan.openness[4], duration: plan.durations[4])
-                    CubicKeyframe(plan.openness[5], duration: plan.durations[5])
-                }
-                KeyframeTrack(\.dx) {
-                    CubicKeyframe(plan.dx[0], duration: plan.durations[0])
-                    CubicKeyframe(plan.dx[1], duration: plan.durations[1])
-                    CubicKeyframe(plan.dx[2], duration: plan.durations[2])
-                    CubicKeyframe(plan.dx[3], duration: plan.durations[3])
-                    CubicKeyframe(plan.dx[4], duration: plan.durations[4])
-                    CubicKeyframe(plan.dx[5], duration: plan.durations[5])
-                }
-                KeyframeTrack(\.dy) {
-                    CubicKeyframe(plan.dy[0], duration: plan.durations[0])
-                    CubicKeyframe(plan.dy[1], duration: plan.durations[1])
-                    CubicKeyframe(plan.dy[2], duration: plan.durations[2])
-                    CubicKeyframe(plan.dy[3], duration: plan.durations[3])
-                    CubicKeyframe(plan.dy[4], duration: plan.durations[4])
-                    CubicKeyframe(plan.dy[5], duration: plan.durations[5])
-                }
-                KeyframeTrack(\.scale) {
-                    SpringKeyframe(plan.scale[0], duration: plan.durations[0])
-                    SpringKeyframe(plan.scale[1], duration: plan.durations[1])
-                    SpringKeyframe(plan.scale[2], duration: plan.durations[2])
-                    SpringKeyframe(plan.scale[3], duration: plan.durations[3])
-                    SpringKeyframe(plan.scale[4], duration: plan.durations[4])
-                    SpringKeyframe(plan.scale[5], duration: plan.durations[5])
-                }
+            let plan = playing?.plan ?? EyeReaction.Plan(durations: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+            KeyframeTrack(\.openness) {
+                CubicKeyframe(plan.openness[0], duration: plan.durations[0])
+                CubicKeyframe(plan.openness[1], duration: plan.durations[1])
+                CubicKeyframe(plan.openness[2], duration: plan.durations[2])
+                CubicKeyframe(plan.openness[3], duration: plan.durations[3])
+                CubicKeyframe(plan.openness[4], duration: plan.durations[4])
+                CubicKeyframe(plan.openness[5], duration: plan.durations[5])
             }
-            .aspectRatio(4 / 3, contentMode: .fit)
-            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: emotion)
-            .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: look)
-            .animation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0), value: pointer)
-            .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0), value: asleep)
-            .accessibilityElement()
-            .accessibilityLabel(asleep ? "Stanbot, asleep" : "Stanbot, \(emotion.title.lowercased())")
+            KeyframeTrack(\.dx) {
+                CubicKeyframe(plan.dx[0], duration: plan.durations[0])
+                CubicKeyframe(plan.dx[1], duration: plan.durations[1])
+                CubicKeyframe(plan.dx[2], duration: plan.durations[2])
+                CubicKeyframe(plan.dx[3], duration: plan.durations[3])
+                CubicKeyframe(plan.dx[4], duration: plan.durations[4])
+                CubicKeyframe(plan.dx[5], duration: plan.durations[5])
+            }
+            KeyframeTrack(\.dy) {
+                CubicKeyframe(plan.dy[0], duration: plan.durations[0])
+                CubicKeyframe(plan.dy[1], duration: plan.durations[1])
+                CubicKeyframe(plan.dy[2], duration: plan.durations[2])
+                CubicKeyframe(plan.dy[3], duration: plan.durations[3])
+                CubicKeyframe(plan.dy[4], duration: plan.durations[4])
+                CubicKeyframe(plan.dy[5], duration: plan.durations[5])
+            }
+            KeyframeTrack(\.scale) {
+                SpringKeyframe(plan.scale[0], duration: plan.durations[0])
+                SpringKeyframe(plan.scale[1], duration: plan.durations[1])
+                SpringKeyframe(plan.scale[2], duration: plan.durations[2])
+                SpringKeyframe(plan.scale[3], duration: plan.durations[3])
+                SpringKeyframe(plan.scale[4], duration: plan.durations[4])
+                SpringKeyframe(plan.scale[5], duration: plan.durations[5])
+            }
+        }
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: emotion)
+        // Smooth pursuit while locked on: the eyes follow the face between frames.
+        .animation(reduceMotion || !locked ? nil : .spring(response: 0.28, dampingFraction: 1), value: look)
+        .animation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0), value: pointer)
+        .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0), value: asleep)
+        .onChange(of: look, initial: true) { _, new in latestFace = new }
+        .onChange(of: locked, initial: true) { was, now in
+            // Pupils widen quickly and relax slowly, as people's do.
+            let spring: Animation = now ? .spring(duration: 0.3, bounce: 0) : .spring(duration: 0.9, bounce: 0)
+            withAnimation(reduceMotion ? nil : spring) { dilation = now ? 1.38 : 1 }
+            if now && !was { recognized = EyeReaction(kind: .recognize) }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        if asleep { return "Stanbot, asleep" }
+        return locked ? "Stanbot, looking at you" : "Stanbot, \(emotion.title.lowercased())"
     }
 
     private func face(motion: EyeMotion) -> some View {
@@ -125,6 +148,9 @@ struct StanbotEyesView: View {
             let scale = min(proxy.size.width / 320, proxy.size.height / 240)
             let pose = EyePose.of(asleep ? .sleepy : emotion)
             let openness = max(0, (blinking && !asleep ? 0 : 1) * motion.openness)
+            let gaze = currentGaze
+            // Close faces draw the eyes together a little (vergence).
+            let converge = reduceMotion ? 0 : min(max(closeness, 0), 0.4) / 0.4 * 0.16
             ZStack {
                 if screen {
                     RoundedRectangle(cornerRadius: 36 * scale, style: .continuous).fill(.black)
@@ -134,8 +160,10 @@ struct StanbotEyesView: View {
                         closedEye(width: pose.width, scale: scale)
                         closedEye(width: pose.width, scale: scale)
                     } else {
-                        eye(pose: pose, scale: scale, openness: openness, gaze: gaze)
-                        eye(pose: pose, scale: scale, openness: openness, gaze: gaze)
+                        eye(pose: pose, scale: scale, openness: openness,
+                            gaze: CGPoint(x: gaze.x + converge, y: gaze.y))
+                        eye(pose: pose, scale: scale, openness: openness,
+                            gaze: CGPoint(x: gaze.x - converge, y: gaze.y))
                     }
                 }
                 .scaleEffect(motion.scale)
@@ -162,17 +190,37 @@ struct StanbotEyesView: View {
                 tapped = EyeReaction(kind: .giggle)
             }
         }
-        .task(id: asleep) { await blinkLoop() }
-        .task(id: IdleKey(scanning: scanning, asleep: asleep, reduceMotion: reduceMotion)) { await gazeLoop() }
+        .task(id: BlinkKey(asleep: asleep, locked: locked)) { await blinkLoop() }
+        .task(id: IdleKey(scanning: scanning, asleep: asleep, reduceMotion: reduceMotion, locked: locked,
+                          hasFace: look != nil)) { await gazeLoop() }
     }
 
-    private struct IdleKey: Hashable { let scanning: Bool, asleep: Bool, reduceMotion: Bool }
+    /// Pointer first; locked on, the face plus a micro-saccade; otherwise the
+    /// current fixation (which includes the odd glance at someone who is there).
+    private var currentGaze: CGPoint {
+        if let pointer { return pointer }
+        if locked, let look { return CGPoint(x: look.x + micro.x, y: look.y + micro.y) }
+        if reduceMotion { return .zero }
+        return fixation
+    }
 
-    /// A 180 ms blink every five to eight seconds while awake.
+    private struct IdleKey: Hashable { let scanning: Bool, asleep: Bool, reduceMotion: Bool, locked: Bool, hasFace: Bool }
+    private struct BlinkKey: Hashable { let asleep: Bool, locked: Bool }
+
+    /// A 180 ms blink every five to eight seconds; less often while locked on,
+    /// as people blink less when they attend. A little after locking on, one
+    /// slow, soft blink.
     private func blinkLoop() async {
         guard !asleep else { blinking = false; return }
+        if locked && !reduceMotion {
+            try? await Task.sleep(for: .milliseconds(2200))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.28)) { blinking = true }
+            try? await Task.sleep(for: .milliseconds(380))
+            withAnimation(.easeInOut(duration: 0.34)) { blinking = false }
+        }
         while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 5000...8000)))
+            try? await Task.sleep(for: .milliseconds(locked ? Int.random(in: 7000...11000) : Int.random(in: 5000...8000)))
             guard !Task.isCancelled else { return }
             withAnimation(.easeIn(duration: 0.09)) { blinking = true }
             try? await Task.sleep(for: .milliseconds(90))
@@ -180,32 +228,32 @@ struct StanbotEyesView: View {
         }
     }
 
-    /// Scanning sweeps side to side; otherwise a slow wander. Nothing under
-    /// Reduce Motion, and nothing while asleep.
+    /// Scanning sweeps side to side. Locked on, small micro-saccades around the
+    /// face. Otherwise quick jumps between fixations chosen by GazePlanner:
+    /// around the room, or away from someone who is there with the odd glance.
     private func gazeLoop() async {
-        guard !asleep, !reduceMotion else { drift = .zero; return }
+        guard !asleep, !reduceMotion else { fixation = .zero; micro = .zero; return }
+        let saccade = Animation.spring(response: 0.07, dampingFraction: 0.92)
         var right = true
         while !Task.isCancelled {
             if scanning {
                 // Look, pause, look the other way: reads as searching, and the
                 // pauses keep a loader that may run a while from animating constantly.
-                withAnimation(.easeInOut(duration: 0.6)) { drift = CGPoint(x: right ? 0.85 : -0.85, y: 0) }
+                withAnimation(.easeInOut(duration: 0.6)) { fixation = CGPoint(x: right ? 0.85 : -0.85, y: 0) }
                 right.toggle()
                 try? await Task.sleep(for: .milliseconds(1300))
-            } else {
-                // An occasional glance, not a constant wander: the wander animated
-                // ~60% of the time and cost ~10% CPU with the large eyes on screen
-                // (measured 2026-09-16). Resting between glances is also calmer.
-                withAnimation(.easeInOut(duration: 0.8)) {
-                    drift = CGPoint(x: Double.random(in: -0.25...0.25), y: Double.random(in: -0.1...0.1))
+            } else if locked {
+                withAnimation(saccade) {
+                    micro = CGPoint(x: Double.random(in: -0.04...0.04), y: Double.random(in: -0.03...0.03))
                 }
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 4000...7000)))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 700...1400)))
+            } else {
+                let next = planner.next(face: latestFace)
+                withAnimation(saccade) { fixation = next.point }
+                try? await Task.sleep(for: .milliseconds(Int(next.hold * 1000)))
             }
         }
     }
-
-    /// Pointer first, then the face being looked at, then a scan or an idle drift.
-    private var gaze: CGPoint { pointer ?? look ?? drift }
 
     /// Asleep: two soft downward curves, not a squashed open eye.
     private func closedEye(width: Double, scale: Double) -> some View {
@@ -217,10 +265,15 @@ struct StanbotEyesView: View {
     }
 
     private func eye(pose: EyePose, scale: Double, openness: Double, gaze: CGPoint) -> some View {
-        let height = max(6, pose.height * openness)
+        // Looking down lowers the lids a little, as it does on a face.
+        let lid = 1 - 0.18 * max(0, min(gaze.y, 1))
+        let height = max(6, pose.height * openness * lid)
         let radius = min(30, height / 2)
-        let pupil = max(6, min(18, height / 4) * pose.pupilScale)
+        let base = max(6, min(18, height / 4) * pose.pupilScale)
+        // Dilation widens the pupil, never past the edge of the eye.
+        let pupil = min(base * dilation, min(pose.width, height) / 2 - 4)
         let iris: Color = attending ? Color(red: 0, green: 1, blue: 1) : Color(white: 0.74)
+        let px = gaze.x * 18, py = gaze.y * 12
         return ZStack {
             RoundedRectangle(cornerRadius: radius * scale, style: .continuous)
                 .fill(iris)
@@ -229,13 +282,19 @@ struct StanbotEyesView: View {
                 .shadow(color: screenLook ? iris.opacity(attending ? 0.7 : 0.35) : .clear, radius: 14 * scale)
             Circle()
                 .fill(.black)
-                .frame(width: pupil * 2 * scale, height: pupil * 2 * scale)
-                .offset(x: gaze.x * 18 * scale, y: gaze.y * 12 * scale)
+                .frame(width: max(pupil, 6) * 2 * scale, height: max(pupil, 6) * 2 * scale)
+                .offset(x: px * scale, y: py * scale)
             if height > 24 {
+                // Two catchlights, which stay put a little while the pupil moves:
+                // the reflection belongs to the room, not the eye.
                 Circle()
                     .fill(.white)
                     .frame(width: max(2, pupil / 5) * 2 * scale, height: max(2, pupil / 5) * 2 * scale)
-                    .offset(x: (gaze.x * 18 - pupil / 3) * scale, y: (gaze.y * 12 - pupil / 3) * scale)
+                    .offset(x: (px * 0.85 - pupil / 3) * scale, y: (py * 0.85 - pupil / 3) * scale)
+                Circle()
+                    .fill(.white.opacity(0.75))
+                    .frame(width: max(1, pupil / 9) * 2 * scale, height: max(1, pupil / 9) * 2 * scale)
+                    .offset(x: (px * 0.85 + pupil / 2.6) * scale, y: (py * 0.85 + pupil / 3.2) * scale)
             }
             BrowCut(tilt: pose.tilt * scale)
                 .fill(.black)

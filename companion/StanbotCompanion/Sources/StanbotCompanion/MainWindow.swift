@@ -29,7 +29,8 @@ struct CompanionView: View {
 
     private func mood(at now: Date) -> Mood {
         Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
-                box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt))
+                box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
+                engaged: robot.engaged)
     }
 
     private var currentFacts: ReactionFacts {
@@ -319,7 +320,8 @@ private struct ControlBar: View {
     var body: some View {
         HStack(spacing: 14) {
             StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, attending: mood.attending,
-                            scanning: mood.scanning, reaction: reaction, interactive: true, screenLook: true)
+                            scanning: mood.scanning, reaction: reaction, interactive: true, screenLook: true,
+                            engaged: mood.engaged, closeness: mood.closeness)
                 .frame(width: 56, height: 42)
                 .help("Stanbot")
             VStack(alignment: .leading, spacing: 1) {

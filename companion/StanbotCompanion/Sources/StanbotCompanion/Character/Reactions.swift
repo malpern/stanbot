@@ -11,6 +11,7 @@ struct EyeReaction: Equatable {
         case shake      // refused or failed: a small no
         case giggle     // clicked: a little bounce
         case sparkle    // new firmware: a happy pulse
+        case recognize  // someone faces Stanbot: a small widening as the eyes lock on
     }
 
     let kind: Kind
@@ -44,6 +45,8 @@ struct EyeReaction: Equatable {
             Plan(dx: [-8, 8, -6, 5, -2, 0], durations: [0.05, 0.08, 0.08, 0.07, 0.06, 0.06])
         case .giggle:
             Plan(openness: [0.7, 0.7, 1, 1, 1, 1], dy: [-6, 0, -3, 0, -1, 0], durations: [0.09, 0.09, 0.08, 0.08, 0.06, 0.06])
+        case .recognize:
+            Plan(openness: [1.14, 1.14, 1, 1, 1, 1], scale: [1.04, 1.04, 1, 1, 1, 1], durations: [0.1, 0.16, 0.22, 0.01, 0.01, 0.01])
         case .sparkle:
             Plan(openness: [1, 0.15, 1, 1, 1, 1], scale: [1.08, 1, 1.05, 1, 1, 1], durations: [0.1, 0.08, 0.12, 0.1, 0.01, 0.01])
         }

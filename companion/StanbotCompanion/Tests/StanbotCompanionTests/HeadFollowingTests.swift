@@ -102,7 +102,7 @@ final class HeadFollowingTests: XCTestCase {
         robot.sendFollowTarget(face, sequence: 7)
         XCTAssertEqual(usb.read(), "", "no targets outside a session")
         robot.sendGaze(face)
-        XCTAssertEqual(usb.read(), "G,0.500,0.500\n", "the eyes still look outside a session")
+        XCTAssertEqual(usb.read(), "G,0.500,0.500,0\n", "the eyes still look outside a session; not engaged")
 
         robot.startFollowing()
         guard case .following = robot.follow else { return XCTFail("not following") }
@@ -114,7 +114,7 @@ final class HeadFollowingTests: XCTestCase {
         robot.sendFollowTarget(face, sequence: 42)   // a repeat is not sent again
         XCTAssertEqual(usb.read(), "T,41,0.500,0.500,0.91\nT,42,0.500,0.500,0.91\n")
         robot.sendGaze(face)
-        XCTAssertEqual(usb.read(), "", "during a session the targets drive the eyes")
+        XCTAssertEqual(usb.read(), "G,0.500,0.500,0\n", "gaze goes during a session too: targets carry no engagement")
 
         robot.stopFollowing()
         XCTAssertEqual(usb.read(), "C,UNFOLLOW\n")

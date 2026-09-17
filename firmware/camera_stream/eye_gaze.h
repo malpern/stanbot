@@ -21,14 +21,28 @@ inline float clampUnit(float value) { return value < -1.0f ? -1.0f : (value > 1.
 
 inline Gaze gazeForImage(float x, float y) { return {clampUnit(-x), clampUnit(y)}; }
 
-// G,<x>,<y>: look at an image position without moving the head. Rejects
-// anything malformed, NaN or out of range.
-inline bool parseGazeLine(const char* payload, float& x, float& y) {
+// G,<x>,<y>[,<engaged>]: look at an image position without moving the head.
+// `engaged` is 1 when the person faces the robot (the Mac's head-pose check),
+// 0 or absent otherwise. Rejects anything malformed, NaN or out of range.
+inline bool parseGazeLine(const char* payload, float& x, float& y, bool& engaged) {
   if (payload == nullptr) return false;
   char tail = 0;
-  if (std::sscanf(payload, "%f,%f%c", &x, &y, &tail) != 2) return false;
+  int flag = 0;
+  const int fields = std::sscanf(payload, "%f,%f,%d%c", &x, &y, &flag, &tail);
+  if (fields == 2) {
+    if (std::sscanf(payload, "%f,%f%c", &x, &y, &tail) != 2) return false;
+    flag = 0;
+  } else if (fields != 3 || (flag != 0 && flag != 1)) {
+    return false;
+  }
   if (!(x == x) || !(y == y)) return false;
+  engaged = flag == 1;
   return x >= -1.0f && x <= 1.0f && y >= -1.0f && y <= 1.0f;
+}
+
+inline bool parseGazeLine(const char* payload, float& x, float& y) {
+  bool engaged = false;
+  return parseGazeLine(payload, x, y, engaged);
 }
 
 }  // namespace stanbot

@@ -270,6 +270,9 @@ final class RobotConnection: ObservableObject {
     @Published private(set) var cameraImage: NSImage?
     @Published private(set) var faceBoxes: [FaceBox] = []
     @Published private(set) var faceState: FaceSelection.State = .searching
+    /// The selected person has been facing the robot for a moment (EngagementTracker).
+    @Published private(set) var engaged = false
+    private var engagement = EngagementTracker()
     @Published private(set) var firmware: FirmwareStatus = .unknown
     /// Display-only enhancements, set in Settings. Face detection is unaffected.
     @Published var enhancement: VideoEnhancement = .stored {
@@ -332,6 +335,8 @@ final class RobotConnection: ObservableObject {
         faceSelection.reset()
         faceBoxes = []
         faceState = .searching
+        engagement.reset()
+        engaged = false
     }
 
     private func publishFaces() {
@@ -865,11 +870,11 @@ final class RobotConnection: ObservableObject {
         _ = send(FollowTarget.line(for: box, sequence: sequence))
     }
 
-    /// Outside a session the robot's eyes still look toward the selected face;
-    /// during one they follow the targets instead. Moves only pupils on the display.
+    /// The robot's eyes look toward the selected face, and lock on with dilated
+    /// pupils while the person faces it. Sent during sessions too, since the
+    /// follow targets carry no engagement. Moves only pupils on the display.
     func sendGaze(_ box: FaceBox) {
-        if case .following = follow { return }
-        _ = send(Gaze.line(for: box))
+        _ = send(Gaze.line(for: box, engaged: engaged))
     }
 
     private func disconnected() {
@@ -984,6 +989,9 @@ final class RobotConnection: ObservableObject {
                 // is enhanced. Boxes are normalized, so they fit an upscaled frame.
                 self.faceSelection.update(boxes, at: receivedAt)
                 self.publishFaces()
+                let engagedNow = self.engagement.update(self.faceSelection.state == .tracking ? self.faceSelection.box : nil,
+                                                        at: receivedAt)
+                if engagedNow != self.engaged { self.engaged = engagedNow }
                 var sent: FaceBox?
                 if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
                     self.sendFollowTarget(box, sequence: frameSequence)
@@ -1171,7 +1179,7 @@ struct ActivityEntry: Identifiable, Equatable {
 // MARK: - Preview scenarios
 
 extension RobotConnection {
-    /// STANBOT_PREVIEW=asleep|connecting|connected|seeing|following|refused launches the app with
+    /// STANBOT_PREVIEW=asleep|connecting|connected|seeing|shy|engaged|following|refused launches the app with
     /// made-up state and no link at all: no USB, no Wi-Fi, no camera, no
     /// motion. It exists to look at the interface without a robot.
     static func fromEnvironment() -> RobotConnection {
@@ -1215,6 +1223,10 @@ extension RobotConnection {
                            pose: HeadPose(yaw: 8, pitch: 4, roll: 0), frameWidth: 640)
         faceBoxes = [face]
         faceState = .tracking
+        engaged = scenario == "engaged" || scenario == "following"
+        if scenario == "shy" {
+            faceBoxes = [FaceBox(rect: face.rect, confidence: 0.94, pose: HeadPose(yaw: 55, pitch: 4, roll: 0), frameWidth: 640)]
+        }
         lastAction = "Receiving local camera frames from StackChan."
         switch scenario {
         case "following":

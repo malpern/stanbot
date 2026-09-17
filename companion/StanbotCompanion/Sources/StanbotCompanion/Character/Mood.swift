@@ -17,13 +17,17 @@ struct Mood: Equatable {
     var look: CGPoint? = nil
     /// Glancing side to side: looking for the robot on the network.
     var scanning = false
+    /// The person faces Stanbot: the eyes lock on and the pupils dilate.
+    var engaged = false
+    /// How much of the frame the face fills, 0...1: closer faces draw the eyes together.
+    var closeness = 0.0
 
     /// No face for this long, camera on and nothing to do: Stanbot gets drowsy.
     static let drowsyAfter: TimeInterval = 90
 
     static func of(connection: RobotConnection.ConnectionState, camera: RobotConnection.CameraState,
                    face: FaceSelection.State, box: FaceBox?, follow: FollowState,
-                   noFaceFor: TimeInterval = 0) -> Mood {
+                   noFaceFor: TimeInterval = 0, engaged: Bool = false) -> Mood {
         switch connection {
         case .disconnected, .unavailable:
             return Mood(emotion: .sleepy, caption: "Asleep", asleep: true)
@@ -36,9 +40,12 @@ struct Mood: Equatable {
             return Mood(emotion: .worried, caption: "Something’s wrong")
         }
         let look = box.map { CGPoint(x: $0.rect.midX * 2 - 1, y: 1 - $0.rect.midY * 2) }
+        let closeness = Double(box?.rect.width ?? 0)
+        let locked = engaged && face == .tracking && box != nil
         if case .following = follow {
             return face == .tracking
-                ? Mood(emotion: .focused, caption: "Following you", attending: true, look: look)
+                ? Mood(emotion: .focused, caption: "Following you", attending: true, look: look,
+                       engaged: locked, closeness: closeness)
                 : Mood(emotion: .normal, caption: "Looking for you")
         }
         switch camera {
@@ -53,8 +60,13 @@ struct Mood: Equatable {
                 ? Mood(emotion: .sleepy, caption: "Getting sleepy…")
                 : Mood(emotion: .normal, caption: "Looking around")
         case .acquiring: return Mood(emotion: .surprised, caption: "Is someone there?")
-        case .tracking: return Mood(emotion: .happy, caption: "I see someone", attending: true, look: look)
-        case .uncertain: return Mood(emotion: .skeptic, caption: "Where did you go?")
+        case .tracking:
+            // Engaged: Stanbot looks at you. Otherwise it knows someone is there
+            // and mostly looks away, with the odd glance.
+            return locked
+                ? Mood(emotion: .normal, caption: "Looking at you", attending: true, look: look, engaged: true, closeness: closeness)
+                : Mood(emotion: .happy, caption: "I see someone", attending: true, look: look, closeness: closeness)
+        case .uncertain: return Mood(emotion: .skeptic, caption: "Where did you go?", look: look)
         }
     }
 }
