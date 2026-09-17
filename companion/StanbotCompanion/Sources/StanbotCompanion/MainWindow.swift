@@ -51,12 +51,8 @@ struct CompanionView: View {
         // Re-evaluated every few seconds so Stanbot can get drowsy on its own.
         TimelineView(.periodic(from: .now, by: 5)) { timeline in
             let mood = mood(at: timeline.date)
+            // Nothing floats over the picture: follow controls live in the toolbar.
             LiveView(mood: mood, reaction: reaction)
-                .overlay(alignment: .bottom) {
-                    ControlBar(mood: mood, reaction: reaction)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 18)
-                }
         }
             .onChange(of: currentFacts, initial: true) { _, new in
                 if let old = facts, let kind = ReactionFacts.reaction(from: old, to: new) {
@@ -107,6 +103,8 @@ struct CompanionView: View {
     }
 
     private var subtitle: String {
+        // A refusal or failure is what matters most while it stands.
+        if case .finished(let result) = robot.follow, !result.retryable { return result.summary }
         switch robot.connection {
         case .connected:
             if case .reported(let info) = robot.firmware { return "\(robot.linkSummary) · \(info.shortCommit)" }
@@ -144,6 +142,13 @@ struct CompanionView: View {
                 Label("Connection", systemImage: "cable.connector")
             }
             .help("Connection")
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            if case .following(let since) = robot.follow {
+                PoweredBadge(since: since)
+            }
+            Joystick()
+            FollowButton()
         }
         ToolbarItem(placement: .primaryAction) {
             Button { showInspector.toggle() } label: {
@@ -332,72 +337,22 @@ private struct FaceBoxView: View {
 
 // MARK: - Control bar
 
-private struct ControlBar: View {
+/// One button that becomes Stop while following, so it stays under the
+/// pointer. Safety stays plain: a literal label, red, always one click away.
+private struct FollowButton: View {
     @EnvironmentObject private var robot: RobotConnection
-    let mood: Mood
-    let reaction: EyeReaction?
-
-    var body: some View {
-        HStack(spacing: 14) {
-            StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, attending: mood.attending,
-                            scanning: mood.scanning, reaction: reaction, interactive: true, screenLook: true,
-                            engaged: mood.engaged, closeness: mood.closeness)
-                .frame(width: 56, height: 42)
-                .help("Stanbot")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(mood.caption)
-                    .font(.headline)
-                    .fontDesign(.rounded)
-                    .foregroundStyle(.white)
-                    .contentTransition(.opacity)
-                    .animation(.smooth(duration: 0.2), value: mood.caption)
-                status
-            }
-            .lineLimit(1)
-            Spacer(minLength: 12)
-            if case .following(let since) = robot.follow {
-                PoweredBadge(since: since)
-                    .transition(.scale(scale: 0.8, anchor: .trailing).combined(with: .opacity))
-            }
-            Joystick()
-            followButton
-            Toggle(isOn: $robot.followAutomatically) {
-                Text("Automatic").foregroundStyle(.white)
-            }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .help("Start following whenever Stanbot sees someone")
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 16)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 680)
-        .stanbotGlass(in: Capsule())
-        .animation(.spring(duration: 0.35, bounce: 0), value: isFollowing)
-    }
 
     private var isFollowing: Bool {
         if case .following = robot.follow { return true }
         return false
     }
 
-    @ViewBuilder
-    private var status: some View {
-        switch robot.follow {
-        case .finished(let result):
-            Text(result.summary).font(.caption).foregroundStyle(result.retryable ? Color.white.opacity(0.7) : Color.orange)
-        default:
-            Text(robot.lastAction).font(.caption).foregroundStyle(.white.opacity(0.7))
-        }
-    }
-
-    /// One button that becomes Stop while following, so it stays under the
-    /// pointer. Safety stays plain: a literal label, red, always one click away.
-    private var followButton: some View {
+    var body: some View {
         Button(role: isFollowing ? .destructive : nil) {
             isFollowing ? robot.stopFollowing() : (robot.confirmingFollow = true)
         } label: {
             Label(isFollowing ? "Stop" : "Follow", systemImage: isFollowing ? "stop.fill" : "scope")
+                .labelStyle(.titleAndIcon)
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.borderedProminent)
@@ -413,7 +368,7 @@ private struct ControlBar: View {
 private struct Joystick: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var knob = CGSize.zero
-    private let size: CGFloat = 34
+    private let size: CGFloat = 26
     private var radius: CGFloat { size / 2 - 5 }
 
     var body: some View {
@@ -424,7 +379,7 @@ private struct Joystick: View {
                 .strokeBorder(.white.opacity(0.35), lineWidth: 1)
             Circle()
                 .fill(robot.steering ? Color.stanbot : .white)
-                .frame(width: 12, height: 12)
+                .frame(width: 9, height: 9)
                 .offset(knob)
         }
         .frame(width: size, height: size)

@@ -76,6 +76,10 @@ struct TransportSettingsView: View {
             Divider().padding(.vertical, 6)
 
             Section {
+                Toggle("Follow automatically", isOn: $robot.followAutomaticallyOnLaunch)
+                Text("Start following whenever Stanbot sees someone. On at every launch; Stop pauses it until the app is next opened.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Picker("Sound on firmware change", selection: $chime) {
                     ForEach(FirmwareChime.allCases) { option in
                         Text(option.title).tag(option)

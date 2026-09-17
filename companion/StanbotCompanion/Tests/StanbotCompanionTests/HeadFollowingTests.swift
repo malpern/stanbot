@@ -206,6 +206,33 @@ final class HeadFollowingTests: XCTestCase {
         XCTAssertFalse(robot.followAutomatically, "Stop means stop, not start again in four seconds")
     }
 
+    /// Following is automatic at every launch: Stop pauses it for this run
+    /// only, and only the Settings switch changes what happens next time.
+    @MainActor
+    func testFollowingIsAutomaticAgainOnTheNextLaunch() {
+        let key = RobotConnection.followAutomaticallyKey
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        UserDefaults.standard.removeObject(forKey: key)
+
+        let (first, usb) = connected(measured: true)
+        XCTAssertTrue(first.followAutomatically, "on by default")
+        first.startFollowing()
+        first.stopFollowing()
+        XCTAssertFalse(first.followAutomatically)
+        XCTAssertTrue(first.followAutomaticallyOnLaunch, "Stop does not change the preference")
+        usb.close()
+
+        let (relaunched, usb2) = connected(measured: true)
+        XCTAssertTrue(relaunched.followAutomatically, "automatic again after relaunch")
+        relaunched.followAutomaticallyOnLaunch = false
+        XCTAssertFalse(relaunched.followAutomatically, "the Settings switch applies now")
+        usb2.close()
+        let (afterSetting, usb3) = connected(measured: true)
+        XCTAssertFalse(afterSetting.followAutomatically, "and on later launches")
+        usb3.close()
+    }
+
     // MARK: manual steering
 
     private func lines(_ text: String, prefix: String) -> [String] {

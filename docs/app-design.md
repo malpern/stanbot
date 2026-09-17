@@ -13,9 +13,11 @@ the robot's view, with a little of the robot's character in it.
   window subtitle.
 - **Toolbar:** camera on/off, the expression menu, the connection menu, and
   the inspector toggle.
-- **Floating control bar** (Liquid Glass on macOS 26, a material before):
-  Stanbot's face and a caption, then Follow (or Stop while following, with a
-  red "Head powered" timer), and the Automatic toggle.
+- **Nothing over the picture (2026-09-17).** The floating control bar was
+  removed. Follow/Stop, the head-position joystick and the red "Head powered"
+  badge sit at the right of the toolbar; a standing refusal or failure shows as
+  the window subtitle; "Follow automatically" is in Settings, on at every
+  launch (Stop pauses it until the app is next opened).
 - **Inspector** (right, hideable, remembered): Robot, Head, Seeing, Session,
   Activity. The detail that used to be six status cards.
 - **Menus:** a Robot menu (Follow ⇧⌘F, Stop ⌘., Follow Automatically, camera
@@ -110,7 +112,7 @@ the app only learns the head's motion from telemetry after a session.
 
 This is expression, not perception: "engaged" means a face turned toward the
 camera, the caption is "Looking at you" (what Stanbot does), and nothing claims
-eye contact. In the control bar the eyes are 56 pt, too small for dilation and
+eye contact. In the inspector the eyes are small, too small for dilation and
 catchlights to read; they show fully where the face is drawn large.
 
 ## The screen look (Metal)

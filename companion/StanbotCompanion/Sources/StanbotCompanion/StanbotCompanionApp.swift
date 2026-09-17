@@ -297,8 +297,20 @@ final class RobotConnection: ObservableObject {
             deskCameraEnabled ? deskCamera.start() : deskCamera.stop()
         }
     }
-    @Published var followAutomatically: Bool = UserDefaults.standard.object(forKey: "StanbotFollowAutomatically") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(followAutomatically, forKey: "StanbotFollowAutomatically") }
+    /// Whether a session starts by itself when a face is confirmed, for this
+    /// run of the app. Starts from the Settings preference on every launch, so
+    /// a Stop (which turns it off) lasts only until the app is next opened.
+    @Published var followAutomatically: Bool = RobotConnection.followAutomaticallyOnLaunch
+    /// The Settings preference: follow automatically whenever the app opens.
+    @Published var followAutomaticallyOnLaunch: Bool = RobotConnection.followAutomaticallyOnLaunch {
+        didSet {
+            UserDefaults.standard.set(followAutomaticallyOnLaunch, forKey: Self.followAutomaticallyKey)
+            followAutomatically = followAutomaticallyOnLaunch
+        }
+    }
+    static let followAutomaticallyKey = "StanbotFollowAutomatically"
+    static var followAutomaticallyOnLaunch: Bool {
+        UserDefaults.standard.object(forKey: followAutomaticallyKey) as? Bool ?? true
     }
     private var lastFollowEnded: Date?
     private var targetSequence: UInt32 = 0

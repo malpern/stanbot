@@ -411,7 +411,7 @@ head was at the calibration build's +48 limit, which is checklist step 4.
 ## Manual steering, 2026-09-17
 
 For when the face is not in view yet, or the head should start somewhere
-else. The app's joystick (in the control bar) and the arrow keys send
+else. The app's joystick (top right of the toolbar) and the arrow keys send
 `H,<sequence>,<x>,<y>` every 100 ms while held, each in [-1, 1]: +x turns to
 the robot's right, +y tilts up. Release sends one centred line and stops.
 
