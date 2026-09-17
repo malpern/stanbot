@@ -88,22 +88,34 @@ final class WakeScanTests: XCTestCase {
         XCTAssertFalse(start(faceTracked: false, wokeAt: now, reason: "Connect to the robot first."))
     }
 
-    /// A robot that has just come back from a reboot gets the same allowance as
-    /// a wake: one session with nobody in view, in which it looks around.
-    func testASessionStartsWithoutAFaceJustAfterABoot() {
+    /// A robot that owes a look around gets one session with nobody in view.
+    /// The allowance has NO clock: on 2026-09-17 a 12 s one, and a 30 s test on
+    /// the uptime, both lapsed during a 90 s flash-and-check cycle, and the
+    /// robot came back and sat still.
+    func testASessionStartsWithoutAFaceWhileTheRobotOwesALookAround() {
         let now = Date()
-        func start(faceTracked: Bool, bootedAt: Date?, lastEnded: Date? = nil) -> Bool {
+        func start(faceTracked: Bool, owes: Bool, lastEnded: Date? = nil) -> Bool {
             AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
                                    faceTracked: faceTracked, lastEnded: lastEnded, now: now,
-                                   wokeAt: nil, bootedAt: bootedAt)
+                                   wokeAt: nil, robotOwesLookAround: owes)
         }
-        XCTAssertFalse(start(faceTracked: false, bootedAt: nil), "no face, no boot: nothing to do")
-        XCTAssertTrue(start(faceTracked: false, bootedAt: now.addingTimeInterval(-2)), "just back: look around")
-        XCTAssertFalse(start(faceTracked: false, bootedAt: now.addingTimeInterval(-AutoFollow.wakeScanWindow - 1)),
-                       "the boot was a while ago")
+        XCTAssertFalse(start(faceTracked: false, owes: false), "no face, nothing owed: nothing to do")
+        XCTAssertTrue(start(faceTracked: false, owes: true), "owed: look around")
+        // However long the camera took to come up, the allowance is still good.
+        XCTAssertTrue(start(faceTracked: false, owes: true, lastEnded: now.addingTimeInterval(-99999)))
         // Nor is it held back by the gap after the last session.
-        XCTAssertTrue(start(faceTracked: false, bootedAt: now.addingTimeInterval(-1),
-                            lastEnded: now.addingTimeInterval(-1)))
+        XCTAssertTrue(start(faceTracked: false, owes: true, lastEnded: now.addingTimeInterval(-1)))
+    }
+
+    /// The robot's own answer is preferred over the uptime guess.
+    func testTheRobotSaysWhetherItStillOwesALookAround() {
+        let base = #"SBVR {"sketch":"camera_stream","commit":"abc","dirty":false,"built":"x","protocol":1,"# +
+                   #""follow_limits_measured":true,"follow_pitch":true,"follow_yaw_range":288,"uptime_ms":"#
+        XCTAssertEqual(FirmwareInfo.parse(base + #"91000,"scan_pending":true}"#)?.scanPending, true,
+                       "up 91 s and still owes one: a stopwatch would have said no")
+        XCTAssertEqual(FirmwareInfo.parse(base + #"4000,"scan_pending":false}"#)?.scanPending, false,
+                       "just booted but already scanned: no second one")
+        XCTAssertNil(FirmwareInfo.parse(base + "4000}")?.scanPending, "older firmware: fall back to the uptime")
     }
 
     /// Stanbot opens its eyes before it moves its head: while the app's own
@@ -113,7 +125,7 @@ final class WakeScanTests: XCTestCase {
         func start(faceTracked: Bool, waking: Bool) -> Bool {
             AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
                                    faceTracked: faceTracked, lastEnded: nil, now: now,
-                                   wokeAt: nil, bootedAt: now, appIsWaking: waking)
+                                   wokeAt: nil, robotOwesLookAround: true, appIsWaking: waking)
         }
         XCTAssertTrue(start(faceTracked: false, waking: false), "eyes open: the look around may start")
         XCTAssertFalse(start(faceTracked: false, waking: true), "eyes still opening: wait")
@@ -132,7 +144,7 @@ final class WakeScanTests: XCTestCase {
         // is why a new boot clears the finished state (RobotConnection).
         XCTAssertTrue(AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
                                              faceTracked: false, lastEnded: nil, now: Date(),
-                                             bootedAt: Date()))
+                                             robotOwesLookAround: true))
     }
 
     /// The uptime that tells a reboot from a reconnection.

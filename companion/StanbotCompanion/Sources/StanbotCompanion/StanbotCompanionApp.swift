@@ -360,12 +360,13 @@ final class RobotConnection: ObservableObject {
     /// When the owner last woke the robot, until the look-around session it asks
     /// for has started (AutoFollow.wakeScanWindow).
     private var wokeAt: Date?
-    /// When the app learned the robot had just come back (a flash, a power
-    /// cycle), from the uptime in its own version report. Like a wake, this
-    /// buys one session with nobody in view, in which the robot looks around.
-    /// Consumed once per boot: `bootSessionRequested`.
-    private var bootedAt: Date?
-    private var bootSessionRequested = false
+    /// The robot has not run a session since it booted, so its first one will
+    /// begin by looking for someone -- and this asks for that session, even
+    /// with nobody in view. Set from `scan_pending` in the robot's own version
+    /// report, cleared when the session has been asked for. No clock: it stands
+    /// until it is used, because the camera can take longer to come up than any
+    /// window, which is what stopped this working on 2026-09-17.
+    private var robotOwesLookAround = false
     private var lastReportedUptimeMs: Int?
     /// While the app's own eyes are opening (MainWindow's waking sequence), no
     /// session starts: the head must not move before Stanbot has opened its
@@ -749,9 +750,12 @@ final class RobotConnection: ObservableObject {
             if let uptime = info.uptimeMs {
                 let newBoot = lastReportedUptimeMs.map { uptime < $0 } ?? true
                 lastReportedUptimeMs = uptime
-                if newBoot, Double(uptime) / 1000 < AutoFollow.justBootedUptime {
-                    bootedAt = Date()
-                    bootSessionRequested = false
+                // The robot's own answer when it gives one: it knows whether it
+                // still owes a look around. The uptime is the fallback for
+                // firmware that predates scan_pending.
+                let owed = info.scanPending ?? (Double(uptime) / 1000 < AutoFollow.justBootedUptime)
+                if newBoot, owed {
+                    robotOwesLookAround = true
                     // The robot that ended the last session no longer exists.
                     // Without this the reboot's own look around never starts:
                     // a session ended with "stopped_for_reboot" is not
@@ -1290,22 +1294,21 @@ final class RobotConnection: ObservableObject {
                 // The wake's own session: until it has been asked for and not
                 // refused, and not more often than the robot's cooldown allows.
                 let wake = (self.wakeSessionRequested || Date() < self.nextWakeAttempt) ? nil : self.wokeAt
-                let boot = self.bootSessionRequested ? nil : self.bootedAt
+                let owes = self.robotOwesLookAround
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
                                           state: self.follow, faceTracked: self.faceSelection.state == .tracking,
-                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake, bootedAt: boot,
-                                          appIsWaking: self.appIsWaking) {
+                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake,
+                                          robotOwesLookAround: owes, appIsWaking: self.appIsWaking) {
                     // Just woken or just back, with nobody in view: this session
                     // is the robot looking around; the first face it then finds
                     // is a finding.
-                    let lookingAround = (wake != nil || boot != nil) && self.faceSelection.state != .tracking
+                    let lookingAround = (wake != nil || owes) && self.faceSelection.state != .tracking
                     if wake != nil { self.wakeSessionRequested = true }
-                    if boot != nil { self.bootSessionRequested = true }
+                    self.robotOwesLookAround = false
                     self.lookingAroundSince = lookingAround ? Date() : nil
                     self.startFollowing()
                 }
                 if let woke = self.wokeAt, Date().timeIntervalSince(woke) > AutoFollow.wakeScanWindow { self.wokeAt = nil }
-                if let booted = self.bootedAt, Date().timeIntervalSince(booted) > AutoFollow.wakeScanWindow { self.bootedAt = nil }
                 if let since = self.lookingAroundSince {
                     if self.faceSelection.state == .tracking {
                         self.foundSomeoneAt = Date()

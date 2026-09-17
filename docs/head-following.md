@@ -370,12 +370,21 @@ agree or the head powers up and does nothing for 12 s:
 - The robot looks around on the **first session after a boot**
   (`scanOnFirstSession`, consumed once), as well as within 20 s of a `C,WAKE`.
 - The app **asks for that session**. A session is what powers the head, and the
-  app starts one only for a confirmed face, or now also within 12 s of a wake or
-  of learning the robot has just booted (`AutoFollow.shouldStart`). It tells a
-  reboot from a reconnection by the `uptime_ms` the robot reports in `V`: under
-  30 s is a fresh boot, and an uptime that has gone *backwards* since the last
-  report is a new one. Reconnecting to a robot that has been up for hours buys
-  nothing -- it has been sitting there with nobody to find.
+  app starts one only for a confirmed face, within 12 s of a wake, or while the
+  robot says it still owes a look around (`AutoFollow.shouldStart`). Reconnecting
+  to a robot that has been up for hours and already scanned buys nothing.
+
+**Do not gate this on a clock -- it was, twice, and both failed the same way.**
+The first version asked only within 30 s of the reported `uptime_ms`, and held
+the allowance for 12 s after that. A flash, its verification and the sleep/wake
+base check take 60-90 s before the app is reopened, so the robot was always
+"up too long" by the time anything connected, and it came back from every flash
+and sat perfectly still. A stopwatch here cannot agree with one there. The robot
+now reports **`scan_pending`** in `V` -- it knows whether it has run a session
+since booting -- and the app asks on that, with no window at all; the allowance
+stands until the session is actually requested, because the camera can take
+longer to come up than any window worth choosing. `uptime_ms` remains as the
+fallback for firmware that predates the field.
 
 Before this, a just-flashed robot sat perfectly still with nobody in view,
 however long it waited, because nothing had been lost and so nothing searched.

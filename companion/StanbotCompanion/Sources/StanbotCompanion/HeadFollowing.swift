@@ -67,29 +67,31 @@ enum AutoFollow {
     /// robot can look around for someone (the firmware's wake scan).
     static let wakeScanWindow: TimeInterval = 12
 
-    /// A robot reporting an uptime under this has just booted -- a flash, a
-    /// power cycle -- rather than having been up while the app reconnected to
-    /// it. The firmware looks around on its first session after a boot, so the
-    /// app asks for that session; matching the two is the point of the test,
-    /// since a session started for a scan that never runs would power the head
-    /// and do nothing for 12 s.
+    /// Fallback only, for firmware that predates `scan_pending`: an uptime under
+    /// this means the robot has just booted. The robot's own answer is better
+    /// and is preferred -- a stopwatch here cannot agree with one there, and a
+    /// flash plus its checks routinely takes longer than any window worth
+    /// choosing. That mismatch is exactly what stopped the look around
+    /// happening on 2026-09-17, with 30 s against a 90 s flash cycle.
     static let justBootedUptime: TimeInterval = 30
 
-    /// `wokeAt`: when the owner last woke the robot. `bootedAt`: when the app
-    /// learned the robot had just come back (nil if it had been up a while).
-    /// After either, a session starts even with no face and the robot looks
-    /// around for someone. Otherwise a session needs a face to follow.
+    /// `wokeAt`: when the owner last woke the robot. `robotOwesLookAround`: the
+    /// robot has not run a session since it booted, so its first one will begin
+    /// by looking for someone -- and this asks for that session. Deliberately
+    /// NOT time-limited: it stands until the session is asked for, because the
+    /// camera can take longer to come up than any window. After either, a
+    /// session starts even with no face. Otherwise one needs a face to follow.
     static func shouldStart(enabled: Bool, unavailableReason: String?, state: FollowState,
                             faceTracked: Bool, lastEnded: Date?, now: Date, wokeAt: Date? = nil,
-                            bootedAt: Date? = nil, appIsWaking: Bool = false) -> Bool {
+                            robotOwesLookAround: Bool = false, appIsWaking: Bool = false) -> Bool {
         // Stanbot opens its eyes, and only then moves its head -- on the robot's
         // screen, where the firmware holds the session until the lids are up,
         // and here, where the app's own waking runs 2.4 s. Asked for
         // 2026-09-17, having watched the head swing behind a boot screen.
         if appIsWaking { return false }
         let justWoke = wokeAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
-        let justBooted = bootedAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
-        guard enabled, unavailableReason == nil, faceTracked || justWoke || justBooted else { return false }
+        guard enabled, unavailableReason == nil,
+              faceTracked || justWoke || robotOwesLookAround else { return false }
         switch state {
         case .following: return false
         case .idle: break
@@ -98,7 +100,8 @@ enum AutoFollow {
             guard result.retryable else { return false }
         }
         // The gap between sessions still applies, except to the one a wake asks for.
-        if !justWoke, !justBooted, let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
+        if !justWoke, !robotOwesLookAround, let lastEnded,
+           now.timeIntervalSince(lastEnded) < restartGap { return false }
         return true
     }
 }

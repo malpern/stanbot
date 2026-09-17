@@ -29,6 +29,13 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
     /// reconnected to -- the difference between wanting a look around and not.
     /// Older firmware does not send it; nil then.
     let uptimeMs: Int?
+    /// The robot still owes a look around: it has not run a session since it
+    /// booted, so its first one will begin by looking for someone. The app asks
+    /// for that session on the strength of this, rather than guessing from the
+    /// uptime -- a stopwatch cannot agree with the robot, and a flash plus its
+    /// checks routinely takes longer than any window worth choosing. Absent on
+    /// older firmware; nil then, and the uptime is used instead.
+    let scanPending: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case sketch, commit, dirty, built
@@ -37,6 +44,7 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         case followPitch = "follow_pitch"
         case followYawRange = "follow_yaw_range"
         case uptimeMs = "uptime_ms"
+        case scanPending = "scan_pending"
     }
 
     init(from decoder: Decoder) throws {
@@ -50,6 +58,7 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         followPitch = try c.decodeIfPresent(Bool.self, forKey: .followPitch) ?? false
         followYawRange = try c.decodeIfPresent(Int.self, forKey: .followYawRange)
         uptimeMs = try c.decodeIfPresent(Int.self, forKey: .uptimeMs)
+        scanPending = try c.decodeIfPresent(Bool.self, forKey: .scanPending)
     }
 
     static func parse(_ line: String) -> FirmwareInfo? {
