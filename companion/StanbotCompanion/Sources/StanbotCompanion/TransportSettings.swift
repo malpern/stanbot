@@ -56,6 +56,7 @@ struct TransportSettingsView: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var passphraseStatus: String?
     @State private var chime = FirmwareChime.stored
+    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
 
     var body: some View {
         Form {
@@ -122,6 +123,9 @@ struct TransportSettingsView: View {
             Divider().padding(.vertical, 6)
 
             Section {
+                Toggle("Mirror the video", isOn: $mirrorVideo)
+                Text("Like a selfie camera: when you move right, you move right on screen. Display only.")
+                    .font(.callout).foregroundStyle(.secondary)
                 Toggle("Enhance color", isOn: $robot.enhancement.color)
                 Text("Slightly more saturation and contrast. The camera renders flat and grey.")
                     .font(.callout).foregroundStyle(.secondary)

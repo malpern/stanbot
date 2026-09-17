@@ -144,9 +144,7 @@ struct CompanionView: View {
             .help("Connection")
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            if case .following(let since) = robot.follow {
-                PoweredBadge(since: since)
-            }
+            ReachabilityIndicator()
             Joystick()
             FollowButton()
         }
@@ -163,6 +161,7 @@ struct CompanionView: View {
 
 private struct LiveView: View {
     @EnvironmentObject private var robot: RobotConnection
+    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let mood: Mood
     let reaction: EyeReaction?
@@ -180,6 +179,10 @@ private struct LiveView: View {
                         .interpolation(.high)
                         .frame(width: fitted.width, height: fitted.height)
                         .overlay { FaceOverlay(boxes: robot.faceBoxes) }
+                        // Mirrored like a selfie camera, so moving right moves right
+                        // on screen. Picture and face boxes flip together; detection
+                        // and following use the unmirrored frame.
+                        .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
                         .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 }
                 .accessibilityLabel("What Stanbot sees")
@@ -368,32 +371,28 @@ private struct FollowButton: View {
 private struct Joystick: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var knob = CGSize.zero
-    private let size: CGFloat = 26
-    private var radius: CGFloat { size / 2 - 5 }
+    private let size: CGFloat = 28
+    /// How far the drag has to go for full deflection.
+    private let reach: CGFloat = 18
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(.white.opacity(robot.steering ? 0.22 : 0.12))
-            Circle()
-                .strokeBorder(.white.opacity(0.35), lineWidth: 1)
-            Circle()
-                .fill(robot.steering ? Color.stanbot : .white)
-                .frame(width: 9, height: 9)
-                .offset(knob)
-        }
-        .frame(width: size, height: size)
-        .contentShape(Circle())
+        // A direction pad, not a circle with a dot (which read as a record
+        // button). It leans a few points toward the drag while steering.
+        Image(systemName: robot.steering ? "dpad.fill" : "dpad")
+            .font(.system(size: 17, weight: .regular))
+            .foregroundStyle(robot.steering ? Color.stanbot : .primary)
+            .offset(knob)
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     var dx = value.translation.width, dy = value.translation.height
                     let length = (dx * dx + dy * dy).squareRoot()
-                    let limit = radius * 1.6
-                    if length > limit { dx *= limit / length; dy *= limit / length }
-                    knob = CGSize(width: dx * radius / limit, height: dy * radius / limit)
-                    // Screen y grows downward; up on the stick tilts the head up.
-                    robot.steer(x: dx / limit, y: -dy / limit)
+                    if length > reach { dx *= reach / length; dy *= reach / length }
+                    knob = CGSize(width: dx / reach * 3, height: dy / reach * 3)
+                    // Screen y grows downward; dragging up tilts the head up.
+                    robot.steer(x: dx / reach, y: -dy / reach)
                 }
                 .onEnded { _ in
                     withAnimation(.spring(duration: 0.25, bounce: 0)) { knob = .zero }
@@ -403,33 +402,48 @@ private struct Joystick: View {
         .disabled(robot.followUnavailableReason != nil)
         .opacity(robot.followUnavailableReason != nil ? 0.4 : 1)
         .help(robot.followUnavailableReason ?? "Drag to point the head. Following resumes after you let go. Arrow keys work too.")
-        .accessibilityLabel("Head position joystick")
+        .accessibilityLabel("Head position control")
     }
 }
 
-/// Motor power is on: said plainly, in red, with how long.
-private struct PoweredBadge: View {
-    let since: Date
+/// A small red dot, shown only when the robot has not been reachable for a few
+/// seconds; hover for what is wrong. Nothing at all while things are fine, and
+/// nothing during the brief connecting at launch or a switch between USB and
+/// Wi-Fi.
+private struct ReachabilityIndicator: View {
+    @EnvironmentObject private var robot: RobotConnection
+    @State private var showing = false
+
+    private var reachable: Bool {
+        if case .connected = robot.connection { return true }
+        return false
+    }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(.red)
-                // One bounce when power comes on, then steady. A repeating pulse
-                // cost ~9% CPU for as long as a session ran (measured 2026-09-16);
-                // the red label and running timer already say it is live.
-                .symbolEffect(.bounce, value: since)
-            Text("Head powered")
-            Text(since, style: .timer).monospacedDigit()
+        Group {
+            if showing {
+                Circle()
+                    .fill(.red)
+                    .frame(width: 8, height: 8)
+                    .padding(6)
+                    .contentShape(Rectangle())
+                    .help("\(robot.connection.title). \(robot.lastAction)")
+                    .accessibilityLabel("Robot not reachable")
+                    .transition(.opacity)
+            }
         }
-        .font(.caption.weight(.medium))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.red.opacity(0.15), in: Capsule())
-        .accessibilityElement(children: .combine)
+        .task(id: reachable) {
+            if reachable {
+                withAnimation(.easeOut(duration: 0.2)) { showing = false }
+                return
+            }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.3)) { showing = true }
+        }
     }
 }
+
 
 // MARK: - Expressions
 

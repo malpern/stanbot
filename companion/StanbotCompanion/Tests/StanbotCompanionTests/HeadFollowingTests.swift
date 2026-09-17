@@ -21,7 +21,20 @@ final class HeadFollowingTests: XCTestCase {
             let n = bytes.withUnsafeMutableBytes { Darwin.read(master, $0.baseAddress, $0.count) }
             return n > 0 ? String(decoding: bytes[0..<n], as: UTF8.self) : ""
         }
-        func write(_ data: Data) { _ = data.withUnsafeBytes { Darwin.write(master, $0.baseAddress, $0.count) } }
+        /// Every byte, or the test fails. The master is non-blocking, and a frame
+        /// written while the pty buffer was full used to be cut short silently;
+        /// the app's decoder then waited for the rest of that frame and took the
+        /// next line written (the robot's reply) as picture data. That made
+        /// testOneSessionPerBootRefusalOffersReboot fail about one run in seven.
+        func write(_ data: Data) {
+            var offset = 0
+            let deadline = Date().addingTimeInterval(5)
+            while offset < data.count, Date() < deadline {
+                let n = data.withUnsafeBytes { Darwin.write(master, $0.baseAddress! + offset, $0.count - offset) }
+                if n > 0 { offset += n } else { usleep(2000) }
+            }
+            precondition(offset == data.count, "fake USB could not write everything")
+        }
         func line(_ text: String) { write(Data((text + "\n").utf8)) }
         func close() { Darwin.close(slave); Darwin.close(master) }
     }
@@ -140,10 +153,15 @@ final class HeadFollowingTests: XCTestCase {
         let (robot, usb) = connected(measured: true)
         defer { usb.close() }
         robot.startFollowing()
-        _ = usb.read()
+        guard case .following = robot.follow else {
+            return XCTFail("did not start: follow \(robot.follow), reason \(robot.followUnavailableReason ?? "none"), camera \(robot.cameraState)")
+        }
+        let sent = usb.read()
         usb.line(#"SBPW {"error":"requires_unused_boot"}"#)
         wait(upTo: 2) { if case .finished = robot.follow { return true }; return false }
-        guard case .finished(let result) = robot.follow else { return XCTFail("no result") }
+        guard case .finished(let result) = robot.follow else {
+            return XCTFail("no result: follow \(robot.follow), app sent \(sent.debugDescription)")
+        }
         XCTAssertTrue(result.needsReboot)
         robot.rebootRobot()
         XCTAssertEqual(usb.read(), "C,REBOOT\n")
