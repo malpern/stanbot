@@ -746,6 +746,12 @@ final class RobotConnection: ObservableObject {
                 if newBoot, Double(uptime) / 1000 < AutoFollow.justBootedUptime {
                     bootedAt = Date()
                     bootSessionRequested = false
+                    // The robot that ended the last session no longer exists.
+                    // Without this the reboot's own look around never starts:
+                    // a session ended with "stopped_for_reboot" is not
+                    // retryable (deliberately, so nothing shouts C,FOLLOW into
+                    // a rebooting robot), and shouldStart would refuse forever.
+                    if case .finished = follow { follow = .idle }
                 }
             }
             return

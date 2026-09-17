@@ -334,6 +334,20 @@ agree or the head powers up and does nothing for 12 s:
 Before this, a just-flashed robot sat perfectly still with nobody in view,
 however long it waited, because nothing had been lost and so nothing searched.
 
+**A reboot waits for the session, and used to wait silently.** `C,REBOOT` sets
+a flag the main loop acts on, and the main loop cannot reach it while
+`runFollowSession()` is running -- which, now that following is continuous, is
+most of the time, and for up to the three minute cap. On 2026-09-17 the owner
+chose Reboot Robot and "it didn't seem to do anything"; it happened two minutes
+later. The session now ends itself when a reboot is pending
+(`stopped_for_reboot`, a normal ending, so no trouble face), and `SBRB` goes
+through `Telemetry` rather than `Serial` alone, which over Wi-Fi was silence.
+
+That ending is deliberately **not** retryable, so nothing shouts `C,FOLLOW` at a
+robot that is restarting -- and because it is not, the app clears a finished
+session when it sees a new boot, or the reboot's own look around would never
+start.
+
 ## The light bar (running on the robot; `light_bar.h`)
 
 The twelve LEDs say what the robot is doing about you, which is otherwise only

@@ -34,6 +34,7 @@ struct FollowResult: Equatable {
         case "session_max_duration": "Reached the 3 minute limit for one session. The head is powered off."
         case "stopped_by_host": "Stopped. The head is powered off."
         case "stopped_for_update": "Stopped for a firmware update. The head is powered off."
+        case "stopped_for_reboot": "Stopped so the robot can reboot. The head is powered off."
         case "update_in_progress": "Refused: a firmware update is in progress."
         case "follow_refused_limits_unmeasured": "Refused: this firmware has following disabled."
         case "follow_refused_asleep": "Refused: the robot is asleep. Wake it first."

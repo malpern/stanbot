@@ -106,6 +106,21 @@ final class WakeScanTests: XCTestCase {
                             lastEnded: now.addingTimeInterval(-1)))
     }
 
+    /// A reboot asked for during a session ends it, and that ending must not be
+    /// retried: nothing should shout C,FOLLOW at a robot that is restarting.
+    func testAStopForARebootIsNotRetried() {
+        let result = FollowResult(code: "stopped_for_reboot")
+        XCTAssertFalse(result.retryable)
+        XCTAssertTrue(result.summary.contains("reboot"))
+        XCTAssertFalse(AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .finished(result),
+                                              faceTracked: true, lastEnded: nil, now: Date()))
+        // ...but once the robot is back, its look around must still start, which
+        // is why a new boot clears the finished state (RobotConnection).
+        XCTAssertTrue(AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
+                                             faceTracked: false, lastEnded: nil, now: Date(),
+                                             bootedAt: Date()))
+    }
+
     /// The uptime that tells a reboot from a reconnection.
     func testTheVersionReportCarriesUptime() {
         let line = #"SBVR {"sketch":"camera_stream","commit":"abc","dirty":false,"built":"x","protocol":1,"# +

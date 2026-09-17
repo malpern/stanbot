@@ -2156,6 +2156,11 @@ void runFollowSession() {
           }
           if (otaActive.load()) { result = "stopped_for_update"; break; }
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
+          // A reboot is handled by the main loop, which cannot reach it until
+          // this session returns -- up to the three minute cap. Asked for one
+          // on 2026-09-17, the owner saw nothing happen for minutes. End here
+          // instead and let the loop do it; the flag is left set for it.
+          if (rebootRequested.load()) { result = "stopped_for_reboot"; break; }
           const uint32_t iterationStart = now;
           serviceLightBar(device);   // the session's handle: no second device on the expander
           ++iterations;
@@ -2332,7 +2337,7 @@ void runFollowSession() {
   {
     static const char* const kNormalEndings[] = {"session_complete", "session_deadline", "session_idle",
                                                   "session_max_duration", "stopped_by_host", "stopped_for_update",
-                                                  "follow_cooldown"};
+                                                  "stopped_for_reboot", "follow_cooldown"};
     bool normal = false;
     for (const char* ending : kNormalEndings) normal = normal || strcmp(result, ending) == 0;
     if (!normal) troubleUntilMs.store(millis() + kTroubleFaceMs);
@@ -2517,7 +2522,10 @@ void cameraTask(void*) {
       // Software restart so a fresh once-per-boot power window is available
       // without a physical RST. Motor power is already off (latch verified)
       // or was never enabled this boot.
-      Serial.println("SBRB {\"rebooting\":true}");
+      // Through Telemetry, not Serial alone: over Wi-Fi, Serial is silence, and
+      // a robot that goes quiet for six seconds with no word is a fault until
+      // proven otherwise.
+      Telemetry.println("SBRB {\"rebooting\":true}");
       Serial.flush();
       vTaskDelay(pdMS_TO_TICKS(100));
       esp_restart();
