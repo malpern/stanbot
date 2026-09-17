@@ -163,7 +163,7 @@ private struct LiveView: View {
     /// A sequence in flight: falling asleep or waking, and when it began. While
     /// one runs the picture is redrawn every frame from EyeMotionSequence; when
     /// it ends the aperture rests open or closed.
-    @State private var motion: (asleep: Bool, start: Date)?
+    @State private var motion: (asleep: Bool, start: Date, duration: Double)?
 
     private var picture: NSImage? { robot.cameraImage ?? frozen }
     private var showingVideo: Bool {
@@ -175,7 +175,8 @@ private struct LiveView: View {
     private func aperture(at date: Date) -> EyeMotionSequence.State {
         guard let motion else { return robot.asleep ? .closed : .open }
         let elapsed = date.timeIntervalSince(motion.start)
-        return motion.asleep ? EyeMotionSequence.sleep(at: elapsed) : EyeMotionSequence.wake(at: elapsed)
+        return motion.asleep ? EyeMotionSequence.sleep(at: elapsed)
+                             : EyeMotionSequence.wake(at: elapsed, duration: motion.duration)
     }
 
     var body: some View {
@@ -209,15 +210,15 @@ private struct LiveView: View {
         // after sleep, whose own wake is already running (and holds a frame).
         .onChange(of: picture != nil, initial: true) { _, has in
             guard has, !robot.asleep, frozen == nil, motion == nil else { return }
-            motion = (false, Date())
+            motion = (false, Date(), EyeMotionSequence.wakeDuration)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(EyeMotionSequence.wakeDuration))
                 if motion?.asleep == false { motion = nil }
             }
         }
         .onChange(of: robot.asleep) { _, sleeping in
-            motion = (sleeping, Date())
-            let duration = sleeping ? EyeMotionSequence.sleepDuration : EyeMotionSequence.wakeDuration
+            let duration = sleeping ? EyeMotionSequence.sleepDuration : EyeMotionSequence.wakeFromSleepDuration
+            motion = (sleeping, Date(), duration)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(duration))
                 if motion?.asleep == sleeping { motion = nil }

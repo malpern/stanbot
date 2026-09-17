@@ -13,8 +13,10 @@ import SwiftUI
 /// Every value is a pure function of time since the sequence began, so the whole
 /// thing can be rendered frame by frame in tests (`EyelidTests`).
 enum EyeMotionSequence {
-    /// Slow: a morning, not a shutter.
+    /// Slow: a morning, not a shutter. That is the launch. Waking from a sleep
+    /// the owner asked for is the same sequence, brisker (owner, 2026-09-17).
     static let wakeDuration = 2.4
+    static let wakeFromSleepDuration = 1.5
     static let sleepDuration = 1.1
 
     struct State: Equatable {
@@ -32,8 +34,8 @@ enum EyeMotionSequence {
 
     /// Waking: lids in stages with one half-blink, the right eye a beat behind,
     /// the aperture holding its eye shape until the last quarter.
-    static func wake(at time: Double) -> State {
-        let t = (time / wakeDuration).clamped()
+    static func wake(at time: Double, duration: Double = wakeDuration) -> State {
+        let t = (time / duration).clamped()
         guard t < 1 else { return .open }
         // Both lids follow this, the right one later, so they are never in step.
         let left = lidCurve(t)

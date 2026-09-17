@@ -8,7 +8,8 @@ the robot's view, with a little of the robot's character in it.
 - **Waking is a shot from behind Stanbot's eyes.** The owner's brief: a
   first-person view of someone slowly opening their eyes in the morning. So it is
   a *sequence*, not an eased mask (`EyeAperture.swift`, `EyeMotionSequence`):
-  2.4 s long; the lids come up with one half-blink on the way and then an
+  2.4 s at launch (1.5 s when waking from a sleep the owner asked for, the same
+  shot brisker); the lids come up with one half-blink on the way and then an
   unbroken rise (two blinks and a settle at the end read as bouncing); the
   right lid lags the left, so they are never in step; the picture is soft,
   washed out and drained of colour until the lids are well open, and focus

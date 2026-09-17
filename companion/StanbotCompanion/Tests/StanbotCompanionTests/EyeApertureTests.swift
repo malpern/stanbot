@@ -15,6 +15,13 @@ final class EyeApertureTests: XCTestCase {
     func testWakingIsSlowEnoughToRead() {
         XCTAssertGreaterThan(EyeMotionSequence.wakeDuration, 2, "waking up in the morning, not a shutter")
         XCTAssertLessThan(EyeMotionSequence.sleepDuration, EyeMotionSequence.wakeDuration)
+        // Waking from a sleep the owner asked for is brisker, but the same shot.
+        XCTAssertLessThan(EyeMotionSequence.wakeFromSleepDuration, EyeMotionSequence.wakeDuration)
+        XCTAssertGreaterThan(EyeMotionSequence.wakeFromSleepDuration, 1)
+        let brisk = EyeMotionSequence.wakeFromSleepDuration
+        XCTAssertEqual(EyeMotionSequence.wake(at: brisk * 0.5, duration: brisk),
+                       EyeMotionSequence.wake(at: EyeMotionSequence.wakeDuration * 0.5))
+        XCTAssertEqual(EyeMotionSequence.wake(at: brisk, duration: brisk), .open)
     }
 
     func testWakingStartsShutAndEndsFullyOpen() {
