@@ -68,17 +68,16 @@ resolution and frame rate are unchanged while the app captures, in both orders
 ## Steps, each useful on its own
 
 1. **Coexistence test (needs you, a Meet call, about 5 minutes).** Built:
-   `tools/desk_camera/probe.sh`. Run it from Terminal on the mini (macOS asks
-   Terminal for camera permission the first time):
+   `tools/desk_camera/probe.sh`. Run it from Terminal on a Mac with the Studio
+   Display attached (macOS asks Terminal for camera permission the first time):
 
    ```sh
    tools/desk_camera/probe.sh --watch-only --seconds 30   # device state only; camera stays off
    tools/desk_camera/probe.sh --seconds 120               # passive capture, one JSON line per second
    ```
 
-   It refuses (exit 3) unless the host is the mini (`LocalHostName` openclaw
-   and System Information model "Mac mini") and "Studio Display Camera" is
-   attached. It never locks the device for configuration and saves no frames.
+   It refuses (exit 3) unless a "Studio Display Camera" is attached; which Mac
+   it is does not matter. It never locks the device for configuration and saves no frames.
    macOS has no input-priority session preset, so it uses the preset matching
    the camera's current format (640x480, 1280x720 or 1920x1080) and refuses to
    capture if the format is anything else (exit 6), rather than risk switching
@@ -91,8 +90,8 @@ resolution and frame rate are unchanged while the app captures, in both orders
    watch the self-view (or a second device in the call) for framing,
    resolution or freezes, and note `format_or_rate_changed`. Checked so far,
    without a call: watch-only on the mini (1280x720 at 30 fps, not in use,
-   Center Stage off, user control) and the refusals for another host and a
-   missing camera. Capture itself has not run yet.
+   Center Stage off, user control) and the refusal without a Studio Display
+   camera. Capture itself has not run yet.
 2. **DeskCamera in the app, logging only:** faces, head pose and the facing
    class from the desk view in the session logs, next to the robot's.
 3. **Recorder and calibration**, then a first recording session: looking at

@@ -5,9 +5,8 @@
 //   tools/desk_camera/probe.sh --seconds 300
 //   tools/desk_camera/probe.sh --watch-only  # never start capture; camera light stays off
 //
-// Runs only on the Mac mini with the Studio Display attached: the host must be
-// the mini (LocalHostName "openclaw" and product name "Mac mini") and a camera
-// named "Studio Display Camera" must be present. Anything else exits 3 without
+// Runs only where a Studio Display is attached: a camera named "Studio Display
+// Camera" must be present, on whichever Mac. Without one it exits 3 without
 // touching a camera.
 //
 // It is a passive client by construction. It never calls lockForConfiguration,
@@ -50,41 +49,14 @@ func emit(_ fields: [String: Any]) {
     }
 }
 
-// MARK: - Only on the mini
-
-/// "Mac mini", from System Information. Apple silicon's IO registry has no
-/// product name, only the model identifier (Mac16,11), which changes by year.
-func productName() -> String? {
-    guard let output = run("/usr/sbin/system_profiler", ["SPHardwareDataType", "-json"]),
-          let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
-          let hardware = (json["SPHardwareDataType"] as? [[String: Any]])?.first else { return nil }
-    return hardware["machine_name"] as? String
-}
-
-func run(_ path: String, _ arguments: [String]) -> String? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: path)
-    process.arguments = arguments
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return nil }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-func localHostName() -> String? { run("/usr/sbin/scutil", ["--get", "LocalHostName"]) }
+// MARK: - Only with a Studio Display
 
 let options = parse()
-let host = localHostName() ?? "unknown"
-let product = productName() ?? "unknown"
 let camera = AVCaptureDevice.DiscoverySession(deviceTypes: [.external, .builtInWideAngleCamera], mediaType: .video,
                                               position: .unspecified).devices
     .first { $0.localizedName == "Studio Display Camera" }
-guard host.hasPrefix("openclaw"), product.hasPrefix("Mac mini"), let camera else {
-    emit(["refused": "not_the_mini_with_studio_display", "host": host, "product": product,
-          "studio_display_camera": camera != nil])
+guard let camera else {
+    emit(["refused": "no_studio_display_camera"])
     exit(3)
 }
 
@@ -107,7 +79,7 @@ func deviceState() -> [String: Any] {
 }
 
 let before = deviceState()
-emit(["phase": "start", "host": host, "product": product, "watch_only": options.watchOnly,
+emit(["phase": "start", "host": ProcessInfo.processInfo.hostName, "watch_only": options.watchOnly,
       "camera_permission": ["not_determined", "restricted", "denied", "authorized"][AVCaptureDevice.authorizationStatus(for: .video).rawValue]]
      .merging(before) { a, _ in a })
 
