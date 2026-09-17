@@ -19,6 +19,10 @@
 # turn it. Pitch travel is bounded relative to where each session finds the
 # head (head_tracker.h), and the robot reports follow_pitch:true.
 #
+# STANBOT_FOLLOW_YAW_RANGE=96 (with STANBOT_FOLLOW_CALIBRATION=1) widens the
+# calibration build's yaw travel to centre +-96; 48 is the default, and 144,
+# 192, 240 and 288 are the later steps. Other values fail to compile.
+#
 # "dirty" covers everything under firmware/, submodules and untracked files
 # included. Commit before building anything that will be flashed: a dirty
 # build is exactly the kind the app warns about.
@@ -36,6 +40,11 @@ if [[ -n "$(git status --porcelain -- firmware)" ]]; then dirty=true; else dirty
 built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "${STANBOT_FOLLOW_CALIBRATION:-0}" == 1 ]]; then calibration=1; else calibration=0; fi
 if [[ "${STANBOT_FOLLOW_PITCH:-0}" == 1 ]]; then pitch=1; else pitch=0; fi
+yaw_range=${STANBOT_FOLLOW_YAW_RANGE:-0}
+if [[ $yaw_range != 0 && $calibration != 1 ]]; then
+  echo "STANBOT_FOLLOW_YAW_RANGE only applies to a calibration build (STANBOT_FOLLOW_CALIBRATION=1)" >&2
+  exit 1
+fi
 
 info="$sketch_dir/build_info.h"
 trap 'rm -f "$info"' EXIT
@@ -47,6 +56,7 @@ cat > "$info" <<HEADER
 #define STANBOT_BUILD_TIME "$built"
 #define STANBOT_FOLLOW_CALIBRATION $calibration
 #define STANBOT_FOLLOW_PITCH $pitch
+#define STANBOT_FOLLOW_YAW_RANGE $yaw_range
 HEADER
 
 # Remove old exports first, so a failed compile cannot leave a previous
@@ -58,7 +68,7 @@ bin="$out_dir/$sketch.ino.bin"
 sha=$(shasum -a 256 "$bin" | cut -d' ' -f1)
 bytes=$(stat -f %z "$bin")
 cat > "$out_dir/build_info.json" <<JSON
-{"sketch":"$sketch","commit":"$commit","dirty":$dirty,"follow_calibration":$( [[ $calibration == 1 ]] && echo true || echo false ),"follow_pitch":$( [[ $pitch == 1 ]] && echo true || echo false ),"built":"$built","app_bin":"$sketch.ino.bin","app_bytes":$bytes,"app_sha256":"$sha"}
+{"sketch":"$sketch","commit":"$commit","dirty":$dirty,"follow_calibration":$( [[ $calibration == 1 ]] && echo true || echo false ),"follow_pitch":$( [[ $pitch == 1 ]] && echo true || echo false ),"follow_yaw_range":$( [[ $yaw_range != 0 ]] && echo $yaw_range || { [[ $calibration == 1 ]] && echo 48 || echo 144; } ),"built":"$built","app_bin":"$sketch.ino.bin","app_bytes":$bytes,"app_sha256":"$sha"}
 JSON
 cat "$out_dir/build_info.json"
 if [[ $calibration == 1 ]]; then

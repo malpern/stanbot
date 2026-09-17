@@ -67,19 +67,31 @@ struct FollowLimits {
 // to centre +-48 per checklist step 1 and comes from a committed tree, so V
 // reports its commit and follow_limits_measured:true, and the app flags it.
 #if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
+// Checklist step 4 widens yaw one supervised session at a time without editing
+// source: STANBOT_FOLLOW_YAW_RANGE=96 firmware/build.sh, then 144, 192, 240,
+// 288. The robot reports the range in V. Anything else fails to compile.
+#if defined(STANBOT_FOLLOW_YAW_RANGE) && STANBOT_FOLLOW_YAW_RANGE
+constexpr int kFollowYawRange = STANBOT_FOLLOW_YAW_RANGE;
+#else
+constexpr int kFollowYawRange = 48;
+#endif
 // The calibration build halves pitch travel for the first sessions that power it.
 constexpr FollowLimits kFollowLimits = {
-  460 - 48, 460 + 48, 460,
+  460 - kFollowYawRange, 460 + kFollowYawRange, 460,
   620, 640 + 32, 620,
   +1, true,
   16, 24, false};
 #else
+constexpr int kFollowYawRange = 144;
 constexpr FollowLimits kFollowLimits = {
-  460 - 144, 460 + 144, 460,
+  460 - kFollowYawRange, 460 + kFollowYawRange, 460,
   620, 640 + 32, 620,
   +1, false,
   32, 24, false};
 #endif
+// 288 is what the 2026-09-15 sweep traversed; nothing wider has been observed.
+static_assert(kFollowYawRange >= 48 && kFollowYawRange <= 288 && kFollowYawRange % 48 == 0,
+              "STANBOT_FOLLOW_YAW_RANGE must be 48, 96, 144, 192, 240 or 288");
 
 // Pitch follows only in a build made with STANBOT_FOLLOW_PITCH=1. It has
 // never been powered through a follow session. On 2026-09-15 a "yaw-only"
@@ -107,9 +119,33 @@ struct FollowConfig {
   int maxStepRaw = 6;                // per tick while attending (~23 deg/s at 80 ms)
   int restStepRaw = 4;               // per tick while returning (~16 deg/s)
   bool pitchEnabled = true;          // false: yaw only, pitch never commanded (kFollowPitchEnabled)
+
+  // Easing. Fixed steps start and stop abruptly, which reads as mechanical.
+  // With easing each tick moves a fraction of the remaining distance (slowing
+  // into the goal, never below easeMinStepRaw) and may grow by at most
+  // easeAccelRaw over the previous tick (speeding up out of rest). The step
+  // limits above stay the ceilings, so nothing gets faster than before.
+  bool ease = true;
+  float easeFraction = 0.4f;
+  int easeMinStepRaw = 2;
+  int easeAccelRaw = 2;
+
+  // Search. When the target times out the head does not go straight home: it
+  // holds still briefly (the face may simply have been missed), glances toward
+  // where the face was last seen, sweeps a little the other way, and only then
+  // returns to rest. Any accepted observation ends the search immediately.
+  // Every waypoint is clamped to the limits and the session's pitch bounds.
+  bool search = true;
+  uint32_t searchHoldMs = 600;
+  int searchGlanceRaw = 32;          // yaw toward the side the face left on
+  int searchGlancePitchRaw = 12;     // pitch toward it, if it left above or below
+  int searchSweepRaw = 32;           // yaw the other way from where it was lost
+  int searchStepRaw = 3;             // ~11 deg/s: slower than attending
+  uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
 };
 
-enum class FollowMode { Idle, Attending, Returning };
+// Numbered as reported in telemetry ("mode"); append, never renumber.
+enum class FollowMode { Idle, Attending, Returning, Searching };
 
 struct FollowCommand {
   bool send;          // false: nothing to write this tick
@@ -169,6 +205,9 @@ class HeadTracker {
     lastControlMs_ = nowMs - config_.controlPeriodMs;
     lastTargetMs_ = 0;
     haveGoal_ = false;
+    lastStepYaw_ = lastStepPitch_ = 0;
+    lastX_ = lastY_ = 0.0f;
+    waypoint_ = waypointCount_ = 0;
     historyCount_ = 0;
     historyStart_ = 0;
     record(nowMs);
@@ -202,6 +241,8 @@ class HeadTracker {
                        ? roundToInt(x * config_.rawPerUnitX * config_.gain) : 0;
     const int dy = config_.pitchEnabled && (y > config_.centreDeadband || y < -config_.centreDeadband)
                        ? roundToInt(-y * config_.rawPerUnitY * config_.gain) * limits_.pitchUpSign : 0;
+    lastX_ = x;
+    lastY_ = y;
     goalYaw_ = clamp(yawAt(capturedMs) + dx, limits_.yawMin, limits_.yawMax);
     goalPitch_ = config_.pitchEnabled ? clamp(pitchAt(capturedMs) + dy, pitchLow_, pitchHigh_) : pitch_;
     haveGoal_ = true;
@@ -212,16 +253,16 @@ class HeadTracker {
   FollowCommand step(uint32_t nowMs) {
     if (nowMs - lastControlMs_ < config_.controlPeriodMs) return {false, yaw_, pitch_, mode_};
     lastControlMs_ = nowMs;
-    int stepLimit = config_.maxStepRaw;
     if (mode_ == FollowMode::Attending && nowMs - lastTargetMs_ >= config_.targetTimeoutMs) {
-      mode_ = FollowMode::Returning;
-      goalYaw_ = limits_.yawRest;
-      goalPitch_ = !config_.pitchEnabled ? pitch_
-                 : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
-                 : pitchHome_;
-      haveGoal_ = true;
+      if (config_.search) beginSearch(nowMs);
+      else beginReturn();
     }
+    int stepLimit = config_.maxStepRaw;
     if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
+    if (mode_ == FollowMode::Searching) {
+      stepLimit = config_.searchStepRaw;
+      if (!advanceSearch(nowMs)) return {false, yaw_, pitch_, mode_};
+    }
     if (mode_ == FollowMode::Idle || !haveGoal_) return {false, yaw_, pitch_, mode_};
 
     int dy = goalYaw_ - yaw_;
@@ -232,11 +273,17 @@ class HeadTracker {
     if (dp > -config_.deadbandRaw && dp < config_.deadbandRaw) dp = 0;
     if (dy == 0 && dp == 0) {
       haveGoal_ = false;
+      lastStepYaw_ = lastStepPitch_ = 0;
       if (mode_ == FollowMode::Returning) mode_ = FollowMode::Idle;
+      if (mode_ == FollowMode::Searching) arrivedMs_ = nowMs;
       return {false, yaw_, pitch_, mode_};
     }
-    yaw_ += clamp(dy, -stepLimit, stepLimit);
-    pitch_ += clamp(dp, -stepLimit, stepLimit);
+    const int stepYaw = nextStep(dy, stepLimit, lastStepYaw_);
+    const int stepPitch = nextStep(dp, stepLimit, lastStepPitch_);
+    yaw_ += stepYaw;
+    pitch_ += stepPitch;
+    lastStepYaw_ = stepYaw;
+    lastStepPitch_ = stepPitch;
     record(nowMs);
     return {true, yaw_, pitch_, mode_};
   }
@@ -263,6 +310,70 @@ class HeadTracker {
   Sample history_[kHistory] = {};
   unsigned historyStart_ = 0, historyCount_ = 0;
 
+  // One tick's signed step toward a remaining distance `error`.
+  int nextStep(int error, int limit, int previous) const {
+    if (error == 0) return 0;
+    const int magnitude = error < 0 ? -error : error;
+    int step = limit;
+    if (config_.ease) {
+      step = roundToInt(magnitude * config_.easeFraction);
+      if (step < config_.easeMinStepRaw) step = config_.easeMinStepRaw;
+      if (step > limit) step = limit;
+      // Speeding up is bounded by the previous step in the same direction; a
+      // reversal starts again from rest.
+      const int carried = (previous > 0) == (error > 0) ? (previous < 0 ? -previous : previous) : 0;
+      const int ramp = carried + config_.easeAccelRaw;
+      if (step > ramp) step = ramp;
+    }
+    if (step > magnitude) step = magnitude;
+    return error < 0 ? -step : step;
+  }
+
+  void beginReturn() {
+    mode_ = FollowMode::Returning;
+    goalYaw_ = limits_.yawRest;
+    goalPitch_ = !config_.pitchEnabled ? pitch_
+               : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
+               : pitchHome_;
+    haveGoal_ = true;
+  }
+
+  // Waypoints for one search, from where the head was when the target was lost
+  // and the side of the frame the face was last seen on.
+  void beginSearch(uint32_t nowMs) {
+    mode_ = FollowMode::Searching;
+    searchStartMs_ = nowMs;
+    arrivedMs_ = 0;
+    waypoint_ = 0;
+    haveGoal_ = false;
+    const int side = lastX_ > config_.centreDeadband ? 1 : (lastX_ < -config_.centreDeadband ? -1 : 0);
+    int glancePitch = pitch_;
+    if (config_.pitchEnabled && (lastY_ > config_.centreDeadband || lastY_ < -config_.centreDeadband)) {
+      const int up = lastY_ < 0 ? 1 : -1;   // a face lost off the top: look up
+      glancePitch = clamp(pitch_ + up * limits_.pitchUpSign * config_.searchGlancePitchRaw, pitchLow_, pitchHigh_);
+    }
+    const int lostYaw = yaw_;
+    const int first = side != 0 ? side : 1;
+    const int firstReach = side != 0 ? config_.searchGlanceRaw : config_.searchSweepRaw;
+    waypoints_[0] = {clamp(lostYaw + first * firstReach, limits_.yawMin, limits_.yawMax), glancePitch};
+    waypoints_[1] = {clamp(lostYaw - first * config_.searchSweepRaw, limits_.yawMin, limits_.yawMax), glancePitch};
+    waypointCount_ = 2;
+  }
+
+  // Returns whether the controller should move this tick.
+  bool advanceSearch(uint32_t nowMs) {
+    if (nowMs - searchStartMs_ < config_.searchHoldMs) return false;   // hold still first
+    if (haveGoal_) return true;                                        // still travelling
+    if (arrivedMs_ != 0 && nowMs - arrivedMs_ < config_.searchDwellMs) return false;
+    if (arrivedMs_ != 0) ++waypoint_;
+    arrivedMs_ = 0;
+    if (waypoint_ >= waypointCount_) { beginReturn(); return true; }
+    goalYaw_ = waypoints_[waypoint_].yaw;
+    goalPitch_ = config_.pitchEnabled ? waypoints_[waypoint_].pitch : pitch_;
+    haveGoal_ = true;
+    return true;
+  }
+
   Sample sampleAt(uint32_t whenMs, int fallback) const {
     if (historyCount_ == 0) return {whenMs, fallback, fallback};
     int best = -1;
@@ -286,6 +397,12 @@ class HeadTracker {
   int yaw_ = 0, pitch_ = 0;          // last commanded, the controller's own state
   int goalYaw_ = 0, goalPitch_ = 0;  // where the current observation asked to go
   int pitchHome_ = 0, pitchLow_ = 0, pitchHigh_ = 0;  // this session's pitch start and bounds
+  int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
+  float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
+  struct Waypoint { int yaw, pitch; };
+  Waypoint waypoints_[2] = {};
+  unsigned waypoint_ = 0, waypointCount_ = 0;
+  uint32_t searchStartMs_ = 0, arrivedMs_ = 0;
   bool haveGoal_ = false;
   FollowMode mode_ = FollowMode::Idle;
   uint32_t lastControlMs_ = 0;

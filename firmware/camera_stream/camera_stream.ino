@@ -455,10 +455,10 @@ void emitVersion() {
   char line[320];
   const int n = snprintf(line, sizeof line,
       "SBVR {\"sketch\":\"camera_stream\",\"commit\":\"%s\",\"dirty\":%s,\"built\":\"%s\","
-      "\"protocol\":%d,\"follow_limits_measured\":%s,\"follow_pitch\":%s}\n",
+      "\"protocol\":%d,\"follow_limits_measured\":%s,\"follow_pitch\":%s,\"follow_yaw_range\":%d}\n",
       STANBOT_GIT_COMMIT, dirtyKnown ? STANBOT_GIT_DIRTY : "null", STANBOT_BUILD_TIME,
       kProtocolVersion, stanbot::kFollowLimits.measured ? "true" : "false",
-      stanbot::kFollowPitchEnabled ? "true" : "false");
+      stanbot::kFollowPitchEnabled ? "true" : "false", stanbot::kFollowYawRange);
   if (n <= 0 || n >= static_cast<int>(sizeof line)) return;
   Serial.print(line);
   if (streamClient && streamClient.connected()) {

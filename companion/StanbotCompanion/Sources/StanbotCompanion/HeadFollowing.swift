@@ -117,15 +117,24 @@ struct HeadFollowingPanel: View {
             Button("Start Following") { robot.startFollowing() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The head will turn toward the selected face for up to 20 seconds, yaw only, within the calibration limits. Stay at the robot, and press Stop if anything looks wrong. Over Wi-Fi the robot checks the passphrase first.")
+            Text("The head will turn toward the selected face for up to 20 seconds (\(axes)), within the calibration limits, and look around briefly if it loses the face. Stay at the robot, and press Stop if anything looks wrong. Over Wi-Fi the robot checks the passphrase first.")
         }
     }
 
     private var detail: String {
         switch robot.follow {
-        case .following: return "Following the selected face. Yaw only; pitch stays unpowered."
+        case .following: return pitchBuild ? "Following the selected face, left, right, up and down."
+                                            : "Following the selected face. Yaw only; pitch stays unpowered."
         case .finished(let result): return result.summary
-        case .idle: return robot.followUnavailableReason ?? "Ready. Turns toward the selected face, yaw only."
+        case .idle: return robot.followUnavailableReason ?? "Ready. Turns toward the selected face, \(axes)."
         }
     }
+
+    /// What the firmware says following may move. Anything unreported is yaw only.
+    private var pitchBuild: Bool {
+        if case .reported(let info) = robot.firmware { return info.followPitch }
+        return false
+    }
+
+    private var axes: String { pitchBuild ? "left, right, up and down" : "yaw only" }
 }

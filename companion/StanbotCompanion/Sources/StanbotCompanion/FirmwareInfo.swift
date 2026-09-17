@@ -21,12 +21,16 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
     /// Following tilts the head up and down too (a STANBOT_FOLLOW_PITCH=1 build).
     /// Older firmware does not send it, which means yaw only.
     let followPitch: Bool
+    /// Yaw travel either side of centre, in raw steps. Older firmware does not
+    /// send it; nil then.
+    let followYawRange: Int?
 
     private enum CodingKeys: String, CodingKey {
         case sketch, commit, dirty, built
         case protocolVersion = "protocol"
         case followLimitsMeasured = "follow_limits_measured"
         case followPitch = "follow_pitch"
+        case followYawRange = "follow_yaw_range"
     }
 
     init(from decoder: Decoder) throws {
@@ -38,6 +42,7 @@ struct FirmwareInfo: Decodable, Equatable, Sendable {
         protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
         followLimitsMeasured = try c.decode(Bool.self, forKey: .followLimitsMeasured)
         followPitch = try c.decodeIfPresent(Bool.self, forKey: .followPitch) ?? false
+        followYawRange = try c.decodeIfPresent(Int.self, forKey: .followYawRange)
     }
 
     static func parse(_ line: String) -> FirmwareInfo? {

@@ -17,6 +17,15 @@ namespace {
 // logic these tests pin must not appear to change when it does.
 const FollowLimits kLimits = {460 - 144, 460 + 144, 460, 620, 620 + 32, 620, +1, true};
 const FollowConfig kConfig{};
+// Fixed steps and straight home, for the tests that count exact ticks or pin
+// the return-to-rest path. Easing and search have their own tests below.
+FollowConfig linearConfig() {
+  FollowConfig config;
+  config.ease = false;
+  config.search = false;
+  return config;
+}
+const FollowConfig kLinear = linearConfig();
 
 // Tick until the controller stops sending, returning how many goals it
 // issued. Every goal must move by at most `maxStep` and stay inside the limits.
@@ -74,7 +83,7 @@ void idleUntilObserved() {
 }
 
 void observationAppliedOnce() {
-  HeadTracker tracker(kLimits, kConfig);
+  HeadTracker tracker(kLimits, kLinear);
   uint32_t now = 1000;
   tracker.begin(460, 620, now);
   // x = +0.5 asks for 0.5 * rawPerUnitX * gain = +29 raw once, reached in five
@@ -113,7 +122,7 @@ void rawDeadbandNeverChasesStandingError() {
   auto offsetFor = [](int raw) { return raw / (kConfig.rawPerUnitX * kConfig.gain); };
   // 9 raw requested: one step of six, then a residual of three that is smaller
   // than the standing error and is accepted as arrived.
-  HeadTracker nine(kLimits, kConfig);
+  HeadTracker nine(kLimits, kLinear);
   nine.begin(460, 620, now);
   assert(nine.observe(1, offsetFor(9), 0.0f, 0.9f, now));
   assert(drain(nine, now, kConfig.maxStepRaw) == 1);
@@ -121,7 +130,7 @@ void rawDeadbandNeverChasesStandingError() {
   // With the centre band removed, a request of 7 raw is inside the raw
   // deadband from the start and is declined outright. Re-issuing it is
   // exactly the hunting the servo review predicts for I = 0.
-  FollowConfig wide = kConfig;
+  FollowConfig wide = kLinear;
   wide.centreDeadband = 0.0f;
   HeadTracker seven(kLimits, wide);
   seven.begin(460, 620, now);
@@ -167,7 +176,7 @@ void pitchSignFollowsLimits() {
 }
 
 void timeoutReturnsToRestSlowly() {
-  HeadTracker tracker(kLimits, kConfig);
+  HeadTracker tracker(kLimits, kLinear);
   uint32_t now = 1000;
   tracker.begin(460, 620, now);
   const uint32_t observedAt = now;
@@ -201,7 +210,7 @@ void timeoutReturnsToRestSlowly() {
 void controlPeriodIsRespected() {
   // Full gain here, so the goal is bigger than the ticks available and the
   // period is plainly what limits the pace.
-  FollowConfig full = kConfig;
+  FollowConfig full = kLinear;
   full.gain = 1.0f;
   HeadTracker tracker(kLimits, full);
   uint32_t now = 1000;
@@ -235,7 +244,7 @@ void beginAdoptsCurrentPosition() {
 // outside the pitch limits. The 2026-09-15 session moved pitch by exactly
 // that return-to-rest path.
 void pitchDisabledNeverMovesPitch() {
-  FollowConfig config;
+  FollowConfig config = kLinear;
   config.pitchEnabled = false;
   for (int startPitch : {620, 700, 560}) {       // inside, above and below the limits
     HeadTracker tracker(kLimits, config);
@@ -422,7 +431,7 @@ void lowRestIsNeverPressedLower() {
 
 void lostTargetReturnsPitchToSessionStart() {
   const FollowLimits limits = roomyPitch();
-  HeadTracker tracker(limits, kConfig);
+  HeadTracker tracker(limits, kLinear);
   uint32_t now = 1000;
   tracker.begin(460, 640, now);
   assert(tracker.observe(1, 0.4f, -0.8f, 0.95f, now));
@@ -436,7 +445,7 @@ void lostTargetReturnsPitchToSessionStart() {
 
   FollowLimits confirmed = limits;
   confirmed.pitchRestConfirmed = true;
-  HeadTracker withRest(confirmed, kConfig);
+  HeadTracker withRest(confirmed, kLinear);
   withRest.begin(460, 640, now);
   assert(withRest.observe(1, 0.0f, -0.8f, 0.95f, now));
   drainPitch(withRest, now, kConfig.maxStepRaw);
@@ -513,6 +522,164 @@ void pitchClosedLoopSettles() {
   assert(both.reversals <= 1);
 }
 
+// ---- Easing ---------------------------------------------------------------
+
+void easingRampsUpAndSlowsDown() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 620, now);
+  assert(tracker.observe(1, 1.0f, 0.0f, 0.95f, now));   // asks for 58 raw
+  const int goal = 460 + static_cast<int>(kConfig.rawPerUnitX * kConfig.gain + 0.5f);
+  int steps[40], count = 0, last = 460;
+  for (int i = 0; i < 40; ++i) {
+    now += kConfig.controlPeriodMs;
+    const FollowCommand command = tracker.step(now);
+    if (!command.send) break;
+    steps[count++] = command.yaw - last;
+    last = command.yaw;
+  }
+  assert(count > 3);
+  assert(steps[0] == kConfig.easeMinStepRaw);                       // starts gently
+  for (int i = 0; i < count; ++i) {
+    assert(steps[i] > 0 && steps[i] <= kConfig.maxStepRaw);         // never faster than before, never back
+    if (i > 0) assert(steps[i] <= steps[i - 1] + kConfig.easeAccelRaw);
+  }
+  int peak = 0;
+  for (int i = 0; i < count; ++i) peak = steps[i] > peak ? steps[i] : peak;
+  assert(peak == kConfig.maxStepRaw);                               // reaches full speed on a long move
+  assert(steps[count - 1] < peak);                                  // and slows into the goal
+  assert(last <= goal && goal - last < kConfig.deadbandRaw);        // no overshoot
+}
+
+void easingRestartsFromRestOnReversal() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 620, now);
+  assert(tracker.observe(1, 1.0f, 0.0f, 0.95f, now));
+  for (int i = 0; i < 4; ++i) { now += kConfig.controlPeriodMs; tracker.step(now); }
+  const int before = tracker.commandedYaw();
+  assert(tracker.observe(2, -1.0f, 0.0f, 0.95f, now));               // face jumps to the other side
+  now += kConfig.controlPeriodMs;
+  const FollowCommand command = tracker.step(now);
+  assert(command.send && before - command.yaw == kConfig.easeMinStepRaw);
+}
+
+// ---- Search ---------------------------------------------------------------
+
+struct SearchTrace { int maxYaw, minYaw, firstMoveAt, maxYawAt, minYawAt; int finalYaw; FollowMode finalMode; int sends; int minPitch, maxPitch; };
+
+// Follow a face at (x, y) once, then lose it and tick for `seconds`.
+SearchTrace loseFace(HeadTracker& tracker, float x, float y, uint32_t& now, int seconds,
+                     int startYaw = 460, int startPitch = 630) {
+  tracker.begin(startYaw, startPitch, now);
+  assert(tracker.observe(1, x, y, 0.95f, now));
+  const uint32_t lostAt = now;
+  // Let the attend move play out, up to the timeout.
+  while (now + kConfig.controlPeriodMs < lostAt + kConfig.targetTimeoutMs) {
+    now += kConfig.controlPeriodMs;
+    tracker.step(now);
+  }
+  const int lostYaw = tracker.commandedYaw();
+  SearchTrace trace{lostYaw, lostYaw, -1, 0, 0, lostYaw, FollowMode::Idle, 0, tracker.commandedPitch(), tracker.commandedPitch()};
+  for (int t = 0; t * static_cast<int>(kConfig.controlPeriodMs) < seconds * 1000; ++t) {
+    now += kConfig.controlPeriodMs;
+    const FollowCommand command = tracker.step(now);
+    if (command.send) {
+      ++trace.sends;
+      if (trace.firstMoveAt < 0) trace.firstMoveAt = t;
+    }
+    if (command.yaw > trace.maxYaw) { trace.maxYaw = command.yaw; trace.maxYawAt = t; }
+    if (command.yaw < trace.minYaw) { trace.minYaw = command.yaw; trace.minYawAt = t; }
+    trace.minPitch = command.pitch < trace.minPitch ? command.pitch : trace.minPitch;
+    trace.maxPitch = command.pitch > trace.maxPitch ? command.pitch : trace.maxPitch;
+    assert(command.yaw >= kLimits.yawMin && command.yaw <= kLimits.yawMax);
+    assert(command.pitch >= tracker.pitchLow() && command.pitch <= tracker.pitchHigh());
+  }
+  trace.finalYaw = tracker.commandedYaw();
+  trace.finalMode = tracker.mode();
+  return trace;
+}
+
+void searchHoldsThenGlancesTowardTheLostSide() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 630, now);
+  // Face drifting off the right of the frame, then gone.
+  SearchTrace right = loseFace(tracker, 0.7f, 0.0f, now, 1);
+  assert(tracker.mode() == FollowMode::Searching);
+  // Holds still for searchHoldMs before anything moves.
+  assert(right.firstMoveAt < 0 || right.firstMoveAt * static_cast<int>(kConfig.controlPeriodMs) >= static_cast<int>(kConfig.searchHoldMs) - static_cast<int>(kConfig.controlPeriodMs));
+
+  HeadTracker full(kLimits, kConfig);
+  now = 1000;
+  const SearchTrace trace = loseFace(full, 0.7f, 0.0f, now, 12);
+  assert(trace.maxYawAt < trace.minYawAt);                  // right first, then left
+  assert(trace.maxYaw > trace.minYaw + kConfig.searchSweepRaw);
+  assert(trace.finalMode == FollowMode::Idle);              // and then home
+  assert(std::abs(trace.finalYaw - kLimits.yawRest) < kConfig.deadbandRaw);
+}
+
+void searchStartsLeftWhenTheFaceLeftLeft() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  const SearchTrace trace = loseFace(tracker, -0.7f, 0.0f, now, 12);
+  assert(trace.minYawAt < trace.maxYawAt);                  // left first
+  assert(trace.finalMode == FollowMode::Idle);
+}
+
+void searchEndsWhenTheFaceReturns() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  loseFace(tracker, 0.7f, 0.0f, now, 2);
+  assert(tracker.mode() == FollowMode::Searching);
+  assert(tracker.observe(2, 0.3f, 0.0f, 0.95f, now));
+  assert(tracker.mode() == FollowMode::Attending);
+}
+
+void searchGlancesUpForAFaceLostOffTheTop() {
+  const FollowLimits limits = roomyPitch();
+  HeadTracker tracker(limits, kConfig);
+  uint32_t now = 1000;
+  const SearchTrace trace = loseFace(tracker, 0.0f, -0.9f, now, 12);
+  // Attending already tilted up; the search glance tilts further, within bounds.
+  assert(trace.maxPitch > trace.minPitch);
+  assert(trace.finalMode == FollowMode::Idle);
+  assert(std::abs(tracker.commandedPitch() - 630) < kConfig.deadbandRaw);   // back to the session start
+}
+
+void searchNeverMovesDisabledPitch() {
+  FollowConfig config = kConfig;
+  config.pitchEnabled = false;
+  HeadTracker tracker(kLimits, config);
+  uint32_t now = 1000;
+  tracker.begin(460, 700, now);
+  assert(tracker.observe(1, 0.8f, -0.9f, 0.95f, now));
+  for (int i = 0; i < 300; ++i) {
+    now += config.controlPeriodMs;
+    assert(tracker.step(now).pitch == 700);
+  }
+  assert(tracker.mode() == FollowMode::Idle);
+}
+
+void searchIsClampedAndFinite() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  // Lost at the right-hand limit: the glance cannot go further right.
+  const SearchTrace trace = loseFace(tracker, 1.0f, 0.0f, now, 15, kLimits.yawMax - 2);
+  assert(trace.maxYaw <= kLimits.yawMax);
+  assert(trace.finalMode == FollowMode::Idle);
+  // A whole search, from losing the face to resting, stays well inside a session.
+  HeadTracker timed(kLimits, kConfig);
+  now = 1000;
+  timed.begin(460, 630, now);
+  assert(timed.observe(1, 0.7f, 0.0f, 0.95f, now));
+  int ticks = 0;
+  do { now += kConfig.controlPeriodMs; timed.step(now); ++ticks; }
+  while (timed.mode() != FollowMode::Idle && ticks < 1000);
+  std::printf("  search: idle %d ms after the last target\n", ticks * static_cast<int>(kConfig.controlPeriodMs));
+  assert(ticks * kConfig.controlPeriodMs < 10000);
+}
+
 int main() {
   closedLoopSettlesInsteadOfHunting();
   pitchDisabledNeverMovesPitch();
@@ -532,5 +699,13 @@ int main() {
   lostTargetReturnsPitchToSessionStart();
   pitchStartAcceptance();
   pitchClosedLoopSettles();
+  easingRampsUpAndSlowsDown();
+  easingRestartsFromRestOnReversal();
+  searchHoldsThenGlancesTowardTheLostSide();
+  searchStartsLeftWhenTheFaceLeftLeft();
+  searchEndsWhenTheFaceReturns();
+  searchGlancesUpForAFaceLostOffTheTop();
+  searchNeverMovesDisabledPitch();
+  searchIsClampedAndFinite();
   std::printf("head tracker: all tests passed\n");
 }

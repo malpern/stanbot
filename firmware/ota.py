@@ -138,7 +138,8 @@ def main():
     expect_measured = bool(info.get("follow_calibration", False))
     expect_pitch = bool(info.get("follow_pitch", False))
     ok = (after is not None and after["commit"] == info["commit"] and after["follow_limits_measured"] == expect_measured
-          and after.get("follow_pitch", False) == expect_pitch)
+          and after.get("follow_pitch", False) == expect_pitch
+          and ("follow_yaw_range" not in info or after.get("follow_yaw_range") == info["follow_yaw_range"]))
     print(json.dumps({"after": after, "reboot_to_answer_seconds": round(time.monotonic() - started - upload_s, 1),
                       "verified": ok}), flush=True)
     if not demanded["auth"]:

@@ -257,13 +257,39 @@ First supervised pitch session: flash a calibration + pitch build, stand so
 your face is above the camera's centre, and confirm the head tilts up and
 returns to where it started when you step away.
 
-## No search when the face is lost
+## Searching for a lost face (built, not yet run on the robot)
 
-There is no search behaviour. When no target arrives for 900 ms the head
-returns to rest at the slower rest step and waits, still for the rest of
-the session (20 s). The app's "No stable face detected" state is a label, not a
-motion, and auto-follow only starts a session once a face is confirmed. A
-search (a slow scan when the face is lost, for example) would be a new feature.
+When no target arrives for 900 ms the head no longer goes straight home. The
+tracker enters `Searching` (telemetry `mode` 3):
+
+1. **Hold** still for 600 ms, since the face may only have been missed.
+2. **Glance** 32 raw toward the side of the frame the face was last seen on,
+   and 12 raw up or down if it left off the top or bottom (pitch builds only,
+   inside the session's pitch bounds). If the face was last seen near the
+   centre, the first move is 32 raw to the robot's right.
+3. **Sweep** to 32 raw the other side of where it was lost.
+4. **Return** to rest (pitch to the session start) as before.
+
+It dwells 400 ms at each waypoint and moves at 3 raw per tick (~11 deg/s),
+slower than attending. Every waypoint is clamped to the limits. Any accepted
+target ends the search immediately. A whole search takes about 4.6 s from the
+last target to resting, well inside the 20 s session. The app's "No stable face
+detected" state is still only a label; auto-follow still starts a session only
+once a face is confirmed. Host tests: `searchHoldsThenGlancesTowardTheLostSide`,
+`searchStartsLeftWhenTheFaceLeftLeft`, `searchEndsWhenTheFaceReturns`,
+`searchGlancesUpForAFaceLostOffTheTop`, `searchNeverMovesDisabledPitch`,
+`searchIsClampedAndFinite`.
+
+## Easing (built, not yet run on the robot)
+
+Moves used to be a fixed 6 raw per tick from the first tick to the last. Each
+tick now moves 40% of the remaining distance, at least 2 raw, never more than
+the old step limit, and at most 2 raw more than the previous tick in the same
+direction. A long move therefore starts at 2, ramps to 6 and slows into the
+goal; a reversal starts again from 2. Nothing is faster than before, and the
+closed-loop simulations (compensated yaw, pitch and both axes) still settle
+without crossing the centre. Tests that count exact ticks use a linear
+configuration (`kLinear`), and `easingRampsUpAndSlowsDown` pins the new shape.
 
 ## Calibration checklist, before `measured` may become true
 
@@ -281,7 +307,10 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
    without oscillating. If it hunts, the deadbands are too narrow for this
    unit's standing error; if it lags, raise `rawPerUnitX/Y` a little.
 4. **Widen.** Extend the limits toward what the sweep traversed (yaw +-288),
-   one session per step, watching for the head meeting the body.
+   one session per step, watching for the head meeting the body. No source
+   edit is needed: `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_YAW_RANGE=96
+   firmware/build.sh`, then 144, 192, 240 and 288. Other values fail to
+   compile, V reports `follow_yaw_range`, and `ota.py` checks it.
 5. **Companion.** Done: the app sends `T,` targets with the frame's sequence
    number (sessions 2-5).
 

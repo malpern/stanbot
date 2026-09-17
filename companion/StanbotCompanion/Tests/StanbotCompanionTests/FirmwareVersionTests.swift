@@ -36,6 +36,10 @@ final class FirmwareVersionTests: XCTestCase {
         let pitch = try XCTUnwrap(FirmwareInfo.parse(
             clean.replacingOccurrences(of: #""follow_limits_measured":false"#, with: #""follow_limits_measured":false,"follow_pitch":true"#)))
         XCTAssertTrue(pitch.followPitch)
+        XCTAssertNil(pitch.followYawRange)
+        let ranged = try XCTUnwrap(FirmwareInfo.parse(
+            clean.replacingOccurrences(of: #""follow_limits_measured":false"#, with: #""follow_limits_measured":false,"follow_yaw_range":96"#)))
+        XCTAssertEqual(ranged.followYawRange, 96)
         XCTAssertEqual(pitch.warnings, ["Head following tilts up and down (pitch build)"])
 
         let newer = try XCTUnwrap(FirmwareInfo.parse(clean.replacingOccurrences(of: #""protocol":1"#, with: #""protocol":2"#)))
