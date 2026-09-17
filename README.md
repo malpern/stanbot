@@ -22,6 +22,8 @@ a guided pitch-level finder, and stopping a session before an OTA update. A
 replay tool turns each session log into a chart. See
 [head following](docs/head-following.md), and
 [next session](docs/next-session.md) for the checklist to run at the robot.
+The planned voice conversation (OpenAI `gpt-live-1`, a mouth on the robot) is
+in [voice](docs/voice.md).
 
 Not yet verified: pitch following on the robot, pitch travel beyond 5°, yaw
 beyond centre ±48, image quality under varied lighting, and following started
