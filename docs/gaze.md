@@ -37,6 +37,52 @@ error.
    require several frames before saying yes, and answer unknown rather than no
    when quality is low.
 
+## First conversion, 2026-09-16
+
+The official L2CS-Net weights can no longer be downloaded: the README's Google
+Drive folder returns 404 (L2CS-Net issue #47). Used instead: the MIT-licensed
+retraining of the same method on the same Gaze360 data at
+[yakhyo/gaze-estimation](https://github.com/yakhyo/gaze-estimation), whose
+README reports Gaze360 mean absolute error of 11.34 degrees (ResNet-50) and
+12.58 degrees (MobileOne-S0). Weights stay out of this repo; download them from
+that repo's `weights` release.
+
+`tools/gaze/convert_gaze_model.py` converts a checkpoint to Core ML with the
+preprocessing and bin decoding built in: input a 448x448 RGB face crop, output
+`yaw_degrees` and `pitch_degrees`. It loads checkpoints with
+`weights_only=True`. `tools/gaze/GazeProbe.swift` runs Vision face detection
+and the model on still images and prints one JSON line per face.
+
+Measured on this Mac (torch 2.14, coremltools 9.0; torch newer than
+coremltools has tested, no problems seen):
+
+| Model | Core ML vs PyTorch, 5 random inputs | Core ML predict, CPU only | Core ML predict, all units | Per face through Vision (median, 62 faces) |
+| --- | --- | --- | --- | --- |
+| ResNet-50 (96 MB) | max 0.05 deg | 11.0 ms | 3.7 ms | 7.5 ms |
+| MobileOne-S0 (5 MB) | max 0.30 deg | 3.7 ms | 0.9 ms | 1.6 ms |
+
+Latency is not a constraint at 3-10 fps, even with several faces.
+
+A first look on real faces: 13 frames at 640 px from that repo's sample video
+(a group walking toward the camera; 62 faces, 32-79 px wide, which is our
+range). There is no ground truth, so this is not accuracy. It shows two things:
+
+- **Sign convention:** gaze yaw is the opposite sign to Vision's head yaw.
+  Correlation of head yaw with *negated* gaze yaw: 0.86 (ResNet-50) and 0.89
+  (MobileOne) for faces under 48 px, 0.85 and 0.79 for 48-80 px. Negate the
+  model's yaw before comparing it with Vision's.
+- **Small faces:** the median difference between head and gaze yaw is 24
+  degrees for ResNet-50 on faces under 48 px against 12.5 at 48-80 px. Some of
+  that is real (eyes need not point where the head does), but single readings
+  such as gaze -65 with head +10 on a 33 px face look like noise. MobileOne
+  was steadier on the smallest faces here (15 degrees), on too few frames to
+  prefer it.
+
+Next: record labelled clips from the robot's own camera (looking at the robot,
+looking away, at several distances) and run the probe on them; that is what
+decides whether the gaze model adds anything over head pose, and at what face
+size.
+
 ## Considered and not first choice
 
 - **Eye-Contact-CNN** (Chong et al., Nature Communications 2020) answers "looking
