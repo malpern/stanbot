@@ -75,6 +75,9 @@ Afterwards:
       Stage toggled mid-call.
 - [ ] Watch the self-view for framing, resolution or freezes; note
       `format_or_rate_changed` at the end.
+- [ ] Only if all three were clean: Settings, Desk camera, turn on "Log the
+      Studio Display camera during sessions" (macOS asks for camera access
+      once), and repeat one case with the app running instead of the probe.
 
 ## Hand back
 

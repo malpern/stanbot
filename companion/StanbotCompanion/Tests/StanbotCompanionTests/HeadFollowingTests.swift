@@ -119,7 +119,10 @@ final class HeadFollowingTests: XCTestCase {
 
         usb.line(#"SBTB {"telemetry":"begin","plan":"follow"}"#)
         usb.line(#"SBMV {"result":"stopped_by_host","plan":"follow","pitch_enabled":false,"observations":2,"rejected":0,"yaw_final":470,"pitch_final":630,"yaw_commanded":472,"pitch_commanded":630,"mode":1}"#)
-        wait(upTo: 2) { if case .finished = robot.follow { return true }; return false }
+        // 5 s, not 2: in the full suite, under load, the reader has taken longer
+        // than 2 s to deliver these lines (seen twice on 2026-09-16), while the
+        // test alone passes every time.
+        wait(upTo: 5) { if case .finished = robot.follow { return true }; return false }
         XCTAssertEqual(robot.follow, .finished(FollowResult(code: "stopped_by_host")))
 
         robot.sendFollowTarget(face, sequence: 7)

@@ -92,8 +92,18 @@ resolution and frame rate are unchanged while the app captures, in both orders
    without a call: watch-only on the mini (1280x720 at 30 fps, not in use,
    Center Stage off, user control) and the refusal without a Studio Display
    camera. Capture itself has not run yet.
-2. **DeskCamera in the app, logging only:** faces, head pose and the facing
-   class from the desk view in the session logs, next to the robot's.
+2. **DeskCamera in the app, logging only.** Built, off by default: Settings,
+   Desk camera, "Log the Studio Display camera during sessions". It uses the
+   same passive rules as the probe (no device configuration, preset matching
+   the current format or it does not start; 1664x1248 has no such preset) and
+   analyses at most 5 frames a second. During a follow session each analysed
+   frame writes a `DESK` line to the session log: time on the same clock as the
+   robot frames, every face with its box, confidence, head yaw and pitch and the
+   facing class, whether another app is using the camera, and whether Center
+   Stage is active. No images are saved. `tools/follow_replay.py` counts DESK
+   frames and faces by facing class. Tests: `DeskCameraTests.swift` (preset
+   rule, throttle, log line, never opening a camera under tests). Not yet run
+   against the real camera; leave it off until step 1 has passed.
 3. **Recorder and calibration**, then a first recording session: looking at
    the robot, the screen and away, at two or three distances.
 4. **Labeller**, then the comparison that matters: on labelled robot-camera
