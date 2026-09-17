@@ -17,6 +17,12 @@ the robot's view, with a little of the robot's character in it.
   timings and the geometry). The last frame is held while the lids close,
   because the robot stops sending as soon as it is asked to sleep, and the app
   stops analysing once they are shut. Reduce Motion fades instead.
+  Two things this depends on, both learned by breaking them (2026-09-17): the
+  veil is applied to the **picture**, not the pane around it (on the pane the
+  eyes centre on the window and sit below the letterboxed video), and it keeps
+  **one view tree at every openness** — an `if` that skipped the mask while awake
+  made SwiftUI rebuild the subtree on sleep, so the picture cut straight to black
+  with no animation at all.
 - **The robot's view is the window.** The camera fills the width at the top of
   the window (not centred, so it stays put as the window grows), with the
   selected face outlined. No sidebar: there is one robot and no
@@ -225,6 +231,9 @@ writes every expression icon to one image.
 A snapshot run quits as soon as the picture is written, so it leaves nothing on
 screen; add `-g` to `open` to keep it in the background as well.
 
+`STANBOT_PREVIEW=sleeping` is "seeing" and then falls asleep after a second, so
+`STANBOT_SNAPSHOT_DELAY=1.3` photographs the eyelids part way through closing —
+which is how those two bugs were found.
 `STANBOT_SNAPSHOT_WINDOW=Diagnostics` opens and captures that window instead,
 `=sheet` captures an open sheet, and `STANBOT_WINDOW_SIZE=1800x1100` checks a
 layout at another size.
