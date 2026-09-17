@@ -1,22 +1,17 @@
 # Next session at the robot
 
 One page for the next time someone is at the robot and at the mini. Written
-2026-09-16. On the robot: calibration + pitch build `7cd5106` (yaw +-48, pitch
-following on, search, easing, eye gaze, renewable power lease, telemetry
-check). The Stanbot app in `companion/StanbotCompanion/build/Stanbot.app` was
+2026-09-16, updated 2026-09-17. On the robot: calibration + pitch build
+`c6b9ad3` (yaw +-48, pitch following on, search, easing, renewable power lease,
+telemetry check, review fixes, and the new gaze: looking away until someone
+faces Stanbot, then locking on with dilated pupils; eyes corrected for head
+motion; a blink with big turns). Flashed and verified over Wi-Fi. The Stanbot app in `companion/StanbotCompanion/build/Stanbot.app` was
 rebuilt from the latest commit (adds the desk camera toggle, off) and has not been launched since.
 
 Stay at the robot for every step that moves it. Stop in the app (or unplug the
 robot) if anything looks wrong.
 
 ## 0. Before anything moves (2 min)
-
-- [ ] **Flash the review fixes first** (commit `eee768e` or later): the robot
-      still runs `7cd5106`, which lacks the pitch-level travel limit and the
-      OTA motion guard. From Terminal on the mini, app closed:
-      `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 firmware/build.sh`
-      then `python3 firmware/ota.py`; it must print `"verified": true`. Or ask
-      Claude to do it.
 
 - [ ] Find the USB port: `ls /dev/cu.usbmodem*`
 - [ ] Open the app. Firmware card shows the commit you just flashed, and lists "tilts up and down".
@@ -54,11 +49,22 @@ Watch for, and note yes or no:
       at 20 s.
 - [ ] **Ending:** leave for 15 s; it ends by itself ("No face for 12 seconds").
 - [ ] **No hunting:** the head does not swing back and forth on a still face.
+- [ ] **Looking away, then at you:** before you face it, the robot's eyes
+      wander and mostly look away, with brief glances at you. Face it for a
+      moment: the eyes lock on and the pupils visibly widen. Turn away: they
+      relax slowly and look away again. (Also works with the camera on and no
+      session running.)
+- [ ] **Eyes lead the head:** move to one side. The eyes get there first, and
+      as the head turns they stay on you instead of swinging past.
+- [ ] **Blink with a big turn:** step well to one side; a blink comes with the
+      turn.
 
 Afterwards:
 
 - [ ] `python3 tools/follow_replay.py ~/Library/Logs/Stanbot/follow-<newest>.log`
-      and open the HTML beside it. Telemetry should read `verified`.
+      and open the HTML beside it. Telemetry should read `verified`. The yaw
+      chart's orange "eyes aim" line should sit on the person while the blue
+      head line catches up.
 
 ## 3. Widen yaw one step (10 min, only if step 2 looked clean)
 
