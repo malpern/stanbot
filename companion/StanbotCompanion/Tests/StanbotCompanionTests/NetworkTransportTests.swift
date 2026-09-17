@@ -48,6 +48,16 @@ private final class FakeRobot: @unchecked Sendable {
     func sendLine(_ text: String) { queue.sync { current?.send(content: Data((text + "\n").utf8), completion: .idempotent) } }
     var authorizedCommands: [String] { lock.withLock { authorized } }
 
+    /// More camera frames, as the robot keeps sending while it streams.
+    func sendFrames(_ count: Int, from sequence: UInt32) {
+        queue.sync {
+            for offset in 0..<UInt32(count) {
+                current?.send(content: Self.packet(sequence + offset, width: frameWidth, height: frameHeight),
+                              completion: .idempotent)
+            }
+        }
+    }
+
     func stop() { dropClient(); listener.cancel() }
 
     private func accept(_ connection: NWConnection) {
@@ -239,6 +249,42 @@ final class NetworkTransportTests: XCTestCase {
         fake.sendLine("SBPW {\"warning\":\"motor_power_left_on\",\"cleared\":false}")
         wait(upTo: 2, tick: robot) { robot.robotFault != nil }
         XCTAssertTrue(try XCTUnwrap(robot.robotFault).contains("Hold its button"))
+    }
+
+    /// Waking starts a session with nobody in view, so the robot can look around.
+    /// The robot refuses a session within a few seconds of the last one ending,
+    /// and sleeping has just ended one: that refusal must not use the wake up.
+    @MainActor
+    func testAWakeRefusedForCooldownIsAskedAgain() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        wait(upTo: 5, tick: robot) { robot.cameraState == .receiving }
+        robot.followAutomatically = true
+        robot.sleep()
+        fake.sendLine("SBSL {\"asleep\":true}")
+        wait(upTo: 2, tick: robot) { robot.asleep }
+        RunLoop.current.run(until: Date().addingTimeInterval(2.1))   // past the late-report guard
+        robot.wake()
+        fake.sendLine("SBSL {\"asleep\":false}")
+
+        // Frames with nobody in them: only a wake can start a session now.
+        var sequence: UInt32 = 100
+        func pump(until condition: () -> Bool, seconds: TimeInterval) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !condition(), Date() < deadline {
+                fake.sendFrames(1, from: sequence); sequence += 1
+                robot.tick()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        pump(until: { fake.authorizedCommands.count == 1 }, seconds: 6)
+        XCTAssertEqual(fake.authorizedCommands, ["FOLLOW"], "the wake asks for a session with no face")
+
+        // The robot: too soon after the last session.
+        fake.sendLine("SBPW {\"error\":\"follow_cooldown\"}")
+        pump(until: { fake.authorizedCommands.count == 2 }, seconds: 6)
+        XCTAssertEqual(fake.authorizedCommands, ["FOLLOW", "FOLLOW"], "refused for cooldown, it asks again")
     }
 
     /// Sleeping ends the session but must not switch automatic following off,

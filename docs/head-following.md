@@ -496,6 +496,14 @@ When the owner wakes the robot, it looks around for someone before it settles.
   limits; it is quicker than a search (`scanStepRaw` 5, ~18 deg/s) and takes
   9.8 s in the native test at yaw +-96. While it runs the session is not counted
   as idle, so the 12 s "nobody here" clock starts when it finishes.
+- **Two things that stopped it ever starting (2026-09-17),** both on the app
+  side, both found from the session logs. Sleep ended the running session with
+  the Stop button's code, which also switches automatic following off, so waking
+  had nothing to start a session with. Then, fixed, the wake's one request was
+  refused `follow_cooldown`: the robot will not start a session within 3 s of
+  the last one ending, and sleeping has just ended one. The app treated its wake
+  as spent. Now sleep ends the session and nothing more, and a cooldown refusal
+  is asked again 1.5 s later while the 12 s wake window lasts.
 - **Finding someone:** any accepted observation ends the scan at once and the
   face reacts: surprised 0.7 s, glee 0.9 s, then focused for as long as the
   session follows, then back to the chosen expression. The app's face does the

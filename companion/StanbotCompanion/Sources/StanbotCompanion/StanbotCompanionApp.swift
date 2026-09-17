@@ -366,6 +366,12 @@ final class RobotConnection: ObservableObject {
     /// for has started (AutoFollow.wakeScanWindow).
     private var wokeAt: Date?
     private var lookingAroundSince: Date?
+    /// The look-around session has been asked for and not refused. A refusal
+    /// for cooldown does not use the wake up: the robot will not start a session
+    /// within a few seconds of the last one ending, and going to sleep has just
+    /// ended one, so the first request after a quick wake is usually refused.
+    private var wakeSessionRequested = false
+    private var nextWakeAttempt = Date.distantPast
     /// The robot looked around on waking and found someone: the face reacts
     /// (surprised, glee, focused), as the robot's own does. A new date each time.
     @Published private(set) var foundSomeoneAt: Date?
@@ -774,6 +780,12 @@ final class RobotConnection: ObservableObject {
             : object["error"] as? String
         guard let code else { return }
         sessionsWithoutResult = 0   // the robot answered
+        if code == "follow_cooldown", wokeAt != nil {
+            // Too soon after the session that sleeping ended. Ask again shortly.
+            wakeSessionRequested = false
+            lookingAroundSince = nil
+            nextWakeAttempt = Date().addingTimeInterval(1.5)
+        }
         follow = .finished(FollowResult(code: code))
         lastFollowEnded = Date()
         lastAction = "Head following: \(FollowResult(code: code).summary)"
@@ -1020,6 +1032,8 @@ final class RobotConnection: ObservableObject {
         guard send("C,WAKE\n") else { return }
         sleepCommandedAt = Date()
         wokeAt = Date()
+        wakeSessionRequested = false
+        nextWakeAttempt = .distantPast
         asleep = false
         lastAction = "Woke the robot."
         if wantsCamera { startCamera() }
@@ -1204,16 +1218,20 @@ final class RobotConnection: ObservableObject {
                     self.sendGaze(box)
                     sent = box
                 }
+                // The wake's own session: until it has been asked for and not
+                // refused, and not more often than the robot's cooldown allows.
+                let wake = (self.wakeSessionRequested || Date() < self.nextWakeAttempt) ? nil : self.wokeAt
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
                                           state: self.follow, faceTracked: self.faceSelection.state == .tracking,
-                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: self.wokeAt) {
+                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake) {
                     // Just woken with nobody in view, this session is the robot
                     // looking around; the first face it then finds is a finding.
-                    let lookingAround = self.wokeAt != nil && self.faceSelection.state != .tracking
-                    self.wokeAt = nil
+                    let lookingAround = wake != nil && self.faceSelection.state != .tracking
+                    if wake != nil { self.wakeSessionRequested = true }
                     self.lookingAroundSince = lookingAround ? Date() : nil
                     self.startFollowing()
                 }
+                if let woke = self.wokeAt, Date().timeIntervalSince(woke) > AutoFollow.wakeScanWindow { self.wokeAt = nil }
                 if let since = self.lookingAroundSince {
                     if self.faceSelection.state == .tracking {
                         self.foundSomeoneAt = Date()
