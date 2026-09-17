@@ -22,8 +22,9 @@ inline bool networkCommandAllowed(const char* line) {
   }
   // Two-character prefixes whose payload can do no more than the exact
   // commands above: expression, follow target, frame interval, image mode,
-  // JPEG quality. T, is only consumed inside C,FOLLOW, which is USB-only.
-  static const char* const prefixes[] = {"E,", "T,", "R,", "M,", "J,"};
+  // JPEG quality, eye gaze. T, is only consumed inside C,FOLLOW, which is
+  // USB-only; G, moves only the pupils drawn on the display.
+  static const char* const prefixes[] = {"E,", "T,", "R,", "M,", "J,", "G,"};
   for (const char* prefix : prefixes) {
     if (strncmp(line, prefix, 2) == 0) return true;
   }

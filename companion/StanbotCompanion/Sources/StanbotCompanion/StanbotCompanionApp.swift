@@ -786,6 +786,13 @@ final class RobotConnection: ObservableObject {
         _ = send(FollowTarget.line(for: box, sequence: sequence))
     }
 
+    /// Outside a session the robot's eyes still look toward the selected face;
+    /// during one they follow the targets instead. Moves only pupils on the display.
+    func sendGaze(_ box: FaceBox) {
+        if case .following = follow { return }
+        _ = send(Gaze.line(for: box))
+    }
+
     private func disconnected() {
         closeSerial()
         connection = .unavailable
@@ -897,6 +904,7 @@ final class RobotConnection: ObservableObject {
                 var sent: FaceBox?
                 if self.faceSelection.state == .tracking, let box = self.faceSelection.box {
                     self.sendFollowTarget(box, sequence: frameSequence)
+                    self.sendGaze(box)
                     sent = box
                 }
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,

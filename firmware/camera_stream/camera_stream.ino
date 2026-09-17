@@ -16,6 +16,7 @@
 #include <esp_rom_sys.h>
 #include <esp_log.h>
 #include <StanbotEyes.h>
+#include "eye_gaze.h"
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
@@ -106,6 +107,10 @@ std::atomic<bool> servoProbeRequested{false};
 // session that consumes it; C,UNFOLLOW ends the session early.
 std::atomic<uint32_t> targetSequence{0};
 std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
+// Where the eyes should look, from T, (during a session) or G, (any time).
+// The loop compares gazeSequence with its own copy and calls eyes.attend().
+std::atomic<int32_t> gazeXMilli{0}, gazeYMilli{0};
+std::atomic<uint32_t> gazeSequence{0};
 std::atomic<bool> followRequested{false};
 std::atomic<bool> followStopRequested{false};
 std::atomic<bool> powerTestRequested{false};
@@ -519,6 +524,19 @@ void handleCommand(const char* line) {
       targetYMilli.store(lroundf(y * 1000.0f));
       targetConfidenceMilli.store(lroundf(confidence * 1000.0f));
       targetSequence.store(static_cast<uint32_t>(sequence));
+      if (confidence >= stanbot::kGazeConfidence && x >= -1.0f && x <= 1.0f && y >= -1.0f && y <= 1.0f) {
+        gazeXMilli.store(lroundf(x * 1000.0f));
+        gazeYMilli.store(lroundf(y * 1000.0f));
+        gazeSequence.fetch_add(1);
+      }
+    }
+  }
+  else if (strncmp(line, "G,", 2) == 0) {
+    float x = 0, y = 0;
+    if (stanbot::parseGazeLine(line + 2, x, y)) {
+      gazeXMilli.store(lroundf(x * 1000.0f));
+      gazeYMilli.store(lroundf(y * 1000.0f));
+      gazeSequence.fetch_add(1);
     }
   }
   else if (strcmp(line, "Z") == 0) { resetStats.store(true); maxEyeGapMs.store(0); }
@@ -2047,6 +2065,16 @@ void loop() {
   const int emotion = pendingEmotion.exchange(-1);
   if (emotion >= 0) eyes.setEmotion(static_cast<StanbotEmotion>(emotion));
   if (bootScreenActive) { updateBootScreen(now); return; }
+  // Look toward the latest face. The eyes' own 900 ms timeout drifts them back
+  // to idle when the app stops sending, and their smoothing leads the head,
+  // so they glance first and the head follows.
+  static uint32_t gazeSeen = 0;
+  const uint32_t gaze = gazeSequence.load();
+  if (gaze != gazeSeen) {
+    gazeSeen = gaze;
+    const stanbot::Gaze look = stanbot::gazeForImage(gazeXMilli.load() / 1000.0f, gazeYMilli.load() / 1000.0f);
+    eyes.attend(look.x, look.y, now);
+  }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {
       // Drawn after the face and before the push, so it costs no extra frame.

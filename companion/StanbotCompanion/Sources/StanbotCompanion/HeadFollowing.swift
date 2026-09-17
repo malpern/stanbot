@@ -66,6 +66,15 @@ enum AutoFollow {
     }
 }
 
+enum Gaze {
+    /// The G line for a face: the same image coordinates as a follow target.
+    static func line(for box: FaceBox) -> String {
+        let x = min(max(box.rect.midX * 2 - 1, -1), 1)
+        let y = min(max(1 - box.rect.midY * 2, -1), 1)
+        return String(format: "G,%.3f,%.3f\n", x, y)
+    }
+}
+
 enum FollowTarget {
     /// The T line for a selected face. Vision rectangles are normalized with
     /// the origin at the lower left; the robot wants x and y in [-1, 1] with

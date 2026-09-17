@@ -313,7 +313,7 @@ OTA passphrase with `W,O`, rewrite Wi-Fi profiles, reboot, or run the
 supervised motion commands. Commit 63d5add fixed both halves:
 
 - **Wi-Fi viewers get an allowlist** (`firmware/camera_stream/network_policy.h`):
-  `S`, `X`, `V`, `P`, `Z`, and the `E,` `T,` `R,` `M,` `J,` prefixes. Everything
+  `S`, `X`, `V`, `P`, `Z`, and the `E,` `T,` `R,` `M,` `J,` `G,` prefixes. Everything
   else, including every `W,` and `C,` command and `Q`, is USB-only and answered
   with `SBNR {"refused":"usb_only"}`. The refusal never echoes the line, since
   a refused `W,O` carries a passphrase. A command added later is USB-only until
