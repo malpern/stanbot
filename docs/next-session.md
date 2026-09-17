@@ -36,8 +36,11 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   first session after a boot, and the app asks for that session on seeing a
   small `uptime_ms` in `V`. Reconnecting to a robot that was already up does
   nothing. Built, NOT yet seen.
-- **A look around starts where someone was last seen**, kept in NVS so a
-  reboot remembers. Built, NOT yet seen.
+- **A look around starts where someone was last seen**. The Mac keeps the
+  place (`RobotState`) and hands it back on connecting with `K,lsy=..,lsp=..`;
+  the robot reports it in `SBMV` and answers `SBRS`. See "State that survives a
+  reset" in `docs/head-following.md` before adding another carried value.
+  Built, NOT yet seen.
 - **Eyes open before the head moves**, on the robot (the session waits for the
   boot screen to hand over and the lids to rise) and in the app (nothing starts
   during its 2.4 s waking). Built, NOT yet seen.

@@ -312,16 +312,43 @@ they were sitting: "Remember where I was last time and start the search in that
 general area. Only if that fails, then do a full scan search."
 
 The remembered place is where the head would have had to point to look straight
-at the last accepted observation. `HeadTracker` records it; the sketch carries
-it from one session to the next and **keeps it across reboots** in NVS (the
-`stanbot` namespace the Wi-Fi profiles already use), so a flash or a power cut
-does not lose you. It was RAM-only at first, on the argument that a guess about
-a person is not worth a flash write; the owner disagreed, reasonably -- a robot
-that forgets the moment it is flashed is not remembering where you were. The
-write happens at the end of a session and only when the place has moved by more
-than `kLastSeenWriteThreshold` (16 raw, ~5 deg), which for someone who sits in
-the same chair is almost never. With nothing remembered at all -- a robot that
-has never seen anyone -- the sweep starts robot-left as before.
+at the last accepted observation. `HeadTracker` records it, the sketch carries
+it from session to session in RAM, and the **Mac** keeps it across a reset: the
+robot reports it in `SBMV` (`last_seen_yaw`, `last_seen_pitch`) and the app
+hands it back on connecting. With nothing remembered at all the sweep starts
+robot-left as before.
+
+### State that survives a reset
+
+Three kinds, in three places, and the distinction is worth keeping:
+
+| kind | where | why |
+|---|---|---|
+| Measured constants: the yaw centre, pitch level, the limits | firmware source, in git | they are findings, and belong in history and review, not in a runtime store |
+| What the robot needs with nobody there: Wi-Fi profiles, the OTA passphrase | the robot's NVS | it has to work with no Mac present |
+| Guesses and preferences: where someone was last seen | **the Mac** (`RobotState`, UserDefaults) | see below |
+
+Last-seen lived in NVS for an hour on 2026-09-17 and was moved out deliberately.
+A value the robot keeps to itself cannot be shown, diffed or cleared from here,
+and a stale one that quietly biases where the head looks is exactly the kind of
+bug that eats an afternoon -- in a project being actively developed, where the
+robot is reflashed many times a day and the Mac is not. On the Mac it can be
+printed into the session log, reset, and tested with no robot present, and it
+survives a full erase or a replacement CoreS3, which NVS does not. (NVS itself
+survives an OTA: `espota` writes only the app partition. That was never the
+problem.)
+
+**The mechanism** is one command, `K,key=value,...`, sent on every version
+report -- once per connection, so a robot that rebooted mid-session is caught
+too. Keys are an allowlist and unknown ones are ignored at both ends, so an
+older robot and a newer app tolerate each other. Every value is clamped to the
+follow limits on arrival; nothing here moves anything, it only biases where a
+look around begins. The robot answers `SBRS` with what it actually took, so the
+session log shows the value rather than the app's belief having to be trusted.
+It is allowed over Wi-Fi (`network_policy.h`) for that reason.
+
+Adding another carried value costs one key in `RobotState` and one `else if` in
+`applyRestore`.
 
 ## Eyes first, then the head
 

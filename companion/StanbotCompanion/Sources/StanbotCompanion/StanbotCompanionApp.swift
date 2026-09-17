@@ -739,6 +739,7 @@ final class RobotConnection: ObservableObject {
         if let info = FirmwareInfo.parse(line) {
             firmware = .reported(info)
             announceFirmwareChange(info)
+            restoreRobotState()
             // A robot that has only just booted gets a look around, the way a
             // wake does. Reconnecting to one that has been up for hours does
             // not: it has been sitting there with nobody to find. A report
@@ -805,6 +806,13 @@ final class RobotConnection: ObservableObject {
         let code = line.hasPrefix("SBMV ") && object["plan"] as? String == "follow"
             ? object["result"] as? String
             : object["error"] as? String
+        // Where the robot last saw someone, kept here so it survives a reset of
+        // the robot -- including one that erases its flash, or a replacement
+        // CoreS3. Handed back on connecting (`K,`). See RobotState.
+        if let yaw = object["last_seen_yaw"] as? Int, let pitch = object["last_seen_pitch"] as? Int,
+           yaw >= 0, pitch >= 0 {
+            RobotState.rememberLastSeen(yaw: yaw, pitch: pitch)
+        }
         guard let code else { return }
         sessionsWithoutResult = 0   // the robot answered
         if code == "follow_cooldown", wokeAt != nil {
@@ -839,6 +847,16 @@ final class RobotConnection: ObservableObject {
     var mouthHost: String? { connectedOverWiFi ? networkHost : nil }
 
     func refreshPassphrase() { passphraseAvailable = passphrase() != nil }
+
+    /// Hand the robot back what this Mac kept for it across its reset. Sent on
+    /// every version report, which is once per connection: cheap, idempotent,
+    /// and it means a robot that rebooted mid-session is caught too. The robot
+    /// answers `SBRS` with what it took, so the session log shows the value
+    /// rather than this side's belief having to be taken on trust.
+    func restoreRobotState() {
+        guard let line = RobotState.restoreLine(RobotState.lastSeen) else { return }
+        _ = send(line)
+    }
 
     /// Why a session cannot start now, or nil when it can.
     var followUnavailableReason: String? {

@@ -250,41 +250,17 @@ constexpr uint32_t kWakeScanWindowMs = 20000;
 // back from a flash or a power cycle and has never seen anyone. Consumed once.
 std::atomic<bool> scanOnFirstSession{true};
 // Where a face was last seen, so a look around can start there instead of at a
-// limit. Carried from one session to the next, and KEPT ACROSS REBOOTS in NVS
-// (the "stanbot" namespace the Wi-Fi profiles already use). It was RAM-only at
-// first, on the argument that a guess about a person is not worth a flash
-// write; the owner disagreed, reasonably -- a robot that forgets the moment it
-// is flashed is not remembering where you were. Written only when the place
-// has actually moved (kLastSeenWriteThreshold), which for someone who sits in
-// the same chair is almost never.
+// limit. Carried from one session to the next in RAM, and across reboots by the
+// MAC, which hands it back on connecting (the K command below). It lived in NVS
+// for an hour on 2026-09-17 and was moved out deliberately: a value the robot
+// keeps to itself cannot be shown, diffed or cleared from the Mac, and a stale
+// one that quietly biases where the head looks is the kind of bug that eats an
+// afternoon. NVS is for what the robot needs with nobody there -- the Wi-Fi
+// profiles and the OTA passphrase. See docs/head-following.md, "State that
+// survives a reset".
 std::atomic<bool> haveLastSeen{false};
 std::atomic<int> lastSeenYaw{0}, lastSeenPitch{0};
-constexpr int kLastSeenWriteThreshold = 16;   // ~5 degrees: below this, not worth a write
-int storedLastSeenYaw = 0, storedLastSeenPitch = 0;
 
-void loadLastSeen() {
-  storage.begin("stanbot", true);
-  const int yaw = storage.getInt("lsy", -1);
-  const int pitch = storage.getInt("lsp", -1);
-  storage.end();
-  if (yaw < 0 || pitch < 0) return;
-  storedLastSeenYaw = yaw;
-  storedLastSeenPitch = pitch;
-  lastSeenYaw.store(yaw);
-  lastSeenPitch.store(pitch);
-  haveLastSeen.store(true);
-}
-
-void saveLastSeen(int yaw, int pitch) {
-  if (haveLastSeen.load() && abs(yaw - storedLastSeenYaw) < kLastSeenWriteThreshold &&
-      abs(pitch - storedLastSeenPitch) < kLastSeenWriteThreshold) return;
-  storage.begin("stanbot", false);
-  storage.putInt("lsy", yaw);
-  storage.putInt("lsp", pitch);
-  storage.end();
-  storedLastSeenYaw = yaw;
-  storedLastSeenPitch = pitch;
-}
 std::atomic<uint32_t> reactionStartedMs{0};
 constexpr uint32_t kReactionSurprisedMs = 700;
 constexpr uint32_t kReactionGleeMs = 900;
@@ -661,6 +637,40 @@ void emitVersion() {
 // Shared by the USB parser (main task) and the TCP parser (camera task).
 // Handlers may only set atomics: nothing here touches the display or the
 // servo bus directly, because the two callers run on different tasks.
+// `K,key=value,...`: state the Mac kept for the robot across a reset. An
+// allowlist of keys, unknown ones ignored on purpose, so an older robot and a
+// newer app tolerate each other. Nothing here moves anything: the values are
+// clamped to the follow limits and only bias where a look around begins.
+// Answers with what it took, so the session log shows it rather than the app's
+// belief having to be taken on trust.
+void applyRestore(const char* args) {
+  int yaw = -1, pitch = -1;
+  char buffer[96];
+  snprintf(buffer, sizeof buffer, "%s", args ? args : "");
+  for (char* token = strtok(buffer, ","); token != nullptr; token = strtok(nullptr, ",")) {
+    char* equals = strchr(token, '=');
+    if (equals == nullptr) continue;
+    *equals = '\0';
+    const int value = atoi(equals + 1);
+    if (strcmp(token, "lsy") == 0) yaw = value;
+    else if (strcmp(token, "lsp") == 0) pitch = value;
+  }
+  if (yaw < 0 || pitch < 0) {
+    Telemetry.println("SBRS {\"restored\":false,\"reason\":\"no usable keys\"}");
+    return;
+  }
+  const int clampedYaw = yaw < stanbot::kFollowLimits.yawMin ? stanbot::kFollowLimits.yawMin
+                       : (yaw > stanbot::kFollowLimits.yawMax ? stanbot::kFollowLimits.yawMax : yaw);
+  const int clampedPitch = pitch < stanbot::kFollowLimits.pitchMin ? stanbot::kFollowLimits.pitchMin
+                         : (pitch > stanbot::kFollowLimits.pitchMax ? stanbot::kFollowLimits.pitchMax : pitch);
+  lastSeenYaw.store(clampedYaw);
+  lastSeenPitch.store(clampedPitch);
+  haveLastSeen.store(true);
+  Telemetry.printf("SBRS {\"restored\":true,\"last_seen_yaw\":%d,\"last_seen_pitch\":%d,\"clamped\":%s}\n",
+                   clampedYaw, clampedPitch,
+                   (clampedYaw != yaw || clampedPitch != pitch) ? "true" : "false");
+}
+
 void handleCommand(const char* line) {
   if (strncmp(line, "W,", 2) == 0) {
     // Provisioning. Passphrases are stored and never echoed anywhere.
@@ -684,6 +694,7 @@ void handleCommand(const char* line) {
     else if (strcmp(body, "SCAN") == 0) wifiScanRequested.store(true);
     return;
   }
+  if (strncmp(line, "K,", 2) == 0) { applyRestore(line + 2); return; }
   if (strcmp(line, "S") == 0) streamEnabled.store(true);
   else if (strcmp(line, "X") == 0) streamEnabled.store(false);
   else if (strcmp(line, "P") == 0) statsRequested.store(true);
@@ -2328,7 +2339,6 @@ void runFollowSession() {
   headLookingAround.store(false);
   // Hand what this session learned to the next one.
   if (tracker.haveLastSeen()) {
-    saveLastSeen(tracker.lastSeenYaw(), tracker.lastSeenPitch());   // before the flag: it reads it
     lastSeenYaw.store(tracker.lastSeenYaw());
     lastSeenPitch.store(tracker.lastSeenPitch());
     haveLastSeen.store(true);
@@ -2373,9 +2383,12 @@ void runFollowSession() {
     for (const char* ending : kNormalEndings) normal = normal || strcmp(result, ending) == 0;
     if (!normal) troubleUntilMs.store(millis() + kTroubleFaceMs);
   }
-  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"manual_inputs\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
+  Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"manual_inputs\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u,"
+                   "\"last_seen_yaw\":%d,\"last_seen_pitch\":%d}\n",
                 result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, manualInputs, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
-                static_cast<unsigned>(tracker.mode()));
+                static_cast<unsigned>(tracker.mode()),
+                tracker.haveLastSeen() ? tracker.lastSeenYaw() : -1,
+                tracker.haveLastSeen() ? tracker.lastSeenPitch() : -1);
   Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"renewals\":%lu,\"trace_stride\":%u,\"session_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
                 (unsigned long)renewals, traceStride, (unsigned long)(sessionEndMs != 0 ? sessionEndMs - started : 0),
@@ -2646,7 +2659,6 @@ void setup() {
   esp_rom_install_channel_putc(2, nullptr);
   // Join automatically when provisioned, so the robot needs no USB command to
   // come up on the network after a power cycle at the base connector.
-  loadLastSeen();   // where the last session saw someone, before this reboot
   if (storedProfileCount() > 0) beginWifi();
   if (xTaskCreatePinnedToCore(cameraTask, "camera", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
     Serial.println("CAMERA_TASK_FAILED");

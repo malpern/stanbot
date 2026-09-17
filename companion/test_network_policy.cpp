@@ -9,7 +9,8 @@ using stanbot::networkCommandAllowed;
 int main() {
   // What the companion sends over Wi-Fi must keep working.
   for (const char* ok : {"S", "X", "V", "P", "Z", "E,happy", "T,12,0.1,-0.2,0.9",
-                         "R,200", "M,320", "M,raw320", "J,90", "C,UNFOLLOW", "C,SLEEP", "C,WAKE", "G,0.1,-0.2", "H,5,0.5,-0.25"}) {
+                         "R,200", "M,320", "M,raw320", "J,90", "C,UNFOLLOW", "C,SLEEP", "C,WAKE", "G,0.1,-0.2", "H,5,0.5,-0.25",
+                         "K,lsy=431,lsp=614", "K,"}) {
     assert(networkCommandAllowed(ok));
   }
   // Provisioning, motion, reboot and the servo bus stay USB-only.

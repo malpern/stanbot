@@ -29,7 +29,11 @@ inline bool networkCommandAllowed(const char* line) {
   // USB-only; G, moves only the pupils drawn on the display.
   // H, is the app's joystick: like T, it only acts inside a follow session,
   // and starting one over Wi-Fi needs the passphrase (command_auth.h).
-  static const char* const prefixes[] = {"E,", "T,", "H,", "R,", "M,", "J,", "G,"};
+  // K, is state the Mac kept for the robot across a reset (last seen place).
+  // It moves nothing: every value is clamped to the follow limits on arrival
+  // and only biases where a look around begins, inside a session the app
+  // already needs the passphrase to start.
+  static const char* const prefixes[] = {"E,", "T,", "H,", "R,", "M,", "J,", "G,", "K,"};
   for (const char* prefix : prefixes) {
     if (strncmp(line, prefix, 2) == 0) return true;
   }
