@@ -87,7 +87,15 @@ the robot's view, with a little of the robot's character in it.
   cut off and the panel's top was out of view, 2026-09-17.) Hovering says what is wrong; the panel says the
   same in words. The link, firmware and the rest of the read-only detail is in
   Diagnostics.
-- **Toolbar (2026-09-17):** Sleep/Wake and the Controls toggle. Follow/Stop lives in the panel (and in the Robot menu, ⌘.).
+- **Toolbar (2026-09-17):** Sleep/Wake and the Controls toggle. Follow lives in
+  the panel (and in the Robot menu: ⇧⌘F toggles, ⌘. stops).
+- **Follow is one toggle** (2026-09-17): on, Stanbot follows whoever it sees,
+  session after session; off, it stops now and stays stopped. It is filled in
+  the accent and reads "Following" while on, its icon pulsing while a session
+  actually runs, so the state is the button rather than a separate switch. The
+  old "Follow automatically" switch and the "Start head following?"
+  confirmation are both gone (automatic following already bypassed the latter).
+  Settings keeps one preference: whether the toggle starts on at each launch.
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption, and a gear in the
@@ -101,8 +109,9 @@ the robot's view, with a little of the robot's character in it.
   has restarted the camera — so the light wakes with the eyes. An orange
   line appears above the face when something is wrong (unreachable, or a refusal
   that will not clear). Nothing else: the panel is Stanbot, not a control board.
-- **The gear sheet** holds everything else, in four sections: Head (Follow/Stop
-  and Sleep/Wake, Follow automatically, the round direction pad), Camera (show
+- **The gear sheet** holds everything else, in four sections: Head (Follow and
+  Sleep/Wake, the round direction pad: left and right are the owner's, facing
+  the robot, as are the arrow keys), Camera (show
   the camera, mirror), Expression (all 18 faces, nine across), Connection (the
   method, what it is using, Reconnect). The mouth test is in the Robot menu, and
   app preferences stay in Settings (⌘,).
