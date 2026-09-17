@@ -1,7 +1,7 @@
 # Voice conversation (plan)
 
-Written 2026-09-17 and revised the same day after a review. Nothing here is
-built yet. A Talk control in Stanbot opens a live spoken conversation with an
+Written 2026-09-17 and revised the same day after a review. Phase 1, the
+mouth, is built (see "Phase 1, as built"); the conversation is not. A Talk control in Stanbot opens a live spoken conversation with an
 OpenAI voice model; the robot's face grows a mouth that moves while it speaks.
 Audio comes from the Studio Display by default; the robot's microphone and
 speaker are a separate, larger project.
@@ -167,6 +167,34 @@ same push; `max_eye_gap_ms` shows whether that costs anything. The mouth model
 `companion/test_mouth_model.cpp` in the style of `test_gaze_brain.cpp`. The
 app's `StanbotEyesView` draws the same mouth, and `CharacterTests` checks its
 constants against the firmware as it already does for the eye poses.
+
+## Phase 1, as built (2026-09-17)
+
+- **Robot:** `MouthModel.h` (in `firmware/lib/StanbotEyes/src`) is the model and
+  packet parser; `StanbotEyes` draws the mouth in its normal redraw; `mouthTask`
+  in `camera_stream.ino` owns UDP port 3334 and queues accepted packets to the
+  main loop. Packets are accepted only from the Wi-Fi viewer's address
+  (`viewerAddress`, set when the viewer connects). `SBST` over USB reports
+  `mouth_packets` and `mouth_rejected`.
+- **Mac:** `Voice/SpeechMouth.swift` plays audio and drives both mouths;
+  `Voice/LoudnessEnvelope.swift` (floor -45 dBFS, full -10, tuned on a "Daniel"
+  recording); `Voice/MouthModel.swift` mirrors the firmware and `MouthTests`
+  checks every constant against the header. The mouth is a Metal `colorEffect`
+  (`Shaders/StanbotMouth.metal`): a signed-distance capsule, soft edges, a faint
+  lip highlight, a glow that bleeds past the rim and a dim inner light that
+  rises with the voice. It appears under the eyes of the large face, and while
+  the video fills the window, in a small piece of black "screen" in the
+  toolbar. Nothing is drawn while silent.
+- **Trying it:** Robot menu, Play Mouth Test. The line is rendered once with
+  `say -v Daniel` and played through the default output (the Studio Display on
+  the mini). Over Wi-Fi the robot's mouth moves too; over USB only the app's.
+  Each value is sent to the robot 60 ms ahead of the sound (`robotLead`), to be
+  corrected by eye.
+- **Render check** (shaders do not appear in window snapshots):
+  `STANBOT_SHADER_LIBRARY=$PWD/build/Stanbot.app/Contents/Resources/StanbotShaders.metallib swift test --filter MouthTests/testMetalMouthDrawsARimAroundADarkOpening`
+  writes `$TMPDIR/stanbot-mouth-face.png` and `-large.png`.
+- **Not yet seen:** the robot's mouth, its timing against the voice, and
+  `max_eye_gap_ms` with the mouth drawing.
 
 ## Phases
 

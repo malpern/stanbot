@@ -196,6 +196,11 @@ the firmware.
 
 ## Wi-Fi transport, as built 2026-09-15
 
+Since 2026-09-17 the robot also listens on **UDP port 3334** for the speaking
+mouth: 10-byte packets, accepted only from the connected viewer's address, that
+change nothing but the drawn mouth. A separate port because the command channel
+is only read between camera frames. See [voice](voice.md).
+
 Implemented so the cable can move to the base connector and carry power only.
 Both transports speak the same SBFR packets and newline commands, so the
 companion's decoder and every command are shared and either link works.

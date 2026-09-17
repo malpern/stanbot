@@ -227,6 +227,15 @@ std::atomic<bool> wifiScanRequested{false};
 // Read on the camera task, drawn on the main task: one bool, so a stale frame
 // costs nothing worse than the badge lingering for a fraction of a second.
 std::atomic<bool> wifiLinkUp{false};
+// The speaking mouth (docs/voice.md). Commands are only read between camera
+// frames, far too unevenly for a mouth, so loudness packets arrive on their own
+// UDP port, read by mouthTask alone, and only from the connected viewer's
+// address. They change nothing but the drawn mouth.
+std::atomic<uint32_t> viewerAddress{0};   // IPv4 of the Wi-Fi viewer, 0 when there is none
+std::atomic<uint32_t> mouthPacketsAccepted{0};
+std::atomic<uint32_t> mouthPacketsRejected{0};
+struct MouthPacket { uint32_t sequence; uint8_t value; };
+QueueHandle_t mouthQueue = nullptr;
 std::atomic<bool> otaEnabled{false};
 // The OTA passphrase doubles as the key for authorizing FOLLOW and REBOOT over
 // Wi-Fi (command_auth.h). Loaded with it; empty means nothing can be authorized.
@@ -448,6 +457,38 @@ void startNetworkServices() {
   servicesStarted = true;
 }
 
+// Reads the mouth's UDP port (see viewerAddress). Its own socket, touched by no
+// other task. Polls every 5 ms: a packet is 10 bytes about 15 times a second.
+void mouthTask(void*) {
+  WiFiUDP udp;
+  bool listening = false;
+  uint8_t buffer[32];
+  for (;;) {
+    if (WiFi.status() != WL_CONNECTED) {
+      if (listening) { udp.stop(); listening = false; }
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    if (!listening && !(listening = udp.begin(stanbot::kMouthPort))) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
+    }
+    const int size = udp.parsePacket();
+    if (size <= 0) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+    const uint32_t from = static_cast<uint32_t>(udp.remoteIP());
+    const int length = udp.read(buffer, sizeof(buffer));
+    const uint32_t viewer = viewerAddress.load();
+    MouthPacket packet{};
+    if (viewer == 0 || from != viewer || length != size ||
+        !stanbot::parseMouthPacket(buffer, static_cast<size_t>(length), packet.sequence, packet.value)) {
+      mouthPacketsRejected.fetch_add(1);
+      continue;
+    }
+    mouthPacketsAccepted.fetch_add(1);
+    xQueueSend(mouthQueue, &packet, 0);   // full: drop it; a newer one follows
+  }
+}
+
 // Called from the camera task, which owns frame output, so accept, read and
 // write all happen on one task rather than racing across two.
 void serviceNetwork() {
@@ -467,10 +508,12 @@ void serviceNetwork() {
                   joinedSsid, WiFi.localIP().toString().c_str(), kHostname, kStreamPort);
   }
   if (!streamClient || !streamClient.connected()) {
+    viewerAddress.store(0);
     WiFiClient candidate = streamServer.available();
     if (candidate) {
       if (streamClient) streamClient.stop();
       streamClient = candidate;
+      viewerAddress.store(static_cast<uint32_t>(streamClient.remoteIP()));
       streamClient.setNoDelay(true);
       // A new viewer gets a clean stream rather than the tail of an old one.
       streamEnabled.store(false);
@@ -2240,12 +2283,13 @@ void cameraTask(void*) {
       }
     }
     if (statsRequested.exchange(false)) {
-      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu,\"scale_us\":%llu,\"encoder\":\"%s\",\"pclk_divider\":%u}\n",
+      Serial.printf("SBST {\"elapsed_ms\":%lu,\"captures\":%lu,\"sent\":%lu,\"failures\":%lu,\"capture_wait_us\":%llu,\"encode_us\":%llu,\"enqueue_us\":%llu,\"jpeg_bytes\":%llu,\"max_eye_gap_ms\":%lu,\"mouth_packets\":%lu,\"mouth_rejected\":%lu,\"scale_us\":%llu,\"encoder\":\"%s\",\"pclk_divider\":%u}\n",
         (unsigned long)(millis() - stats.startedMs), (unsigned long)stats.captures,
         (unsigned long)stats.sent, (unsigned long)stats.failures,
         (unsigned long long)stats.captureWaitUs, (unsigned long long)stats.encodeUs,
         (unsigned long long)stats.enqueueUs, (unsigned long long)stats.jpegBytes,
-        (unsigned long)maxEyeGapMs.load(), (unsigned long long)stats.scaleUs,
+        (unsigned long)maxEyeGapMs.load(), (unsigned long)mouthPacketsAccepted.load(),
+        (unsigned long)mouthPacketsRejected.load(), (unsigned long long)stats.scaleUs,
         jpegEncoder.load() == 1 ? "esp_new_jpeg" : "jpge", pclkDivider.load());
     }
     serviceFrame();
@@ -2291,6 +2335,11 @@ void setup() {
   if (storedProfileCount() > 0) beginWifi();
   if (xTaskCreatePinnedToCore(cameraTask, "camera", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
     Serial.println("CAMERA_TASK_FAILED");
+  }
+  mouthQueue = xQueueCreate(8, sizeof(MouthPacket));
+  if (mouthQueue == nullptr ||
+      xTaskCreatePinnedToCore(mouthTask, "mouth", 3072, nullptr, 1, nullptr, 1) != pdPASS) {
+    Serial.println("MOUTH_TASK_FAILED");
   }
 }
 
@@ -2372,6 +2421,10 @@ void loop() {
   if (eyes.attending(now)) {
     faceAttendedMs.store(now);
     faceAttendedEver.store(true);
+  }
+  if (mouthQueue != nullptr) {
+    MouthPacket packet;
+    while (xQueueReceive(mouthQueue, &packet, 0) == pdTRUE) eyes.mouthReceive(packet.sequence, packet.value, now);
   }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {

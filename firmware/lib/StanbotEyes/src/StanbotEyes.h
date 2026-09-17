@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include "GazeBrain.h"
+#include "MouthModel.h"
 
 enum class StanbotEmotion : uint8_t {
   Normal, Angry, Glee, Happy, Sad, Worried, Focused, Annoyed, Surprised,
@@ -49,6 +50,11 @@ class StanbotEyes {
   }
 
   void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
+
+  // A loudness packet from the Mac while it plays speech (MouthModel.h).
+  bool mouthReceive(uint32_t sequence, uint8_t value, uint32_t now) {
+    return mouth_.receive(sequence, value, now);
+  }
 
   static bool emotionFromName(const char* name, StanbotEmotion& result) {
     static constexpr const char* kNames[] = {
@@ -100,6 +106,7 @@ class StanbotEyes {
       const float phase = (now - blinkStartedMs_) / 180.0f;
       blink = phase < 0.5f ? phase * 2.0f : (1.0f - phase) * 2.0f;
     }
+    mouth_.update(now);
     draw(display, attending, blink);
     return true;
   }
@@ -118,6 +125,7 @@ class StanbotEyes {
   bool engaged_ = false;
   uint32_t lastEngagedMs_ = 0;
   stanbot::GazeBrain gaze_{0xC0FFEEu};
+  stanbot::MouthModel mouth_;
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
   Pose targetPose_{86, 112, 0, 1};
@@ -165,6 +173,22 @@ class StanbotEyes {
             iris);
     drawEye(display, 218, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
+    drawMouth(display);
+  }
+
+  // The speaking mouth: a grey capsule a little dimmer than the irises, with a
+  // dark opening once it is tall enough. Nothing at all while silent.
+  template <typename Display>
+  void drawMouth(Display& display) {
+    const stanbot::MouthShape m = mouth_.shape();
+    if (!m.visible) return;
+    constexpr uint16_t kMouthGrey = 0x9CD3;   // about 60% grey; the irises are 0xBDF7
+    display.fillRoundRect(m.centerX - m.width / 2, m.centerY - m.height / 2, m.width, m.height,
+                          m.height / 2, kMouthGrey);
+    if (m.innerWidth > 0) {
+      display.fillRoundRect(m.centerX - m.innerWidth / 2, m.centerY - m.innerHeight / 2,
+                            m.innerWidth, m.innerHeight, m.innerHeight / 2, TFT_BLACK);
+    }
   }
 
   template <typename Display>

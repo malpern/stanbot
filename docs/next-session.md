@@ -65,8 +65,10 @@ need the side (head) port.
    normal build rather than only in calibration builds.
 5. **Voice conversation: planned** in `docs/voice.md` (OpenAI `gpt-live-1`,
    Studio Display audio, a male expressive voice, transcripts kept, a mouth on
-   the robot over its own UDP path). Nothing built; phase 1 is the mouth with a
-   recorded voice.
+   the robot over its own UDP path). Phase 1 (the mouth, driven by a recorded
+   voice: Robot menu, Play Mouth Test) is built; confirm it on the robot and set
+   `robotLead` by eye. A dedicated key `OPENAI_API_KEY_STANBOT` is still to be
+   created (owner: project key with a budget, then Add Secret).
 6. **Gaze: paused.** Nothing has been measured. If gaze matters for a feature,
    first build a 2-minute prompted test (look at robot / screen / away) that logs
    the robot-only engaged flag against the prompt. See `docs/gaze.md`. The Studio

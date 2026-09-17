@@ -9,6 +9,14 @@ enum StanbotShaders {
         .map { URL(fileURLWithPath: $0) } ?? Bundle.main.url(forResource: "StanbotShaders", withExtension: "metallib"))
         .flatMap { FileManager.default.fileExists(atPath: $0.path) ? ShaderLibrary(url: $0) : nil }
 
+    /// The speaking mouth (Shaders/StanbotMouth.metal). Sizes as StanbotMouthView passes them.
+    static func mouth(size: CGSize, unit: Double, mouth: CGSize, rim: Double,
+                      level: Double, presence: Double, time: Double) -> Shader? {
+        library.map { Shader(function: ShaderFunction(library: $0, name: "stanbotMouth"),
+                             arguments: [.float2(size), .float(unit), .float2(mouth), .float(rim),
+                                         .float(level), .float(presence), .float(time)]) }
+    }
+
     /// The faint pixel grid of the robot's LCD. `cell` is one "pixel" in points.
     static func lcd(cell: Double, strength: Double) -> Shader? {
         library.map { Shader(function: ShaderFunction(library: $0, name: "stanbotLCD"),

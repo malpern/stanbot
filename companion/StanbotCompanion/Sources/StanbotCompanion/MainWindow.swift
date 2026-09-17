@@ -144,6 +144,7 @@ struct CompanionView: View {
             .help("Connection")
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            SpeakingIndicator()
             ReachabilityIndicator()
             Joystick()
             FollowButton()

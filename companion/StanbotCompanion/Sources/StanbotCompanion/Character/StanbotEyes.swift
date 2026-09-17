@@ -156,15 +156,22 @@ struct StanbotEyesView: View {
                 if screen {
                     RoundedRectangle(cornerRadius: 36 * scale, style: .continuous).fill(.black)
                 }
-                HStack(spacing: (218 - 102) * scale - pose.width * scale) {
-                    if asleep {
-                        closedEye(width: pose.width, scale: scale)
-                        closedEye(width: pose.width, scale: scale)
-                    } else {
-                        eye(pose: pose, scale: scale, openness: openness,
-                            gaze: CGPoint(x: gaze.x + converge, y: gaze.y))
-                        eye(pose: pose, scale: scale, openness: openness,
-                            gaze: CGPoint(x: gaze.x - converge, y: gaze.y))
+                ZStack {
+                    HStack(spacing: (218 - 102) * scale - pose.width * scale) {
+                        if asleep {
+                            closedEye(width: pose.width, scale: scale)
+                            closedEye(width: pose.width, scale: scale)
+                        } else {
+                            eye(pose: pose, scale: scale, openness: openness,
+                                gaze: CGPoint(x: gaze.x + converge, y: gaze.y))
+                            eye(pose: pose, scale: scale, openness: openness,
+                                gaze: CGPoint(x: gaze.x - converge, y: gaze.y))
+                        }
+                    }
+                    // The speaking mouth, where the robot draws it (MouthModel).
+                    if !asleep {
+                        StanbotMouthView(scale: scale)
+                            .offset(y: (MouthModel.centerY - 120) * scale)
                     }
                 }
                 .scaleEffect(motion.scale)

@@ -10,12 +10,14 @@ struct StanbotCompanionApp: App {
     @NSApplicationDelegateAdaptor(StanbotAppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
     @StateObject private var robot = RobotConnection.fromEnvironment()
+    @State private var speech = SpeechMouth()
     @AppStorage("StanbotShowInspector") private var showInspector = true
 
     var body: some Scene {
         WindowGroup("Stanbot") {
             CompanionView()
                 .environmentObject(robot)
+                .environment(speech)
                 .frame(minWidth: 720, minHeight: 520)
         }
         .defaultSize(width: 1180, height: 780)
@@ -46,6 +48,14 @@ struct StanbotCompanionApp: App {
                     ForEach(Emotion.allCases) { emotion in
                         Label(emotion.title, systemImage: emotion.symbol).tag(emotion)
                     }
+                }
+                Divider()
+                if speech.playing {
+                    Button("Stop Mouth Test") { speech.stop() }
+                } else {
+                    // Phase 1 of docs/voice.md: a recorded voice drives the mouth
+                    // in the app and, over Wi-Fi, on the robot.
+                    Button("Play Mouth Test") { speech.playTest(robotHost: robot.mouthHost) }
                 }
                 Divider()
                 Button("Reconnect") { robot.connect() }
@@ -712,6 +722,9 @@ final class RobotConnection: ObservableObject {
 
     var connectedOverUSB: Bool { serialFD >= 0 && !usingNetwork }
     var connectedOverWiFi: Bool { usingNetwork && networkUp }
+    /// Where the speaking mouth's packets go: the robot, only while connected
+    /// over Wi-Fi (the robot accepts them only from its Wi-Fi viewer's address).
+    var mouthHost: String? { connectedOverWiFi ? networkHost : nil }
 
     func refreshPassphrase() { passphraseAvailable = passphrase() != nil }
 
