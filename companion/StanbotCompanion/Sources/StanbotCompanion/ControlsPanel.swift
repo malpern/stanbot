@@ -9,6 +9,7 @@ struct ControlsPanel: View {
     @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
     let mood: Mood
     let reaction: EyeReaction?
+    @State private var showingDetails = false
 
     var body: some View {
         Form {
@@ -28,17 +29,14 @@ struct ControlsPanel: View {
                     .animation(.smooth(duration: 0.25), value: mood.caption)
             }
 
-            Section("Head") {
+            Section {
                 FollowButton(prominent: true)
                     .frame(maxWidth: .infinity)
-                Toggle("Follow automatically", isOn: $robot.followAutomatically)
-                DirectionPad()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                Text(robot.followUnavailableReason ?? "Drag on the pad to point the head; following resumes a moment after you let go. Arrow keys steer too.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                SleepWakeButton(prominent: true)
+                if let reason = robot.followUnavailableReason {
+                    Text(reason).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Voice") {
@@ -56,30 +54,53 @@ struct ControlsPanel: View {
                 ExpressionGrid()
             }
 
-            Section("Power") {
-                if robot.asleep {
-                    Button("Wake", systemImage: "sun.max") { robot.wake() }
-                        .disabled(!(robot.connectedOverUSB || robot.connectedOverWiFi))
-                } else {
-                    Button("Sleep", systemImage: "moon.zzz") { robot.sleep() }
-                        .disabled(!(robot.connectedOverUSB || robot.connectedOverWiFi))
-                }
-                Text(robot.asleep
-                     ? "Stanbot's screen is dark and its camera is off. It is still on Wi-Fi, so Wake brings it back."
-                     : "Darkens the screen and stops the camera, staying on Wi-Fi so Wake brings it back. Turn Off, in the Robot menu, needs its button to come back.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("Camera") {
-                Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera",
-                       systemImage: robot.cameraState == .off ? "video" : "video.slash") {
-                    robot.cameraState == .off ? robot.startCamera() : robot.stopCamera()
-                }
-                Toggle("Mirror the video", isOn: $mirrorVideo)
+            Section {
+                Button("Details…") { showingDetails = true }
+                    .frame(maxWidth: .infinity)
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showingDetails) { DetailsSheet() }
+    }
+}
+
+/// The settings that belong to this robot session rather than to the app:
+/// how the head behaves and what the camera shows. Behind a Details… button so
+/// the panel stays to what is used often.
+private struct DetailsSheet: View {
+    @EnvironmentObject private var robot: RobotConnection
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section("Head") {
+                    Toggle("Follow automatically", isOn: $robot.followAutomatically)
+                    DirectionPad()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                    Text(robot.followUnavailableReason ?? "Drag on the pad to point the head; following resumes a moment after you let go. Arrow keys steer too.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Section("Camera") {
+                    Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera",
+                           systemImage: robot.cameraState == .off ? "video" : "video.slash") {
+                        robot.cameraState == .off ? robot.startCamera() : robot.stopCamera()
+                    }
+                    Toggle("Mirror the video", isOn: $mirrorVideo)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 360, height: 430)
     }
 }
 

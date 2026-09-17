@@ -53,16 +53,36 @@ struct RobotFace: View {
     }
 }
 
-/// Stanbot in the title bar, left of its name. Too small for the whole robot,
-/// so it is the face only.
+/// Stanbot in the title bar, left of its name: just the eyes and mouth, with a
+/// small icon for how it is connected. The bezel and camera ring are left to
+/// the large face in the controls panel; connection details are in Diagnostics.
 struct RobotFaceBadge: View {
+    @EnvironmentObject private var robot: RobotConnection
     var mood: Mood
 
-    static let size = CGSize(width: 38, height: 36)
+    static let size = CGSize(width: 64, height: 26)
 
     var body: some View {
-        RobotFace(mood: mood, width: Self.size.width)
-            .help(mood.caption)
+        HStack(spacing: 6) {
+            StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, screen: false,
+                            scanning: mood.scanning, engaged: mood.engaged,
+                            mouthMinimumPoints: 1.2, mouthGlow: false)
+                .frame(width: 34, height: 26)
+            Image(systemName: linkSymbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .help("\(mood.caption). \(robot.linkSummary)")
+        .accessibilityElement()
+        .accessibilityLabel("Stanbot, \(mood.caption.lowercased()), \(robot.linkSummary)")
+    }
+
+    private var linkSymbol: String {
+        if robot.connectedOverWiFi { return "wifi" }
+        if robot.connectedOverUSB { return "cable.connector" }
+        return "wifi.slash"
     }
 }
 

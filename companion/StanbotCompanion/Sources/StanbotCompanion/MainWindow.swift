@@ -117,13 +117,13 @@ struct CompanionView: View {
             .tint(.stanbot)
     }
 
+    /// Nothing in ordinary use: the link and firmware are in Diagnostics, and the
+    /// title bar already shows how Stanbot is connected. A standing refusal or
+    /// failure is the exception, because it needs answering.
     private var subtitle: String {
-        // A refusal or failure is what matters most while it stands.
         if case .finished(let result) = robot.follow, !result.retryable { return result.summary }
         switch robot.connection {
-        case .connected:
-            if case .reported(let info) = robot.firmware { return "\(robot.linkSummary) · \(info.shortCommit)" }
-            return robot.linkSummary
+        case .connected: return ""
         default: return robot.connection.title
         }
     }
@@ -134,7 +134,7 @@ struct CompanionView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             ReachabilityIndicator()
-            FollowButton()
+            SleepWakeButton()
         }
         ToolbarItem(placement: .primaryAction) {
             Button { showControls.toggle() } label: {
@@ -171,7 +171,9 @@ private struct LiveView: View {
                         // on screen. Picture and face boxes flip together; detection
                         // and following use the unmirrored frame.
                         .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
-                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                        // Top of the window, not centred: the picture stays put
+                        // as the window grows.
+                        .position(x: proxy.size.width / 2, y: fitted.height / 2)
                 }
                 .accessibilityLabel("What Stanbot sees")
                 // The picture clears in, like eyes focusing, rather than popping.
@@ -360,6 +362,31 @@ struct FollowButton: View {
     }
 }
 
+/// Sleep darkens the robot's screen and stops its camera while it stays on
+/// Wi-Fi; Wake brings it back. Following lives in the controls panel.
+struct SleepWakeButton: View {
+    @EnvironmentObject private var robot: RobotConnection
+    /// Full width, for the controls panel.
+    var prominent = false
+
+    private var connected: Bool { robot.connectedOverUSB || robot.connectedOverWiFi }
+
+    var body: some View {
+        Button {
+            robot.asleep ? robot.wake() : robot.sleep()
+        } label: {
+            Label(robot.asleep ? "Wake" : "Sleep", systemImage: robot.asleep ? "sun.max" : "moon.zzz")
+                .labelStyle(.titleAndIcon)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(maxWidth: prominent ? .infinity : nil)
+        }
+        .disabled(!connected)
+        .help(robot.asleep
+              ? "Wake the robot: its screen and camera come back"
+              : "Darken the robot's screen and stop its camera. It stays on Wi-Fi.")
+    }
+}
+
 /// A small red dot, shown only when the robot has not been reachable for a few
 /// seconds; hover for what is wrong. Nothing at all while things are fine, and
 /// nothing during the brief connecting at launch or a switch between USB and
@@ -430,7 +457,7 @@ private struct StaticEyes: View {
                     ForEach(0..<2, id: \.self) { _ in
                         ZStack {
                             RoundedRectangle(cornerRadius: min(30, pose.height / 2) * scale, style: .continuous)
-                                .fill(Color(red: 0, green: 1, blue: 1))
+                                .fill(Color(white: 0.74))   // the irises' grey, as the robot draws them
                                 .frame(width: pose.width * scale, height: pose.height * scale)
                             Path { path in
                                 guard abs(pose.tilt) > 0.1 else { return }
