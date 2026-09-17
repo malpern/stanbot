@@ -3,8 +3,8 @@ import Network
 import Observation
 import QuartzCore
 
-/// Sends the mouth's loudness to the robot: 10-byte UDP packets to port 3334
-/// ("SBMO", version 1, opening 0-100, sequence u32 LE). The robot accepts them
+/// Sends the mouth to the robot: 11-byte UDP packets to port 3334 ("SBMO",
+/// version 2, opening 0-100, shape -100...100 as int8, sequence u32 LE). The robot accepts them
 /// only from the address its Wi-Fi viewer connected from, so they must leave
 /// from this Mac; they change nothing but the drawn mouth.
 final class MouthSender: @unchecked Sendable {
@@ -20,17 +20,18 @@ final class MouthSender: @unchecked Sendable {
         connection.start(queue: queue)
     }
 
-    static func packet(value: UInt8, sequence: UInt32) -> Data {
-        var bytes: [UInt8] = Array("SBMO".utf8) + [1, min(value, 100)]
+    static func packet(open: UInt8, shape: Int8, sequence: UInt32) -> Data {
+        var bytes: [UInt8] = Array("SBMO".utf8) + [2, min(open, 100), UInt8(bitPattern: max(-100, min(shape, 100)))]
         bytes += (0..<4).map { UInt8((sequence >> ($0 * 8)) & 0xff) }
         return Data(bytes)
     }
 
-    func send(_ value: Double) {
-        let byte = UInt8((min(max(value, 0), 1) * 100).rounded())
+    func send(_ frame: MouthEnvelope.Frame) {
+        let open = UInt8((min(max(frame.open, 0), 1) * 100).rounded())
+        let shape = Int8((min(max(frame.shape, -1), 1) * 100).rounded())
         queue.async { [self] in
             sequence &+= 1
-            connection.send(content: Self.packet(value: byte, sequence: sequence), completion: .idempotent)
+            connection.send(content: Self.packet(open: open, shape: shape, sequence: sequence), completion: .idempotent)
         }
     }
 
@@ -38,7 +39,7 @@ final class MouthSender: @unchecked Sendable {
 }
 
 /// Stanbot speaking: plays audio on this Mac, drives the mouth in the app from
-/// what is actually being heard, and sends the same loudness to the robot.
+/// what is actually being heard, and sends the same mouth to the robot.
 ///
 /// Phase 1 of docs/voice.md plays a recorded voice (`playTest`); the live
 /// conversation will feed the same envelope and timing. Kept apart from
@@ -51,10 +52,13 @@ final class SpeechMouth {
     /// How far ahead of the sound the robot is sent each value, to cover the
     /// one-way Wi-Fi delay. To be measured by eye (docs/voice.md, phase 1).
     static let robotLead = 0.060
+    /// The app's own mouth leads the sound slightly too.
+    static let appLead = 0.030
 
     private(set) var opening = 0.0
-    private(set) var presence = 0.0
-    /// The raw loudness now, for the shader's inner light.
+    /// -1 round ... +1 wide.
+    private(set) var shape = 0.0
+    /// How open the voice wants the mouth right now, for the shader's inner light.
     private(set) var level = 0.0
     /// Seconds since this mouth first moved, for gentle shader motion.
     private(set) var time = 0.0
@@ -64,14 +68,12 @@ final class SpeechMouth {
     @ObservationIgnored private var model = MouthModel()
     @ObservationIgnored private var engine: AVAudioEngine?
     @ObservationIgnored private var player: AVAudioPlayerNode?
-    @ObservationIgnored private var envelope = LoudnessEnvelope(values: [])
+    @ObservationIgnored private var envelope = MouthEnvelope(frames: [])
     @ObservationIgnored private var sampleRate = 48_000.0
     @ObservationIgnored private var sender: MouthSender?
     @ObservationIgnored private var lastSent = -Double.infinity
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private let started = CACurrentMediaTime()
-
-    var visible: Bool { presence > 0 }
 
     static let testLine = "Hello. I'm Stanbot. This is a test of my mouth, so you can see whether it moves in time with my voice. When I stop talking, it should close and fade away."
 
@@ -91,11 +93,11 @@ final class SpeechMouth {
         }
     }
 
-    /// A still, open mouth, for render tests and previews. Nothing plays.
-    func hold(opening: Double, level: Double) {
+    /// A still mouth, for render tests and previews. Nothing plays.
+    func hold(opening: Double, shape: Double = 0, level: Double) {
         self.opening = min(max(opening, 0), 1)
+        self.shape = min(max(shape, -1), 1)
         self.level = min(max(level, 0), 1)
-        presence = 1
         time = 1
     }
 
@@ -121,7 +123,7 @@ final class SpeechMouth {
 
     private func play(url: URL, robotHost: String?) throws {
         let file = try AVAudioFile(forReading: url)
-        envelope = try LoudnessEnvelope(file: file)
+        envelope = try MouthEnvelope(file: file)
         sampleRate = file.processingFormat.sampleRate
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
@@ -157,35 +159,37 @@ final class SpeechMouth {
         }
     }
 
-    /// One animation step. Returns false once there is nothing left to draw.
+    /// One animation step. Returns false once the mouth has settled at rest.
     private func tick() -> Bool {
         let now = CACurrentMediaTime()
         if playing {
             let heard = heardSeconds ?? 0
-            let value = envelope.value(at: heard)
-            model.receive(value, at: now)
-            level = value
+            // The picture a little ahead of the sound: people forgive a mouth
+            // that leads far more readily than one that lags (ITU-R BT.1359).
+            let frame = envelope.frame(at: heard + Self.appLead)
+            model.receive(frame, at: now)
+            level = frame.open
             if now - lastSent >= Self.sendInterval {
-                sender?.send(envelope.value(at: heard + Self.robotLead))
+                sender?.send(envelope.frame(at: heard + Self.robotLead))
                 lastSent = now
             }
             if heard > envelope.duration + 0.1 { finishPlayback() }
         }
         model.update(at: now)
         opening = model.opening
-        presence = model.presence
+        shape = model.shape
         time = now - started
-        return playing || presence > 0
+        return playing || !model.settled
     }
 
     private func finishPlayback() {
         playing = false
         level = 0
-        model.receive(0, at: CACurrentMediaTime())
-        // A closing 0, repeated because UDP may drop one; the robot also closes
-        // on its own 400 ms after the last packet.
+        model.receive(.rest, at: CACurrentMediaTime())
+        // A closing rest, repeated because UDP may drop one; the robot also
+        // returns to rest on its own 400 ms after the last packet.
         if let sender {
-            for _ in 0..<3 { sender.send(0) }
+            for _ in 0..<3 { sender.send(.rest) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { sender.cancel() }
         }
         sender = nil

@@ -61,6 +61,10 @@ struct StanbotEyesView: View {
     var engaged = false
     /// How much of the camera frame the face fills, 0...1. Closer draws the eyes together.
     var closeness = 0.0
+    /// The mouth's thinnest line in points, so tiny faces keep a visible mouth.
+    var mouthMinimumPoints = 0.0
+    /// The mouth's Metal glow and inner light; off for tiny faces.
+    var mouthGlow = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointer: CGPoint?
@@ -168,11 +172,10 @@ struct StanbotEyesView: View {
                                 gaze: CGPoint(x: gaze.x - converge, y: gaze.y))
                         }
                     }
-                    // The speaking mouth, where the robot draws it (MouthModel).
-                    if !asleep {
-                        StanbotMouthView(scale: scale)
-                            .offset(y: (MouthModel.centerY - 120) * scale)
-                    }
+                    // The mouth, where the robot draws it (MouthModel): a resting
+                    // line, shaping while Stanbot speaks.
+                    StanbotMouthView(scale: scale, glow: mouthGlow, minimumPoints: mouthMinimumPoints)
+                        .offset(y: (MouthModel.centerY - 120) * scale)
                 }
                 .scaleEffect(motion.scale)
                 .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)

@@ -10,7 +10,8 @@ the robot's view, with a little of the robot's character in it.
   hierarchy to navigate. If several robots or recorded sessions arrive, a
   sidebar comes back with real places in it.
 - **Title and subtitle:** "Stanbot", with the link and firmware commit as the
-  window subtitle.
+  window subtitle. Left of the title, Stanbot's face: the CoreS3 front at
+  toolbar size with the live eyes and mouth (`RobotFaceBadge`, docs/voice.md).
 - **Toolbar:** camera on/off, the expression menu, the connection menu, and
   the inspector toggle.
 - **Nothing over the picture (2026-09-17).** The floating control bar was
@@ -187,6 +188,9 @@ open -n --env STANBOT_PREVIEW=following --env STANBOT_SNAPSHOT=/tmp/stanbot.png 
 
 `STANBOT_ICON_SHEET=/tmp/icons.png swift test --filter CharacterTests/testWriteExpressionIconSheet`
 writes every expression icon to one image.
+
+A snapshot run quits as soon as the picture is written, so it leaves nothing on
+screen; add `-g` to `open` to keep it in the background as well.
 
 `STANBOT_PREVIEW` fills the model with made-up state and opens no USB, Wi-Fi or
 camera, so nothing can move. `STANBOT_SNAPSHOT` makes the preview write its own

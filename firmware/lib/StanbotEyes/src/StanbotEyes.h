@@ -52,8 +52,8 @@ class StanbotEyes {
   void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
 
   // A loudness packet from the Mac while it plays speech (MouthModel.h).
-  bool mouthReceive(uint32_t sequence, uint8_t value, uint32_t now) {
-    return mouth_.receive(sequence, value, now);
+  bool mouthReceive(uint32_t sequence, uint8_t open, int8_t shape, uint32_t now) {
+    return mouth_.receive(sequence, open, shape, now);
   }
 
   static bool emotionFromName(const char* name, StanbotEmotion& result) {
@@ -176,18 +176,17 @@ class StanbotEyes {
     drawMouth(display);
   }
 
-  // The speaking mouth: a grey capsule a little dimmer than the irises, with a
-  // dark opening once it is tall enough. Nothing at all while silent.
+  // The mouth: a grey capsule a little dimmer than the irises, a thin line at
+  // rest, with a dark opening once it is tall enough (MouthModel.h).
   template <typename Display>
   void drawMouth(Display& display) {
     const stanbot::MouthShape m = mouth_.shape();
-    if (!m.visible) return;
     constexpr uint16_t kMouthGrey = 0x9CD3;   // about 60% grey; the irises are 0xBDF7
     display.fillRoundRect(m.centerX - m.width / 2, m.centerY - m.height / 2, m.width, m.height,
-                          m.height / 2, kMouthGrey);
+                          min(m.width, m.height) / 2, kMouthGrey);
     if (m.innerWidth > 0) {
       display.fillRoundRect(m.centerX - m.innerWidth / 2, m.centerY - m.innerHeight / 2,
-                            m.innerWidth, m.innerHeight, m.innerHeight / 2, TFT_BLACK);
+                            m.innerWidth, m.innerHeight, min(m.innerWidth, m.innerHeight) / 2, TFT_BLACK);
     }
   }
 

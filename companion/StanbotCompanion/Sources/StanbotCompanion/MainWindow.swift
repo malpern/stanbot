@@ -22,6 +22,7 @@ extension View {
 /// controls float over the bottom, details live in a hideable inspector.
 struct CompanionView: View {
     @EnvironmentObject private var robot: RobotConnection
+    @Environment(SpeechMouth.self) private var speech
     @AppStorage("StanbotShowInspector") private var showInspector = true
     @State private var reaction: EyeReaction?
     @State private var facts: ReactionFacts?
@@ -89,6 +90,12 @@ struct CompanionView: View {
             .navigationTitle("Stanbot")
             .navigationSubtitle(subtitle)
             .toolbar { toolbar }
+            // Stanbot's face, left of its name. SwiftUI's .navigation toolbar
+            // placement drew nothing in this window (2026-09-17), so it is an
+            // AppKit titlebar accessory instead.
+            .background(TitlebarFace(content: RobotFaceBadge(mood: mood(at: Date()))
+                .environmentObject(robot)
+                .environment(speech)))
             .inspector(isPresented: $showInspector) {
                 InspectorView()
                     .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
@@ -144,7 +151,6 @@ struct CompanionView: View {
             .help("Connection")
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            SpeakingIndicator()
             ReachabilityIndicator()
             Joystick()
             FollowButton()
@@ -311,6 +317,7 @@ private struct FaceOverlay: View {
 /// once per person, not once per frame.
 private struct FaceBoxView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("StanbotMirrorVideo") private var mirrorVideo = true
     let label: String
     @State private var drawn = false
 
@@ -327,6 +334,8 @@ private struct FaceBoxView: View {
                     .foregroundStyle(.black)
                     .background(Color.stanbot, in: Capsule())
                     .fixedSize()
+                    // The picture and boxes are mirrored; the words must not be.
+                    .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
                     .contentTransition(.opacity)
                     .scaleEffect(drawn ? 1 : 0.6, anchor: .bottom)
                     .opacity(drawn ? 1 : 0)

@@ -234,7 +234,7 @@ std::atomic<bool> wifiLinkUp{false};
 std::atomic<uint32_t> viewerAddress{0};   // IPv4 of the Wi-Fi viewer, 0 when there is none
 std::atomic<uint32_t> mouthPacketsAccepted{0};
 std::atomic<uint32_t> mouthPacketsRejected{0};
-struct MouthPacket { uint32_t sequence; uint8_t value; };
+struct MouthPacket { uint32_t sequence; uint8_t open; int8_t shape; };
 QueueHandle_t mouthQueue = nullptr;
 std::atomic<bool> otaEnabled{false};
 // The OTA passphrase doubles as the key for authorizing FOLLOW and REBOOT over
@@ -458,7 +458,7 @@ void startNetworkServices() {
 }
 
 // Reads the mouth's UDP port (see viewerAddress). Its own socket, touched by no
-// other task. Polls every 5 ms: a packet is 10 bytes about 15 times a second.
+// other task. Polls every 5 ms: a packet is 11 bytes about 15 times a second.
 void mouthTask(void*) {
   WiFiUDP udp;
   bool listening = false;
@@ -480,7 +480,7 @@ void mouthTask(void*) {
     const uint32_t viewer = viewerAddress.load();
     MouthPacket packet{};
     if (viewer == 0 || from != viewer || length != size ||
-        !stanbot::parseMouthPacket(buffer, static_cast<size_t>(length), packet.sequence, packet.value)) {
+        !stanbot::parseMouthPacket(buffer, static_cast<size_t>(length), packet.sequence, packet.open, packet.shape)) {
       mouthPacketsRejected.fetch_add(1);
       continue;
     }
@@ -2424,7 +2424,7 @@ void loop() {
   }
   if (mouthQueue != nullptr) {
     MouthPacket packet;
-    while (xQueueReceive(mouthQueue, &packet, 0) == pdTRUE) eyes.mouthReceive(packet.sequence, packet.value, now);
+    while (xQueueReceive(mouthQueue, &packet, 0) == pdTRUE) eyes.mouthReceive(packet.sequence, packet.open, packet.shape, now);
   }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {

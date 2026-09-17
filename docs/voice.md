@@ -168,31 +168,52 @@ same push; `max_eye_gap_ms` shows whether that costs anything. The mouth model
 app's `StanbotEyesView` draws the same mouth, and `CharacterTests` checks its
 constants against the firmware as it already does for the eye poses.
 
-## Phase 1, as built (2026-09-17)
+## Phase 1, as built (2026-09-17, mouth revised the same day)
 
+The first mouth (a capsule that appeared with speech and vanished after) looked
+plain and abrupt. After research into robot and character mouths (m5stack-avatar,
+Moxie, KITT, uLipSync, Rhubarb, OVRLipSync, ITU-R BT.1359 sync tolerances) the
+owner chose a **shaping capsule that is always there**:
+
+- **At rest** a thin grey line, 40x4 robot pixels, like the stock StackChan face.
+- **Speaking** it opens with loudness (to 22 px tall, the corners drawing in as it
+  opens) and changes shape with how bright the sound is: wider and flatter for
+  "ee" and "s", narrower and rounder for "oo".
+- **Pauses** under 400 ms keep the lips parted; after that it eases back to the
+  line. A dip well below the recent peak closes it quickly, standing in for
+  consonants. It never disappears.
+- **Timing:** quick attack (40 ms), a 70 ms hold at each peak, slower release
+  (150 ms). The picture leads the sound slightly (app 30 ms, robot 60 ms): people
+  forgive a mouth that leads far more than one that lags.
+
+Pieces:
 - **Robot:** `MouthModel.h` (in `firmware/lib/StanbotEyes/src`) is the model and
   packet parser; `StanbotEyes` draws the mouth in its normal redraw; `mouthTask`
   in `camera_stream.ino` owns UDP port 3334 and queues accepted packets to the
-  main loop. Packets are accepted only from the Wi-Fi viewer's address
-  (`viewerAddress`, set when the viewer connects). `SBST` over USB reports
-  `mouth_packets` and `mouth_rejected`.
-- **Mac:** `Voice/SpeechMouth.swift` plays audio and drives both mouths;
-  `Voice/LoudnessEnvelope.swift` (floor -45 dBFS, full -10, tuned on a "Daniel"
-  recording); `Voice/MouthModel.swift` mirrors the firmware and `MouthTests`
-  checks every constant against the header. The mouth is a Metal `colorEffect`
-  (`Shaders/StanbotMouth.metal`): a signed-distance capsule, soft edges, a faint
-  lip highlight, a glow that bleeds past the rim and a dim inner light that
-  rises with the voice. It appears under the eyes of the large face, and while
-  the video fills the window, in a small piece of black "screen" in the
-  toolbar. Nothing is drawn while silent.
+  main loop. Packets (version 2: "SBMO", 2, opening 0-100, shape -100..100,
+  sequence) are accepted only from the Wi-Fi viewer's address. `SBST` over USB
+  reports `mouth_packets` and `mouth_rejected`.
+- **Mac:** `Voice/MouthEnvelope.swift` does all the analysis: RMS for opening
+  (floor -45 dBFS, full -10, tuned on a "Daniel" recording) and, for shape, the
+  log of first-difference RMS over RMS (measured: "oo" about -2.4, ordinary
+  vowels -1.3, "ee" and "s" toward 0). `Voice/SpeechMouth.swift` plays audio and
+  drives both mouths; `Voice/MouthModel.swift` mirrors the firmware and
+  `MouthTests` checks every constant against the header.
+- **Look on the Mac:** a Metal `colorEffect` (`Shaders/StanbotMouth.metal`): a
+  signed-distance capsule, soft edges, a faint lip highlight, a glow that bleeds
+  past the rim and a dim inner light that rises with the voice.
+- **Where it shows:** under the eyes of the large face (camera off), and in
+  Stanbot's face in the title bar, left of its name (`RobotFaceBadge`): the
+  CoreS3 front at toolbar size, light grey rim, black glass, the screen with the
+  live eyes and mouth, and the copper camera ring. It is an AppKit titlebar
+  accessory because SwiftUI's `.navigation` toolbar placement drew nothing in
+  this window. Too small for the whole robot, so it is the face only.
 - **Trying it:** Robot menu, Play Mouth Test. The line is rendered once with
   `say -v Daniel` and played through the default output (the Studio Display on
   the mini). Over Wi-Fi the robot's mouth moves too; over USB only the app's.
-  Each value is sent to the robot 60 ms ahead of the sound (`robotLead`), to be
-  corrected by eye.
 - **Render check** (shaders do not appear in window snapshots):
   `STANBOT_SHADER_LIBRARY=$PWD/build/Stanbot.app/Contents/Resources/StanbotShaders.metallib swift test --filter MouthTests/testMetalMouthDrawsARimAroundADarkOpening`
-  writes `$TMPDIR/stanbot-mouth-face.png` and `-large.png`.
+  writes `$TMPDIR/stanbot-mouth-{rest,ah,ee,oo}.png`.
 - **Not yet seen:** the robot's mouth, its timing against the voice, and
   `max_eye_gap_ms` with the mouth drawing.
 

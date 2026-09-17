@@ -8,118 +8,108 @@ static void runFor(MouthModel& mouth, uint32_t& now, uint32_t ms) {
   for (uint32_t t = 0; t < ms; t += 33) { now += 33; mouth.update(now); }
 }
 
-static uint8_t packet[10];
-static const uint8_t* makePacket(uint8_t version, uint8_t value, uint32_t sequence) {
+static uint8_t packet[11];
+static const uint8_t* makePacket(uint8_t version, uint8_t open, int8_t shape, uint32_t sequence) {
   memcpy(packet, "SBMO", 4);
   packet[4] = version;
-  packet[5] = value;
-  for (int i = 0; i < 4; ++i) packet[6 + i] = static_cast<uint8_t>(sequence >> (8 * i));
+  packet[5] = open;
+  packet[6] = static_cast<uint8_t>(shape);
+  for (int i = 0; i < 4; ++i) packet[7 + i] = static_cast<uint8_t>(sequence >> (8 * i));
   return packet;
 }
 
 void parsesOnlyWellFormedPackets() {
   uint32_t sequence = 0;
-  uint8_t value = 0;
-  assert(stanbot::parseMouthPacket(makePacket(1, 55, 0x01020304), 10, sequence, value));
-  assert(value == 55 && sequence == 0x01020304);
-  assert(!stanbot::parseMouthPacket(makePacket(1, 55, 1), 9, sequence, value));    // short
-  assert(!stanbot::parseMouthPacket(makePacket(2, 55, 1), 10, sequence, value));   // version
-  assert(!stanbot::parseMouthPacket(makePacket(1, 101, 1), 10, sequence, value));  // out of range
-  makePacket(1, 10, 1);
+  uint8_t open = 0;
+  int8_t shape = 0;
+  assert(stanbot::parseMouthPacket(makePacket(2, 55, -40, 0x01020304), 11, sequence, open, shape));
+  assert(open == 55 && shape == -40 && sequence == 0x01020304);
+  assert(!stanbot::parseMouthPacket(makePacket(2, 55, 0, 1), 10, sequence, open, shape));     // short
+  assert(!stanbot::parseMouthPacket(makePacket(1, 55, 0, 1), 11, sequence, open, shape));     // old version
+  assert(!stanbot::parseMouthPacket(makePacket(2, 101, 0, 1), 11, sequence, open, shape));    // opening range
+  assert(!stanbot::parseMouthPacket(makePacket(2, 50, -101, 1), 11, sequence, open, shape));  // shape range
+  makePacket(2, 10, 0, 1);
   packet[0] = 'X';
-  assert(!stanbot::parseMouthPacket(packet, 10, sequence, value));                 // magic
-  assert(!stanbot::parseMouthPacket(nullptr, 10, sequence, value));
+  assert(!stanbot::parseMouthPacket(packet, 11, sequence, open, shape));                      // magic
+  assert(!stanbot::parseMouthPacket(nullptr, 11, sequence, open, shape));
 }
 
-void hiddenUntilSpoken() {
+void restsAsAThinLine() {
   MouthModel mouth;
   uint32_t now = 1000;
   mouth.update(now);
   runFor(mouth, now, 2000);
-  assert(!mouth.shape().visible);
+  const auto rest = mouth.shape();
+  assert(rest.width == 40 && rest.height == 4);   // always drawn, never gone
+  assert(rest.innerWidth == 0 && rest.innerHeight == 0);
 }
 
-void opensGrowsInAndFollowsLoudness() {
+void opensWithLoudnessAndShapesWithTheVoice() {
   MouthModel mouth;
   uint32_t now = 1000;
   mouth.update(now);
   uint32_t seq = 0;
-  // 300 ms of loud speech, a packet every 66 ms.
-  for (int i = 0; i < 5; ++i) { assert(mouth.receive(++seq, 100, now)); runFor(mouth, now, 66); }
-  const auto open = mouth.shape();
-  assert(open.visible);
-  assert(mouth.presence() == 1.0f);
-  assert(mouth.opening() > 0.9f);
-  assert(open.height >= 17 && open.height <= 18 && open.width >= 43 && open.width <= 44);
-  assert(open.innerHeight > 0 && open.innerWidth > 0);
-  // Never beyond the fully open shape, and never snapping past it.
-  for (int i = 0; i < 20; ++i) { mouth.receive(++seq, 100, now); runFor(mouth, now, 66); assert(mouth.opening() <= 1.0f); }
-  // Quieter: closes toward a smaller opening, still visible.
-  for (int i = 0; i < 6; ++i) { mouth.receive(++seq, 20, now); runFor(mouth, now, 66); }
-  assert(mouth.opening() > 0.15f && mouth.opening() < 0.3f);
-  assert(mouth.shape().visible);
+  auto hold = [&](uint8_t open, int8_t shape, int packets) {
+    for (int i = 0; i < packets; ++i) { assert(mouth.receive(++seq, open, shape, now)); runFor(mouth, now, 66); }
+  };
+  hold(100, 0, 6);   // "ah": tall, corners drawn in
+  auto ah = mouth.shape();
+  assert(ah.height >= 21 && ah.width <= 35 && ah.innerHeight > 0);
+  hold(60, 100, 6);  // "ee": wide and flat
+  auto ee = mouth.shape();
+  assert(ee.width > 46 && ee.height < ah.height);
+  hold(60, -100, 8); // "oo": narrow and round
+  auto oo = mouth.shape();
+  assert(oo.width < 30 && oo.height > ee.height);
+  assert(mouth.opening() >= 0.0f && mouth.opening() <= 1.0f);
+  assert(mouth.shapeValue() >= -1.0f && mouth.shapeValue() <= 1.0f);
 }
 
-void closesAndDisappearsWhenPacketsStop() {
+void returnsToTheLineWhenPacketsStop() {
   MouthModel mouth;
   uint32_t now = 1000;
   mouth.update(now);
-  mouth.receive(1, 100, now);
+  mouth.receive(1, 100, 80, now);
   runFor(mouth, now, 300);
   assert(mouth.opening() > 0.5f);
-  // The link drops: no final 0 arrives. Still open just inside the timeout...
-  runFor(mouth, now, 60);
-  // ...then shut and gone well within a second.
-  runFor(mouth, now, 900);
-  assert(mouth.opening() < 0.02f);
-  assert(!mouth.shape().visible);
-}
-
-void finalZeroClosesPromptly() {
-  MouthModel mouth;
-  uint32_t now = 1000;
-  mouth.update(now);
-  uint32_t seq = 0;
-  for (int i = 0; i < 5; ++i) { mouth.receive(++seq, 80, now); runFor(mouth, now, 66); }
-  mouth.receive(++seq, 0, now);
-  runFor(mouth, now, 300);
-  assert(mouth.opening() < 0.05f);
-  runFor(mouth, now, 300);
-  assert(!mouth.shape().visible);
+  // The link drops with no final packet: back to the resting line within a second.
+  runFor(mouth, now, 1000);
+  const auto rest = mouth.shape();
+  assert(rest.width == 40 && rest.height == 4);
 }
 
 void staleAndRepeatedSequencesAreIgnored() {
   MouthModel mouth;
   uint32_t now = 1000;
-  assert(mouth.receive(10, 50, now));
-  assert(!mouth.receive(10, 90, now));   // repeat
-  assert(!mouth.receive(9, 90, now));    // late
-  assert(mouth.receive(11, 60, now));
-  assert(mouth.receive(5000, 60, now));
-  assert(!mouth.receive(4990, 60, now));  // a little behind: late
-  assert(mouth.receive(1, 60, now));      // far behind: the app restarted its count
-  assert(!mouth.receive(1, 60, now + 1000));
-  assert(mouth.receive(1, 60, now + 2500));   // after a long silence: a fresh start
+  assert(mouth.receive(10, 50, 0, now));
+  assert(!mouth.receive(10, 90, 0, now));   // repeat
+  assert(!mouth.receive(9, 90, 0, now));    // late
+  assert(mouth.receive(11, 60, 0, now));
+  assert(mouth.receive(5000, 60, 0, now));
+  assert(!mouth.receive(4990, 60, 0, now)); // a little behind: late
+  assert(mouth.receive(1, 60, 0, now));     // far behind: the app restarted its count
+  assert(!mouth.receive(1, 60, 0, now + 1000));
+  assert(mouth.receive(1, 60, 0, now + 2500));   // after a long silence: a fresh start
 }
 
-void stalledLoopDoesNotFlingTheSpring() {
+void stalledLoopDoesNotFlingTheSprings() {
   MouthModel mouth;
   uint32_t now = 1000;
   mouth.update(now);
-  mouth.receive(1, 100, now);
-  now += 350;   // one long gap, still inside the silence timeout
+  mouth.receive(1, 100, -100, now);
+  now += 350;
   mouth.update(now);
   assert(mouth.opening() >= 0.0f && mouth.opening() <= 1.0f);
+  assert(mouth.shapeValue() >= -1.0f && mouth.shapeValue() <= 1.0f);
 }
 
 int main() {
   parsesOnlyWellFormedPackets();
-  hiddenUntilSpoken();
-  opensGrowsInAndFollowsLoudness();
-  closesAndDisappearsWhenPacketsStop();
-  finalZeroClosesPromptly();
+  restsAsAThinLine();
+  opensWithLoudnessAndShapesWithTheVoice();
+  returnsToTheLineWhenPacketsStop();
   staleAndRepeatedSequencesAreIgnored();
-  stalledLoopDoesNotFlingTheSpring();
+  stalledLoopDoesNotFlingTheSprings();
   std::puts("mouth model: all tests passed");
   return 0;
 }

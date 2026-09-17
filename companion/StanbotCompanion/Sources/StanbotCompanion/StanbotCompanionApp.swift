@@ -1266,6 +1266,8 @@ extension RobotConnection {
             guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
             frame.cacheDisplay(in: frame.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            // A snapshot run exists only to take the picture: leave nothing on screen.
+            NSApp.terminate(nil)
         }
     }
 
