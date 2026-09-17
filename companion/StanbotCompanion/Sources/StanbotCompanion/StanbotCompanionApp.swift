@@ -732,6 +732,19 @@ final class RobotConnection: ObservableObject {
             handleAuthorization(line)
             return
         }
+        // Motor power found on outside a session: the robot turns it off and
+        // says so. Not cleared is a fault that needs the owner.
+        if line.hasPrefix("SBPW "), line.contains("motor_power_left_on"),
+           let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] {
+            let cleared = object["cleared"] as? Bool ?? false
+            if cleared {
+                lastAction = "The robot found its motor power left on outside a session and turned it off."
+            } else {
+                robotFault = "The robot's motor power is on outside a session and it could not turn it off. Hold its button to power it down."
+                lastAction = robotFault ?? lastAction
+            }
+            return
+        }
         if line.hasPrefix("SBHL "),
            let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
            let healthy = object["base"] as? Bool {

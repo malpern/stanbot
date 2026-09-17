@@ -230,6 +230,15 @@ final class NetworkTransportTests: XCTestCase {
         fake.sendLine("SBHL {\"base\":true,\"esp_err\":0}")
         wait(upTo: 2, tick: robot) { robot.robotFault == nil }
         XCTAssertNil(robot.robotFault)
+
+        // Motor power left on outside a session: cleared is a note, not cleared a fault.
+        fake.sendLine("SBPW {\"warning\":\"motor_power_left_on\",\"cleared\":true}")
+        wait(upTo: 2, tick: robot) { robot.lastAction.contains("turned it off") }
+        XCTAssertTrue(robot.lastAction.contains("turned it off"))
+        XCTAssertNil(robot.robotFault)
+        fake.sendLine("SBPW {\"warning\":\"motor_power_left_on\",\"cleared\":false}")
+        wait(upTo: 2, tick: robot) { robot.robotFault != nil }
+        XCTAssertTrue(try XCTUnwrap(robot.robotFault).contains("Hold its button"))
     }
 
     @MainActor

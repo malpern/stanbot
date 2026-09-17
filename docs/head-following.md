@@ -471,6 +471,13 @@ bar stayed dark, for about two and a half hours, and nothing reported it.
   guard), `tools/check_sleep_wake.py` (hardware check), `SBHL` base health from
   the robot, `base_unreachable` over Wi-Fi, and `no_result_repeated` in the app.
   See "How to work here" in `next-session.md`.
+- **The motors were left powered.** The bus died mid-session, so the cutoff
+  could not be written, and the base keeps its latch across the head's reboots:
+  motor power stayed on, torque on, for about two and a half hours, and every new
+  session was correctly refused (`preflight_refused`) because power was already
+  on. Cleared by hand with `probe_servos.py --disable-only`. The base health
+  check now reads the latch whenever no session is running, turns it off if it
+  finds it on, and reports `SBPW motor_power_left_on`.
 - **A wrong turn worth remembering:** the USB port enumerating through the back
   connector for the first time that day looked like the cause (a shifted internal
   cable). It was a coincidence. The probe, not the theory, settled it.

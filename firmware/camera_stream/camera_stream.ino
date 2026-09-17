@@ -1128,6 +1128,7 @@ esp_err_t readBaseRegisters(i2c_master_dev_handle_t device, uint8_t start,
 // reply, so a dead bus is an alarm in the app, not a silence.
 std::atomic<int> baseHealthError{-1};        // -1 not yet checked, 0 healthy, else esp_err_t
 std::atomic<bool> baseHealthChanged{false};
+std::atomic<int> motorPowerLeftOn{0};        // 0 nothing to report, 1 found on and cleared, 2 found on and NOT cleared
 uint32_t nextBaseHealthCheckMs = 0;
 constexpr uint32_t kBaseHealthPeriodMs = 5000;
 
@@ -1147,6 +1148,18 @@ void checkBaseHealth() {
     uint8_t version = 0;
     result = readBaseRegisters(base, 0x02, &version, 1);
     if (result == ESP_OK && (version == 0 || version == 255)) result = ESP_ERR_INVALID_RESPONSE;
+    // Motor power must never be on outside a session, and this only runs
+    // outside one (sessions and the bench tools run inside the camera task's
+    // loop, which is what calls this). The base keeps its latch across the
+    // head's reboots, so a session that lost the bus before its cutoff leaves
+    // the motors powered indefinitely: on 2026-09-17, with torque on, for two
+    // and a half hours. Found on: turn it off, and say so.
+    uint8_t latch = 0;
+    if (result == ESP_OK && readBaseRegisters(base, 0x05, &latch, 1) == ESP_OK && (latch & 1)) {
+      const bool cleared = writeBase(base, 0x05, static_cast<uint8_t>(latch & ~1u)) &&
+                           readBaseRegisters(base, 0x05, &latch, 1) == ESP_OK && !(latch & 1);
+      motorPowerLeftOn.store(cleared ? 1 : 2);
+    }
     i2c_master_bus_rm_device(base);
   }
   if (baseHealthError.exchange(static_cast<int>(result)) != static_cast<int>(result)) baseHealthChanged.store(true);
@@ -2433,6 +2446,15 @@ void cameraTask(void*) {
     if (sleepStateChanged.exchange(false)) emitSleepState();
     checkBaseHealth();
     if (baseHealthChanged.exchange(false)) emitBaseHealth();
+    if (const int leftOn = motorPowerLeftOn.exchange(0); leftOn != 0) {
+      char line[96];
+      const int n = snprintf(line, sizeof line, "SBPW {\"warning\":\"motor_power_left_on\",\"cleared\":%s}\n",
+                             leftOn == 1 ? "true" : "false");
+      if (n > 0) {
+        Serial.print(line);
+        if (streamClient && streamClient.connected()) transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
+      }
+    }
     if (powerDownRequested.exchange(false)) {
       // Motor power first, then the whole robot. Only its button turns it on again.
       testServoDisable();
