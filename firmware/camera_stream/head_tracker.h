@@ -174,6 +174,8 @@ struct FollowConfig {
   bool search = true;
   uint32_t searchHoldMs = 600;       // a beat first: the face may simply have been missed
   uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
+  int searchGlanceRaw = 32;          // the glance: yaw each side of where they were lost
+  int searchGlancePitchRaw = 12;     // and up or down, if they left off the top or bottom
   // The look around itself, shared by a search and the wake scan (beginScan).
   int scanStepRaw = 10;              // ~39 deg/s: brisk, well under the 58 the sweep ran at
   int scanPitchUpRaw = 90;           // how far above level the upward look goes
@@ -387,7 +389,9 @@ class HeadTracker {
   // centre and up, then down, then home. Every waypoint is inside the session's
   // limits. Any accepted observation ends it at once, as it does a search.
   void beginScan(uint32_t nowMs) {
-    layOutLookAround(-1);   // the wake scan always starts robot-left
+    // No one has been lost, so there is nothing to glance at: straight to the
+    // whole range. The wake scan always starts robot-left.
+    waypointCount_ = layOutLookAround(-1, 0);
     mode_ = FollowMode::Searching;
     scanning_ = true;
     foundDuringScan_ = false;
@@ -397,19 +401,20 @@ class HeadTracker {
     haveGoal_ = false;
   }
 
-  // One look around the whole allowed range: the far side `first` names, then
-  // the other, then up and down at rest. Shared by the wake scan and by a
-  // search that has lost its target.
-  void layOutLookAround(int first) {
+  // One look around the whole allowed range, written from slot `n`: the far
+  // side `first` names, then the other, then up and down at rest. Returns the
+  // new waypoint count. Shared by the wake scan and by the second stage of a
+  // search.
+  unsigned layOutLookAround(int first, unsigned n) {
     const int level = !config_.pitchEnabled ? pitch_
                     : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_) : pitchHome_;
     const int up = clamp(level + limits_.pitchUpSign * config_.scanPitchUpRaw, pitchLow_, pitchHigh_);
     const int down = limits_.pitchUpSign > 0 ? pitchLow_ : pitchHigh_;
-    waypoints_[0] = {first < 0 ? limits_.yawMin : limits_.yawMax, level};
-    waypoints_[1] = {first < 0 ? limits_.yawMax : limits_.yawMin, level};
-    waypoints_[2] = {limits_.yawRest, up};
-    waypoints_[3] = {limits_.yawRest, down};
-    waypointCount_ = 4;
+    waypoints_[n++] = {first < 0 ? limits_.yawMin : limits_.yawMax, level};
+    waypoints_[n++] = {first < 0 ? limits_.yawMax : limits_.yawMin, level};
+    waypoints_[n++] = {limits_.yawRest, up};
+    waypoints_[n++] = {limits_.yawRest, down};
+    return n;
   }
 
   // True while the wake scan is looking around.
@@ -479,13 +484,25 @@ class HeadTracker {
 
   // Waypoints for one search, from where the head was when the target was lost
   // and the side of the frame the face was last seen on.
-  // Losing the target: look around the whole allowed range for them, the same
-  // motion as the wake scan, but starting on the side they were last seen so
-  // the likely answer comes first. `scanning_` stays false, so the surprised
+  // Losing the target, in two stages. First a glance either side of where they
+  // were lost: someone who leaned out of frame is found in a second or two,
+  // and the head barely moves. Only if that finds nobody does it look around
+  // the whole allowed range, and only after THAT does it go home. Any accepted
+  // observation ends the search wherever it has got to, so the cheap stage
+  // usually is the whole search. `scanning_` stays false, so the surprised
   // reaction on finding someone remains the wake scan's alone.
   void beginSearch(uint32_t nowMs) {
     const int side = lastX_ < -config_.centreDeadband ? -1 : 1;   // where they went, if anywhere
-    layOutLookAround(side);
+    // The glance follows the face off the top or bottom of the frame too.
+    int glancePitch = pitch_;
+    if (config_.pitchEnabled && (lastY_ > config_.centreDeadband || lastY_ < -config_.centreDeadband)) {
+      const int up = lastY_ < 0 ? 1 : -1;
+      glancePitch = clamp(pitch_ + up * limits_.pitchUpSign * config_.searchGlancePitchRaw, pitchLow_, pitchHigh_);
+    }
+    const int lost = yaw_;
+    waypoints_[0] = {clamp(lost + side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch};
+    waypoints_[1] = {clamp(lost - side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch};
+    waypointCount_ = layOutLookAround(side, 2);
     mode_ = FollowMode::Searching;
     searchStartMs_ = nowMs;
     arrivedMs_ = 0;
@@ -533,7 +550,7 @@ class HeadTracker {
   int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
   float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
   struct Waypoint { int yaw, pitch; };
-  Waypoint waypoints_[4] = {};
+  Waypoint waypoints_[6] = {};   // a search: two glances, then the four of a look around
   bool scanning_ = false;
   bool foundDuringScan_ = false;
   unsigned waypoint_ = 0, waypointCount_ = 0;

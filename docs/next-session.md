@@ -27,11 +27,14 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   minimum is the unpowered rest, 594. That look does not fit ~3 raw/deg from a
   level of 614: **re-check level before changing pitch again.** A head left
   resting above 870 is refused until lowered by hand.
-- **Losing someone** starts a full look around -- out to one yaw limit, out to
-  the other, up, down -- and the head returns to rest only when that finds
-  nobody (2026-09-17, at the owner's request). It is the wake scan's motion;
-  at yaw 143..719 it takes 12.4 s, so the session holds its idle clock while it
-  runs. Built, NOT yet seen on the robot.
+- **Losing someone** is a two-stage hunt (2026-09-17, at the owner's request):
+  a 32-raw glance each side of where they went, then, if that finds nobody, the
+  wake scan's whole-range look -- out to one yaw limit, out to the other, up,
+  down -- and only then back to rest. At yaw 143..719 the whole thing is 14.3 s,
+  so the session holds its idle clock while it runs. Built, NOT yet seen.
+- **Nothing searches until something is lost.** The app starts a session only
+  on a confirmed face or within 12 s of a wake, so a just-rebooted robot with
+  nobody in view sits still indefinitely. Asked about 2026-09-17 after a flash.
 - **The light bar** now separates looking from not finding: blue with a face,
   orange pulsing every 900 ms while the head hunts, dim purple when the camera
   is on and nobody has been found, dark otherwise. Built, NOT yet seen.

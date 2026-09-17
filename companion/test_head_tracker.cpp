@@ -601,10 +601,11 @@ SearchTrace loseFace(HeadTracker& tracker, float x, float y, uint32_t& now, int 
   return trace;
 }
 
-// Losing the target looks around the WHOLE allowed range, not a local glance:
-// the owner asked for "the full scan when it loses me. Only if it can't find me
-// should it go back to center and rest."
-void searchHoldsThenLooksAroundEverything() {
+// A glance where they went, and only then the whole range. The owner asked for
+// both: "I like the idea of a glance vs a full look around", after asking for
+// "the full scan when it loses me. Only if it can't find me should it go back
+// to center and rest."
+void searchGlancesFirstThenLooksAroundEverything() {
   HeadTracker tracker(kLimits, kConfig);
   uint32_t now = 1000;
   tracker.begin(460, 630, now);
@@ -641,6 +642,36 @@ void searchEndsWhenTheFaceReturns() {
   loseFace(tracker, 0.7f, 0.0f, now, 2);
   assert(tracker.mode() == FollowMode::Searching);
   assert(tracker.observe(2, 0.3f, 0.0f, 0.95f, now));
+  assert(tracker.mode() == FollowMode::Attending);
+}
+
+// The cheap stage on its own: someone who leans out of frame and back is found
+// during the glance, and the head never goes near the limits.
+void aGlanceIsOftenTheWholeSearch() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(460, 630, now);
+  assert(tracker.observe(1, 0.7f, 0.0f, 0.95f, now));
+  // Attending keeps moving toward the face until the target times out, so the
+  // place it was LOST is where the head is when the search begins, not where
+  // it was when the last observation arrived.
+  while (tracker.mode() != FollowMode::Searching) { now += kConfig.controlPeriodMs; tracker.step(now); }
+  const int lost = tracker.commandedYaw();
+  int furthest = lost;
+  // 1.9 s: the 600 ms hold, out to the glance one way, dwell, and back across
+  // to the other side. After that the second stage sets off for the limits.
+  for (int i = 0; i < 24; ++i) {
+    now += kConfig.controlPeriodMs;
+    tracker.step(now);
+    const int yaw = tracker.commandedYaw();
+    if (std::abs(yaw - lost) > std::abs(furthest - lost)) furthest = yaw;
+  }
+  assert(tracker.mode() == FollowMode::Searching);
+  const int reach = std::abs(furthest - lost);
+  assert(reach > 0 && reach <= kConfig.searchGlanceRaw + kConfig.deadbandRaw);
+  std::printf("  glance reached %d raw from where the face was lost (limit %d)\n",
+              reach, kConfig.searchGlanceRaw);
+  assert(tracker.observe(2, 0.1f, 0.0f, 0.95f, now));   // back again
   assert(tracker.mode() == FollowMode::Attending);
 }
 
@@ -915,9 +946,10 @@ int main() {
   pitchClosedLoopSettles();
   easingRampsUpAndSlowsDown();
   easingRestartsFromRestOnReversal();
-  searchHoldsThenLooksAroundEverything();
+  searchGlancesFirstThenLooksAroundEverything();
   searchStartsLeftWhenTheFaceLeftLeft();
   searchEndsWhenTheFaceReturns();
+  aGlanceIsOftenTheWholeSearch();
   searchLooksUpAndDown();
   searchNeverMovesDisabledPitch();
   searchIsClampedAndFinite();
