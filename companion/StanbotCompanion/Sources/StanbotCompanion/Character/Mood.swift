@@ -27,7 +27,10 @@ struct Mood: Equatable {
 
     static func of(connection: RobotConnection.ConnectionState, camera: RobotConnection.CameraState,
                    face: FaceSelection.State, box: FaceBox?, follow: FollowState,
-                   noFaceFor: TimeInterval = 0, engaged: Bool = false) -> Mood {
+                   noFaceFor: TimeInterval = 0, engaged: Bool = false, sleeping: Bool = false) -> Mood {
+        if sleeping, case .connected = connection {
+            return Mood(emotion: .sleepy, caption: "Asleep", asleep: true)
+        }
         switch connection {
         case .disconnected, .unavailable:
             return Mood(emotion: .sleepy, caption: "Asleep", asleep: true)

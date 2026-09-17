@@ -11,6 +11,7 @@ struct StanbotCompanionApp: App {
     @Environment(\.openWindow) private var openWindow
     @StateObject private var robot = RobotConnection.fromEnvironment()
     @State private var speech = SpeechMouth()
+    @State private var confirmingTurnOff = false
     @AppStorage("StanbotShowControls") private var showControls = true
 
     var body: some Scene {
@@ -18,6 +19,12 @@ struct StanbotCompanionApp: App {
             CompanionView()
                 .environmentObject(robot)
                 .environment(speech)
+                .confirmationDialog("Turn Stanbot off?", isPresented: $confirmingTurnOff) {
+                    Button("Turn Off", role: .destructive) { robot.turnOffRobot() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("The robot powers down completely. You will have to press its own button to turn it back on. To darken its screen but keep it on Wi-Fi, use Sleep in the controls panel instead.")
+                }
                 .frame(minWidth: 720, minHeight: 520)
         }
         .defaultSize(width: 1180, height: 780)
@@ -66,6 +73,8 @@ struct StanbotCompanionApp: App {
                 Button("Reconnect") { robot.connect() }
                     .keyboardShortcut("r", modifiers: [.command])
                 Button("Reboot Robot") { robot.rebootRobot() }
+                    .disabled(!(robot.connectedOverUSB || (robot.connectedOverWiFi && robot.passphraseAvailable)))
+                Button("Turn Robot Off…") { confirmingTurnOff = true }
                     .disabled(!(robot.connectedOverUSB || (robot.connectedOverWiFi && robot.passphraseAvailable)))
             }
         }
@@ -338,10 +347,13 @@ final class RobotConnection: ObservableObject {
     /// The robot passphrase, for authorizing FOLLOW and REBOOT over Wi-Fi.
     private let passphrase: () -> String?
     /// A Wi-Fi command waiting on the robot's challenge or its verdict.
-    private enum PendingAuthorization { case follow, reboot }
+    private enum PendingAuthorization { case follow, reboot, turnOff }
     private var pendingAuthorization: PendingAuthorization?
     private var authorizationSentAt = Date.distantPast
     @Published private(set) var passphraseAvailable = false
+    /// The robot's screen is dark and its stream stopped, but it is still on the
+    /// network and Wake brings it back (SBSL).
+    @Published private(set) var asleep = false
     private var followLogUntil = Date.distantPast
     private var telemetryCheck = TelemetryCheck()
     /// Longer than the robot's 3 minute maximum session plus its telemetry, so a missing
@@ -705,6 +717,12 @@ final class RobotConnection: ObservableObject {
             handleAuthorization(line)
             return
         }
+        if line.hasPrefix("SBSL "),
+           let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
+           let sleeping = object["asleep"] as? Bool {
+            asleep = sleeping
+            return
+        }
         guard case .following = follow, line.hasPrefix("SBMV ") || line.hasPrefix("SBPW "),
               let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
         else { return }
@@ -784,7 +802,11 @@ final class RobotConnection: ObservableObject {
         guard let purpose = pendingAuthorization,
               let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
         else { return }
-        let command = purpose == .follow ? "FOLLOW" : "REBOOT"
+        let command = switch purpose {
+        case .follow: "FOLLOW"
+        case .reboot: "REBOOT"
+        case .turnOff: "OFF"
+        }
         if line.hasPrefix("SBAC "), let nonce = object["nonce"] as? String {
             guard let key = passphrase() else {
                 pendingAuthorization = nil
@@ -802,6 +824,9 @@ final class RobotConnection: ObservableObject {
         switch (purpose, ok) {
         case (.follow, true): beginFollowing()
         case (.reboot, true): follow = .idle; lastAction = "Rebooting the robot for a fresh motion session."
+        case (.turnOff, true):
+            follow = .idle
+            lastAction = "Turning the robot off. Press its button to turn it back on."
         case (_, false):
             follow = .finished(FollowResult(code: "auth_\(reason)"))
             lastAction = "The robot refused authorization: \(reason)."
@@ -915,6 +940,39 @@ final class RobotConnection: ObservableObject {
         // robot safer. The robot also ends the session by itself.
         _ = send("C,UNFOLLOW\n")
         lastAction = "Asked the robot to stop following."
+    }
+
+    /// Sleep darkens the robot's screen and stops its camera, leaving Wi-Fi up;
+    /// Wake brings it back. Neither needs the passphrase: both do less than the
+    /// camera commands any viewer may already send.
+    func sleep() {
+        guard connectedOverUSB || connectedOverWiFi, !asleep else { return }
+        if case .following = follow { stopFollowing() }
+        guard send("C,SLEEP\n") else { return }
+        asleep = true   // confirmed by the robot's SBSL
+        lastAction = "Asked the robot to sleep."
+    }
+
+    func wake() {
+        guard connectedOverUSB || connectedOverWiFi, asleep else { return }
+        guard send("C,WAKE\n") else { return }
+        asleep = false
+        lastAction = "Woke the robot."
+        if wantsCamera { startCamera() }
+    }
+
+    /// Turns the whole robot off. Only its own button turns it back on, so over
+    /// Wi-Fi this needs the passphrase, like rebooting.
+    func turnOffRobot() {
+        if case .following = follow { stopFollowing() }
+        if connectedOverWiFi {
+            guard passphraseAvailable, pendingAuthorization == nil else { return }
+            requestAuthorization(.turnOff)
+            return
+        }
+        guard connectedOverUSB else { return }
+        _ = send("C,OFF\n")
+        lastAction = "Turning the robot off. Press its button to turn it back on."
     }
 
     func rebootRobot() {

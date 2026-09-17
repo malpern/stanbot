@@ -56,6 +56,21 @@ struct ControlsPanel: View {
                 ExpressionGrid()
             }
 
+            Section("Power") {
+                if robot.asleep {
+                    Button("Wake", systemImage: "sun.max") { robot.wake() }
+                        .disabled(!(robot.connectedOverUSB || robot.connectedOverWiFi))
+                } else {
+                    Button("Sleep", systemImage: "moon.zzz") { robot.sleep() }
+                        .disabled(!(robot.connectedOverUSB || robot.connectedOverWiFi))
+                }
+                Text(robot.asleep
+                     ? "Stanbot's screen is dark and its camera is off. It is still on Wi-Fi, so Wake brings it back."
+                     : "Darkens the screen and stops the camera, staying on Wi-Fi so Wake brings it back. Turn Off, in the Robot menu, needs its button to come back.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Camera") {
                 Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera",
                        systemImage: robot.cameraState == .off ? "video" : "video.slash") {

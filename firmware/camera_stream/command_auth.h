@@ -73,7 +73,8 @@ class CommandAuth {
 
   // Only these may be authorized. Stopping needs no authorization at all.
   static bool allowed(const char* command) {
-    return command != nullptr && (std::strcmp(command, "FOLLOW") == 0 || std::strcmp(command, "REBOOT") == 0);
+    return command != nullptr && (std::strcmp(command, "FOLLOW") == 0 || std::strcmp(command, "REBOOT") == 0 ||
+                                 std::strcmp(command, "OFF") == 0);
   }
 
  private:

@@ -175,6 +175,44 @@ final class NetworkTransportTests: XCTestCase {
         guard case .reported = robot.firmware else { return XCTFail("no firmware after reconnecting: \(robot.firmware)") }
     }
 
+    @MainActor
+    func testSleepAndWakeNeedNoPassphraseAndTrackTheRobot() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        wait(upTo: 5, tick: robot) { robot.cameraState == .receiving }
+        XCTAssertFalse(robot.asleep)
+
+        robot.sleep()
+        wait(upTo: 2) { fake.commands.contains("C,SLEEP") }
+        XCTAssertTrue(fake.commands.contains("C,SLEEP"))
+        XCTAssertEqual(fake.authorizedCommands, [], "sleeping needs no authorization")
+        // The robot's own report is what the app trusts.
+        fake.sendLine("SBSL {\"asleep\":true}")
+        wait(upTo: 2, tick: robot) { robot.asleep }
+        XCTAssertTrue(robot.asleep)
+
+        robot.wake()
+        wait(upTo: 2) { fake.commands.contains("C,WAKE") }
+        fake.sendLine("SBSL {\"asleep\":false}")
+        wait(upTo: 2, tick: robot) { !robot.asleep }
+        XCTAssertFalse(robot.asleep)
+    }
+
+    @MainActor
+    func testTurningTheRobotOffOverWiFiIsAuthorized() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        wait(upTo: 5, tick: robot) { robot.cameraState == .receiving }
+
+        robot.turnOffRobot()
+        wait(upTo: 3, tick: robot) { fake.authorizedCommands == ["OFF"] }
+        XCTAssertEqual(fake.authorizedCommands, ["OFF"])
+        XCTAssertFalse(fake.commands.contains("C,OFF"), "over Wi-Fi only the authorized form is used")
+        XCTAssertFalse(fake.commands.contains("test-passphrase"))
+    }
+
     // MARK: - Transport preference
 
     /// A loopback port with nothing listening, so a Wi-Fi attempt is refused.

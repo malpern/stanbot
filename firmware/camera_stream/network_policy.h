@@ -16,7 +16,10 @@ inline bool networkCommandAllowed(const char* line) {
   if (line == nullptr) return false;
   // C,UNFOLLOW only ever makes the robot safer, so it needs no authorization.
   // Starting a session or rebooting over Wi-Fi goes through command_auth.h.
-  static const char* const exact[] = {"S", "X", "V", "P", "Z", "C,UNFOLLOW"};
+  // C,SLEEP and C,WAKE only darken or restore the screen and stop or allow the
+  // stream, which X and S already do; turning the robot OFF is not here,
+  // because only its button can undo that (command_auth.h).
+  static const char* const exact[] = {"S", "X", "V", "P", "Z", "C,UNFOLLOW", "C,SLEEP", "C,WAKE"};
   for (const char* command : exact) {
     if (strcmp(line, command) == 0) return true;
   }

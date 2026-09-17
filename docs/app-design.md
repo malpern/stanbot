@@ -19,7 +19,10 @@ the robot's view, with a little of the robot's character in it.
   (the CoreS3 front, `RobotFace`) with its mood caption; Head (Follow/Stop,
   Follow automatically, a round direction pad: press and drag to point the head);
   Voice (the mouth test, later Talk); Expression (a grid of the 18 faces); Camera
-  (show/hide, mirror). Things to do, not things to read.
+  (show/hide, mirror); Power (Sleep darkens the robot's screen and stops its
+  camera while it stays on Wi-Fi, Wake brings it back). Things to do, not things
+  to read. Turning the robot off completely is Turn Robot Off… in the Robot
+  menu, with a confirmation: only its own button turns it on again.
 - **Diagnostics window** (Window menu, ⌥⌘D): live status (link, firmware and its
   warnings, passphrase, following, limits, camera, face, facing), the recent
   follow sessions read from their logs with each result and a Show button, and

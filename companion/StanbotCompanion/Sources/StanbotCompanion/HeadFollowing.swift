@@ -34,6 +34,7 @@ struct FollowResult: Equatable {
         case "stopped_for_update": "Stopped for a firmware update. The head is powered off."
         case "update_in_progress": "Refused: a firmware update is in progress."
         case "follow_refused_limits_unmeasured": "Refused: this firmware has following disabled."
+        case "follow_refused_asleep": "Refused: the robot is asleep. Wake it first."
         case "requires_unused_boot": "Refused: one motion session per boot. Reboot the robot to run another."
         case "follow_cooldown": "The robot is between sessions."
         case "power_latched": "Refused: the robot's motor power is latched off. Reboot it."

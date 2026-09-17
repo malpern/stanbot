@@ -227,6 +227,14 @@ std::atomic<bool> wifiScanRequested{false};
 // Read on the camera task, drawn on the main task: one bool, so a stale frame
 // costs nothing worse than the badge lingering for a fraction of a second.
 std::atomic<bool> wifiLinkUp{false};
+// Sleep: the screen goes dark and the stream stops, but Wi-Fi stays up so the
+// app can wake it again. Turning the robot off is separate (powerDownRequested)
+// and cannot be undone from here: only its button brings it back.
+constexpr uint8_t kAwakeBrightness = 255;
+std::atomic<bool> asleep{false};
+std::atomic<int> brightnessRequest{-1};   // applied by the camera task, which owns internal I2C
+std::atomic<bool> powerDownRequested{false};
+std::atomic<bool> sleepStateChanged{false};
 // The speaking mouth (docs/voice.md). Commands are only read between camera
 // frames, far too unevenly for a mouth, so loudness packets arrive on their own
 // UDP port, read by mouthTask alone, and only from the connected viewer's
@@ -560,6 +568,16 @@ class TelemetryOut : public Print {
   stanbot::TelemetryCheck check;
 } Telemetry;
 
+void emitSleepState() {
+  char line[48];
+  const int n = snprintf(line, sizeof line, "SBSL {\"asleep\":%s}\n", asleep.load() ? "true" : "false");
+  if (n <= 0) return;
+  Serial.print(line);
+  if (streamClient && streamClient.connected()) {
+    transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
+  }
+}
+
 void emitVersion() {
   const bool dirtyKnown = strcmp(STANBOT_GIT_DIRTY, "unknown") != 0;
   char line[320];
@@ -574,6 +592,7 @@ void emitVersion() {
   if (streamClient && streamClient.connected()) {
     transportWrite(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(n));
   }
+  emitSleepState();   // the app learns both on every connect
 }
 
 // Shared by the USB parser (main task) and the TCP parser (camera task).
@@ -622,6 +641,18 @@ void handleCommand(const char* line) {
     // never land inside that task's telemetry block.
     pitchLevelRequested.store(stanbot::parsePitchLevel(line + 13, raw) ? raw : -1);
   }
+  else if (strcmp(line, "C,SLEEP") == 0) {
+    streamEnabled.store(false);
+    asleep.store(true);
+    brightnessRequest.store(0);
+    sleepStateChanged.store(true);
+  }
+  else if (strcmp(line, "C,WAKE") == 0) {
+    asleep.store(false);
+    brightnessRequest.store(kAwakeBrightness);
+    sleepStateChanged.store(true);
+  }
+  else if (strcmp(line, "C,OFF") == 0) powerDownRequested.store(true);
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
@@ -726,6 +757,7 @@ void handleAuthCommand(const char* line) {
   if (!ok) return;
   if (strcmp(command, "FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(command, "REBOOT") == 0) rebootRequested.store(true);
+  else if (strcmp(command, "OFF") == 0) powerDownRequested.store(true);
 }
 
 void pollNetworkCommands() {
@@ -2246,7 +2278,23 @@ void cameraTask(void*) {
         kSweepSettleMs + stanbot::kPitchLevelHoldMs + 4000, stanbot::kPitchLevelHoldMs, stanbot::kPitchLevelMaxTravel};
       runBoundedMotion(plan);
     }
-    if (followRequested.exchange(false)) runFollowSession();
+    if (const int brightness = brightnessRequest.exchange(-1); brightness >= 0) {
+      // The backlight is on the PMIC, on the internal I2C bus this task owns.
+      M5.Display.setBrightness(static_cast<uint8_t>(brightness));
+    }
+    if (sleepStateChanged.exchange(false)) emitSleepState();
+    if (powerDownRequested.exchange(false)) {
+      // Motor power first, then the whole robot. Only its button turns it on again.
+      testServoDisable();
+      Serial.println("SBPO {\"powering_off\":true}");
+      Serial.flush();
+      vTaskDelay(pdMS_TO_TICKS(150));
+      M5.Power.powerOff();
+    }
+    if (followRequested.exchange(false)) {
+      if (asleep.load()) Telemetry.println("SBMV {\"result\":\"follow_refused_asleep\",\"plan\":\"follow\"}");
+      else runFollowSession();
+    }
     if (rebootRequested.exchange(false)) {
       // Software restart so a fresh once-per-boot power window is available
       // without a physical RST. Motor power is already off (latch verified)
@@ -2395,6 +2443,8 @@ void updateBootScreen(uint32_t now) {
   delay(5);
 }
 
+bool screenDarkened = false;
+
 void loop() {
   const uint32_t now = millis();
   pollCommands(now);
@@ -2426,6 +2476,17 @@ void loop() {
     MouthPacket packet;
     while (xQueueReceive(mouthQueue, &packet, 0) == pdTRUE) eyes.mouthReceive(packet.sequence, packet.open, packet.shape, now);
   }
+  if (asleep.load()) {
+    // Dark screen, no eyes, no light bar (the bar follows the stopped stream).
+    if (eyeFrameReady && !screenDarkened) {
+      eyeFrame.fillScreen(TFT_BLACK);
+      eyeFrame.pushSprite(0, 0);
+      screenDarkened = true;
+    }
+    delay(20);
+    return;
+  }
+  screenDarkened = false;
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {
       // Drawn after the face and before the push, so it costs no extra frame.

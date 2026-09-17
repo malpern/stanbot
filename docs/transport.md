@@ -197,9 +197,14 @@ the firmware.
 ## Wi-Fi transport, as built 2026-09-15
 
 Since 2026-09-17 the robot also listens on **UDP port 3334** for the speaking
-mouth: 10-byte packets, accepted only from the connected viewer's address, that
+mouth: 11-byte packets, accepted only from the connected viewer's address, that
 change nothing but the drawn mouth. A separate port because the command channel
 is only read between camera frames. See [voice](voice.md).
+
+`C,SLEEP` and `C,WAKE` are allowed over Wi-Fi without the passphrase: they only
+darken the screen and stop the stream, which `X` and `S` already do. `C,OFF`
+powers the robot down completely and is authorized like `C,FOLLOW` and
+`C,REBOOT`, because only the robot's own button undoes it.
 
 Implemented so the cable can move to the base connector and carry power only.
 Both transports speak the same SBFR packets and newline commands, so the

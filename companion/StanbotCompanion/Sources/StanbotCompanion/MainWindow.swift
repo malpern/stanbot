@@ -34,7 +34,7 @@ struct CompanionView: View {
     private func mood(at now: Date) -> Mood {
         Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
                 box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
-                engaged: robot.engaged)
+                engaged: robot.engaged, sleeping: robot.asleep)
     }
 
     private var currentFacts: ReactionFacts {
