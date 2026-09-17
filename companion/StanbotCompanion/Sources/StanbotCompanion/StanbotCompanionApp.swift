@@ -1171,7 +1171,7 @@ struct ActivityEntry: Identifiable, Equatable {
 // MARK: - Preview scenarios
 
 extension RobotConnection {
-    /// STANBOT_PREVIEW=asleep|seeing|following|refused launches the app with
+    /// STANBOT_PREVIEW=asleep|connecting|connected|seeing|following|refused launches the app with
     /// made-up state and no link at all: no USB, no Wi-Fi, no camera, no
     /// motion. It exists to look at the interface without a robot.
     static func fromEnvironment() -> RobotConnection {
@@ -1199,6 +1199,11 @@ extension RobotConnection {
         scheduleSnapshot()
         // followAutomatically is left alone: it persists, and with no link it does nothing.
         guard scenario != "asleep" else { lastAction = "Waiting to connect"; return }
+        guard scenario != "connecting" else {
+            connection = .connecting
+            lastAction = "Looking for stanbot.local on the network."
+            return
+        }
         connection = .connected("stanbot.local")
         firmware = .reported(FirmwareInfo.parse(#"SBVR {"sketch":"camera_stream","commit":"7cd510631e1d","dirty":false,"built":"2026-09-17T01:00:32Z","protocol":1,"follow_limits_measured":true,"follow_pitch":true,"follow_yaw_range":48}"#)!)
         lastAction = "Connected to stanbot.local over Wi-Fi."

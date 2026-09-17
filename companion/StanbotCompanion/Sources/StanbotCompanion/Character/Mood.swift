@@ -15,14 +15,20 @@ struct Mood: Equatable {
     var attending = false
     /// Where the Mac eyes look, -1...1, toward the selected face in the window.
     var look: CGPoint? = nil
+    /// Glancing side to side: looking for the robot on the network.
+    var scanning = false
+
+    /// No face for this long, camera on and nothing to do: Stanbot gets drowsy.
+    static let drowsyAfter: TimeInterval = 90
 
     static func of(connection: RobotConnection.ConnectionState, camera: RobotConnection.CameraState,
-                   face: FaceSelection.State, box: FaceBox?, follow: FollowState) -> Mood {
+                   face: FaceSelection.State, box: FaceBox?, follow: FollowState,
+                   noFaceFor: TimeInterval = 0) -> Mood {
         switch connection {
         case .disconnected, .unavailable:
             return Mood(emotion: .sleepy, caption: "Asleep", asleep: true)
         case .connecting:
-            return Mood(emotion: .sleepy, caption: "Waking up…")
+            return Mood(emotion: .normal, caption: "Waking up…", scanning: true)
         case .connected:
             break
         }
@@ -37,12 +43,15 @@ struct Mood: Equatable {
         }
         switch camera {
         case .off: return Mood(emotion: .sleepy, caption: "Eyes closed")
-        case .waiting: return Mood(emotion: .normal, caption: "Opening my eyes…")
+        case .waiting: return Mood(emotion: .squint, caption: "Opening my eyes…")
         case .unavailable: return Mood(emotion: .worried, caption: "Can’t see")
         case .receiving: break
         }
         switch face {
-        case .searching: return Mood(emotion: .normal, caption: "Looking around")
+        case .searching:
+            return noFaceFor >= drowsyAfter
+                ? Mood(emotion: .sleepy, caption: "Getting sleepy…")
+                : Mood(emotion: .normal, caption: "Looking around")
         case .acquiring: return Mood(emotion: .surprised, caption: "Is someone there?")
         case .tracking: return Mood(emotion: .happy, caption: "I see someone", attending: true, look: look)
         case .uncertain: return Mood(emotion: .skeptic, caption: "Where did you go?")

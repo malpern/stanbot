@@ -40,6 +40,28 @@ the robot's view, with a little of the robot's character in it.
   face labels); the system font everywhere else. The accent is the robot's eye
   cyan, softened.
 
+## Small moments
+
+Each is tied to something that really happened, lasts well under a second, is
+interruptible, and is skipped or reduced to a fade under Reduce Motion.
+
+| When | What Stanbot does |
+| --- | --- |
+| Looking for the robot | Eyes glance side to side ("Waking up…"). No spinner: the eyes are the loader. |
+| Connected | Eyes flutter open (`wake`). |
+| Camera starting | Squints ("Opening my eyes…"); the video then clears in from a blur, like eyes focusing. |
+| A face is selected | Eyes widen and lift (`surprise`); the face outline draws itself around the face and its label pops up from the top edge, once per person. |
+| While following | Eyes attend (cyan) and look toward the face; Follow morphs into a red Stop in place, and the "Head powered" dot pulses. |
+| Session ends normally | A slow double blink (`content`). |
+| Refused or failed | A small head shake (`shake`) with a worried look; the message stays literal. |
+| New firmware | A happy pulse (`sparkle`), alongside the existing chime. |
+| No one for 90 s | "Getting sleepy…": sleepy eyes, still awake, camera still on. |
+| Pointer over the face | The eyes follow the pointer. Click: a little giggle bounce. |
+| Choosing an expression | The menu shows Stanbot's own eyes for each expression, not words alone. |
+
+Reactions are tables of six keyframes (`Reactions.swift`), and which one fires
+for a change is a pure rule (`ReactionFacts.reaction`), both tested.
+
 ## Rules the personality must not break
 
 - **Safety surfaces stay plain.** Stop, "Head powered", the follow confirmation
@@ -53,9 +75,12 @@ the robot's view, with a little of the robot's character in it.
 
 ```sh
 cd companion/StanbotCompanion && ./build-app.sh
-open -n --env STANBOT_PREVIEW=seeing build/Stanbot.app      # asleep | connected | seeing | following | refused
+open -n --env STANBOT_PREVIEW=seeing build/Stanbot.app      # asleep | connecting | connected | seeing | following | refused
 open -n --env STANBOT_PREVIEW=following --env STANBOT_SNAPSHOT=/tmp/stanbot.png build/Stanbot.app
 ```
+
+`STANBOT_ICON_SHEET=/tmp/icons.png swift test --filter CharacterTests/testWriteExpressionIconSheet`
+writes every expression icon to one image.
 
 `STANBOT_PREVIEW` fills the model with made-up state and opens no USB, Wi-Fi or
 camera, so nothing can move. `STANBOT_SNAPSHOT` makes the preview write its own

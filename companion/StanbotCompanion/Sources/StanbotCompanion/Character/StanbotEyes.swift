@@ -48,19 +48,79 @@ struct StanbotEyesView: View {
     var attending = false
     /// Draw the robot's black screen behind the eyes.
     var screen = true
+    /// Glance side to side, for "looking for the robot" while connecting.
+    var scanning = false
+    /// A one-off movement; a new value plays once.
+    var reaction: EyeReaction? = nil
+    /// Look at the pointer while it is over the eyes, and giggle when clicked.
+    var interactive = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var blinkSeed = Double.random(in: 0...1000)
+    @State private var pointer: CGPoint?
+    @State private var tapped: EyeReaction?
+
+    /// The newest of the reaction handed in and one from a click.
+    private var current: EyeReaction? {
+        [reaction, tapped].compactMap { $0 }.max { $0.date < $1.date }
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: asleep)) { timeline in
+        let playing = reduceMotion ? nil : current
+        KeyframeAnimator(initialValue: EyeMotion(), trigger: playing?.id) { motion in
+            face(motion: motion)
+        } keyframes: { _ in
+                let plan = playing?.plan ?? EyeReaction.Plan(durations: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+                KeyframeTrack(\.openness) {
+                    CubicKeyframe(plan.openness[0], duration: plan.durations[0])
+                    CubicKeyframe(plan.openness[1], duration: plan.durations[1])
+                    CubicKeyframe(plan.openness[2], duration: plan.durations[2])
+                    CubicKeyframe(plan.openness[3], duration: plan.durations[3])
+                    CubicKeyframe(plan.openness[4], duration: plan.durations[4])
+                    CubicKeyframe(plan.openness[5], duration: plan.durations[5])
+                }
+                KeyframeTrack(\.dx) {
+                    CubicKeyframe(plan.dx[0], duration: plan.durations[0])
+                    CubicKeyframe(plan.dx[1], duration: plan.durations[1])
+                    CubicKeyframe(plan.dx[2], duration: plan.durations[2])
+                    CubicKeyframe(plan.dx[3], duration: plan.durations[3])
+                    CubicKeyframe(plan.dx[4], duration: plan.durations[4])
+                    CubicKeyframe(plan.dx[5], duration: plan.durations[5])
+                }
+                KeyframeTrack(\.dy) {
+                    CubicKeyframe(plan.dy[0], duration: plan.durations[0])
+                    CubicKeyframe(plan.dy[1], duration: plan.durations[1])
+                    CubicKeyframe(plan.dy[2], duration: plan.durations[2])
+                    CubicKeyframe(plan.dy[3], duration: plan.durations[3])
+                    CubicKeyframe(plan.dy[4], duration: plan.durations[4])
+                    CubicKeyframe(plan.dy[5], duration: plan.durations[5])
+                }
+                KeyframeTrack(\.scale) {
+                    SpringKeyframe(plan.scale[0], duration: plan.durations[0])
+                    SpringKeyframe(plan.scale[1], duration: plan.durations[1])
+                    SpringKeyframe(plan.scale[2], duration: plan.durations[2])
+                    SpringKeyframe(plan.scale[3], duration: plan.durations[3])
+                    SpringKeyframe(plan.scale[4], duration: plan.durations[4])
+                    SpringKeyframe(plan.scale[5], duration: plan.durations[5])
+                }
+            }
+            .aspectRatio(4 / 3, contentMode: .fit)
+            .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: emotion)
+            .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: look)
+            .animation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0), value: pointer)
+            .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0), value: asleep)
+            .accessibilityElement()
+            .accessibilityLabel(asleep ? "Stanbot, asleep" : "Stanbot, \(emotion.title.lowercased())")
+    }
+
+    private func face(motion: EyeMotion) -> some View {
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: asleep && current == nil)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             GeometryReader { proxy in
                 // The robot's display is 320x240; everything scales from there.
                 let scale = min(proxy.size.width / 320, proxy.size.height / 240)
                 let pose = EyePose.of(asleep ? .sleepy : emotion)
-                let blink = asleep ? 1 : Self.blink(at: t + blinkSeed)
-                let gaze = look ?? (reduceMotion ? .zero : CGPoint(x: sin(t / 2.4) * 0.18, y: sin(t / 3.1) * 0.08))
+                let blink = asleep ? 0 : Self.blink(at: t)
+                let openness = max(0, (1 - blink) * motion.openness)
                 ZStack {
                     if screen {
                         RoundedRectangle(cornerRadius: 36 * scale, style: .continuous).fill(.black)
@@ -70,21 +130,41 @@ struct StanbotEyesView: View {
                             closedEye(width: pose.width, scale: scale)
                             closedEye(width: pose.width, scale: scale)
                         } else {
-                            eye(pose: pose, scale: scale, blink: blink, gaze: gaze)
-                            eye(pose: pose, scale: scale, blink: blink, gaze: gaze)
+                            eye(pose: pose, scale: scale, openness: openness, gaze: gaze(at: t))
+                            eye(pose: pose, scale: scale, openness: openness, gaze: gaze(at: t))
                         }
                     }
+                    .scaleEffect(motion.scale)
+                    .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)
                 }
                 .frame(width: 320 * scale, height: 240 * scale)
                 .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    guard interactive, !asleep else { pointer = nil; return }
+                    switch phase {
+                    case .active(let location):
+                        pointer = CGPoint(x: max(-1, min(1, (location.x / proxy.size.width) * 2 - 1)),
+                                          y: max(-1, min(1, (location.y / proxy.size.height) * 2 - 1)))
+                    case .ended:
+                        pointer = nil
+                    }
+                }
+                .onTapGesture {
+                    guard interactive, !asleep else { return }
+                    tapped = EyeReaction(kind: .giggle)
+                }
             }
         }
-        .aspectRatio(4 / 3, contentMode: .fit)
-        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: emotion)
-        .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: look)
-        .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0), value: asleep)
-        .accessibilityElement()
-        .accessibilityLabel(asleep ? "Stanbot, asleep" : "Stanbot, \(emotion.title.lowercased())")
+    }
+
+    /// Pointer first, then the face being looked at, then a scan or an idle drift.
+    private func gaze(at t: TimeInterval) -> CGPoint {
+        if let pointer { return pointer }
+        if let look { return look }
+        if reduceMotion { return .zero }
+        if scanning { return CGPoint(x: sin(t * 2.2) * 0.85, y: 0) }
+        return CGPoint(x: sin(t / 2.4) * 0.18, y: sin(t / 3.1) * 0.08)
     }
 
     /// 0 open ... 1 closed. A 180 ms blink roughly every six seconds, livelier
@@ -105,8 +185,8 @@ struct StanbotEyesView: View {
             .frame(width: width * scale)
     }
 
-    private func eye(pose: EyePose, scale: Double, blink: Double, gaze: CGPoint) -> some View {
-        let height = max(6, pose.height * (1 - blink))
+    private func eye(pose: EyePose, scale: Double, openness: Double, gaze: CGPoint) -> some View {
+        let height = max(6, pose.height * openness)
         let radius = min(30, height / 2)
         let pupil = max(6, min(18, height / 4) * pose.pupilScale)
         let iris: Color = attending ? Color(red: 0, green: 1, blue: 1) : Color(white: 0.74)
@@ -128,9 +208,17 @@ struct StanbotEyesView: View {
                 .fill(.black)
                 .frame(width: pose.width * scale, height: height * scale)
         }
-        .frame(width: pose.width * scale, height: max(pose.height, 6) * scale)
+        .frame(width: pose.width * scale, height: max(pose.height * 1.2, 6) * scale)
         .compositingGroup()
     }
+}
+
+/// The animatable part of a reaction.
+struct EyeMotion {
+    var openness = 1.0
+    var dx = 0.0
+    var dy = 0.0
+    var scale = 1.0
 }
 
 /// The black triangle the firmware draws across the top of each eye for a
