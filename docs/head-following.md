@@ -447,6 +447,28 @@ the robot's right, +y tilts up. Release sends one centred line and stops.
   trace shows mode 4, drawn green in `tools/follow_replay.py`.
 - Allowed over Wi-Fi like `T,`: it only acts inside a session.
 
+## The wake scan, 2026-09-17 (built, not yet run on the robot)
+
+When the owner wakes the robot, it looks around for someone before it settles.
+
+- **App:** for 12 s after a wake, automatic following may start a session with
+  nobody in view (`AutoFollow.shouldStart(..., wokeAt:)`); otherwise a session
+  still needs a face. The usual gap between sessions does not hold it back.
+- **Robot:** a session that begins within 20 s of `C,WAKE` starts with
+  `HeadTracker::beginScan`: left limit, right limit, back to centre and up
+  (level +90 raw), then down to the pitch minimum, then home. The eyes lead each
+  turn, as they already do in a search. Every waypoint is inside the session's
+  limits; it is quicker than a search (`scanStepRaw` 5, ~18 deg/s) and takes
+  9.8 s in the native test at yaw +-96. While it runs the session is not counted
+  as idle, so the 12 s "nobody here" clock starts when it finishes.
+- **Finding someone:** any accepted observation ends the scan at once and the
+  face reacts: surprised 0.7 s, glee 0.9 s, then focused for as long as the
+  session follows, then back to the chosen expression. The app's face does the
+  same from `foundSomeoneAt`. An ordinary search finding a face is not a
+  finding; only the wake scan is.
+- **Not yet seen:** any of it on the robot. It moves the head through the whole
+  allowed range on every wake, so the first run needs the owner at the robot.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in

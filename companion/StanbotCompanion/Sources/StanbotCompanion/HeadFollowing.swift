@@ -58,9 +58,17 @@ struct FollowResult: Equatable {
 enum AutoFollow {
     static let restartGap: TimeInterval = 4
 
+    /// How long after a wake a session may start with nobody in view, so the
+    /// robot can look around for someone (the firmware's wake scan).
+    static let wakeScanWindow: TimeInterval = 12
+
+    /// `wokeAt`: when the owner last woke the robot. Just after a wake a session
+    /// starts even with no face: the robot looks around for one. Otherwise a
+    /// session needs a face to follow.
     static func shouldStart(enabled: Bool, unavailableReason: String?, state: FollowState,
-                            faceTracked: Bool, lastEnded: Date?, now: Date) -> Bool {
-        guard enabled, unavailableReason == nil, faceTracked else { return false }
+                            faceTracked: Bool, lastEnded: Date?, now: Date, wokeAt: Date? = nil) -> Bool {
+        let justWoke = wokeAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
+        guard enabled, unavailableReason == nil, faceTracked || justWoke else { return false }
         switch state {
         case .following: return false
         case .idle: break
@@ -68,7 +76,8 @@ enum AutoFollow {
             // A refusal that will just repeat is not retried; an ordinary end is.
             guard result.retryable else { return false }
         }
-        if let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
+        // The gap between sessions still applies, except to the one a wake asks for.
+        if !justWoke, let lastEnded, now.timeIntervalSince(lastEnded) < restartGap { return false }
         return true
     }
 }

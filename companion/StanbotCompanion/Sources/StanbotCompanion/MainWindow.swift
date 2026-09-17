@@ -32,10 +32,20 @@ struct CompanionView: View {
     @State private var heldArrows: Set<KeyEquivalent> = []
 
     private func mood(at now: Date) -> Mood {
-        Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
-                box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
-                engaged: robot.engaged, sleeping: robot.asleep)
+        var mood = Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
+                           box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
+                           engaged: robot.engaged, sleeping: robot.asleep)
+        // Found someone on waking: surprised, then glee, then back to the mood
+        // (focused, while following), in step with the robot's own face.
+        if let foundEmotion { mood.emotion = foundEmotion }
+        return mood
     }
+
+    /// The expression while reacting to finding someone after a wake; nil otherwise.
+    @State private var foundEmotion: Emotion?
+    /// The robot's own timings (camera_stream.ino, kReactionSurprisedMs / kReactionGleeMs).
+    static let foundSurprised: Duration = .milliseconds(700)
+    static let foundGlee: Duration = .milliseconds(900)
 
     private var currentFacts: ReactionFacts {
         var code: String?
@@ -62,6 +72,17 @@ struct CompanionView: View {
                     reaction = EyeReaction(kind: kind)
                 }
                 facts = new
+            }
+            .onChange(of: robot.foundSomeoneAt) { _, found in
+                guard found != nil else { return }
+                reaction = EyeReaction(kind: .surprise)
+                Task { @MainActor in
+                    foundEmotion = .surprised
+                    try? await Task.sleep(for: Self.foundSurprised)
+                    foundEmotion = .glee
+                    try? await Task.sleep(for: Self.foundGlee)
+                    foundEmotion = nil
+                }
             }
             .onChange(of: robot.faceState) { _, state in
                 if state != .searching { lastFaceAt = Date() }

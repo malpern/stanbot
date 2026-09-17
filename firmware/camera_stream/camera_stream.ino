@@ -236,6 +236,14 @@ std::atomic<bool> sleepRequested{false};   // the eyes are closing; the screen d
 std::atomic<bool> lightBarWakeRequested{false};   // the bar ramps up from dark on wake
 // A follow session that ended in a fault shows the trouble face until this
 // millis() time (0: none). Normal endings — idle, deadline, stopped — do not.
+// Waking: a session that starts soon after a wake looks around first
+// (HeadTracker::beginScan). When the look around finds someone, the face
+// reacts: surprised, then glee, then focused for as long as it follows.
+std::atomic<uint32_t> wokeAtMs{0};
+constexpr uint32_t kWakeScanWindowMs = 20000;
+std::atomic<uint32_t> reactionStartedMs{0};
+constexpr uint32_t kReactionSurprisedMs = 700;
+constexpr uint32_t kReactionGleeMs = 900;
 std::atomic<uint32_t> troubleUntilMs{0};
 constexpr uint32_t kTroubleFaceMs = 12000;
 std::atomic<int> brightnessRequest{-1};   // applied by the camera task, which owns internal I2C
@@ -660,6 +668,7 @@ void handleCommand(const char* line) {
     asleep.store(false);
     brightnessRequest.store(kAwakeBrightness);
     lightBarWakeRequested.store(true);
+    { const uint32_t t = millis(); wokeAtMs.store(t == 0 ? 1 : t); }
     sleepStateChanged.store(true);
   }
   else if (strcmp(line, "C,OFF") == 0) powerDownRequested.store(true);
@@ -1955,6 +1964,10 @@ void runFollowSession() {
     yawPos = yaw.position;
     pitchPos = pitch.position;
     tracker.begin(yawPos, pitchPos, millis());
+    // Just woken, and nobody to look at yet: look around for someone first.
+    if (const uint32_t woke = wokeAtMs.exchange(0); woke != 0 && millis() - woke < kWakeScanWindowMs) {
+      tracker.beginScan(millis());
+    }
     // Hold each powered servo exactly where it is before torque, so enabling
     // cannot move anything; then verify torque. Yaw only while pitch is off.
     positionCommands += pitchOn ? 2 : 1;
@@ -2009,6 +2022,10 @@ void runFollowSession() {
           // The joystick: steering takes over from face targets, keeps the
           // session powered like a target would, and hands back to following
           // manualResumeMs after the last input (HeadTracker::manual).
+          // The look around is not idleness: the session's clock for "nobody
+          // here" starts when it has finished. It is one bounded pass.
+          if (tracker.scanning()) lastTargetAt = now;
+          if (tracker.takeFoundDuringScan()) { const uint32_t t = millis(); reactionStartedMs.store(t == 0 ? 1 : t); }
           const uint32_t manualSeq = manualSequence.load();
           if (manualSeq != lastManualSequence) {
             lastManualSequence = manualSeq;
@@ -2474,6 +2491,7 @@ void updateBootScreen(uint32_t now) {
 bool screenDarkened = false;
 bool sleepAnimating = false;
 StanbotEmotion chosenEmotion = StanbotEmotion::Normal;   // the app's or the owner's pick
+StanbotEmotion reactionEmotion = StanbotEmotion::Normal;
 bool showingTrouble = false;
 
 void loop() {
@@ -2484,6 +2502,18 @@ void loop() {
   if (servicesStarted && otaEnabled.load()) ArduinoOTA.handle();
   const int emotion = pendingEmotion.exchange(-1);
   if (emotion >= 0) { chosenEmotion = static_cast<StanbotEmotion>(emotion); eyes.setEmotion(chosenEmotion); }
+  // Found someone on waking: surprised, glee, then focused while it follows.
+  if (const uint32_t began = reactionStartedMs.load(); began != 0) {
+    const uint32_t elapsed = now - began;
+    StanbotEmotion want = elapsed < kReactionSurprisedMs ? StanbotEmotion::Surprised
+                        : elapsed < kReactionSurprisedMs + kReactionGleeMs ? StanbotEmotion::Glee
+                        : StanbotEmotion::Focused;
+    if (elapsed >= kReactionSurprisedMs + kReactionGleeMs && !sessionOwnsGaze.load()) {
+      reactionStartedMs.store(0);   // the session is over: back to what was chosen
+      want = chosenEmotion;
+    }
+    if (want != reactionEmotion) { reactionEmotion = want; if (!showingTrouble) eyes.setEmotion(want); }
+  }
   // The trouble face after a faulted session, then back to what was chosen.
   {
     const uint32_t until = troubleUntilMs.load();

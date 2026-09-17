@@ -4,6 +4,29 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import StanbotCompanion
 
+final class WakeScanTests: XCTestCase {
+    /// Just after a wake a session starts with nobody in view, so the robot can
+    /// look around; otherwise a session still needs a face.
+    func testASessionStartsWithoutAFaceOnlyJustAfterAWake() {
+        let now = Date()
+        func start(faceTracked: Bool, wokeAt: Date?, lastEnded: Date? = nil, enabled: Bool = true,
+                   reason: String? = nil) -> Bool {
+            AutoFollow.shouldStart(enabled: enabled, unavailableReason: reason, state: .idle,
+                                   faceTracked: faceTracked, lastEnded: lastEnded, now: now, wokeAt: wokeAt)
+        }
+        XCTAssertFalse(start(faceTracked: false, wokeAt: nil), "no face, no wake: nothing to do")
+        XCTAssertTrue(start(faceTracked: false, wokeAt: now.addingTimeInterval(-2)), "just woken: look around")
+        XCTAssertFalse(start(faceTracked: false, wokeAt: now.addingTimeInterval(-AutoFollow.wakeScanWindow - 1)),
+                       "the wake was a while ago")
+        XCTAssertTrue(start(faceTracked: true, wokeAt: nil), "a face still starts one")
+        // The wake's session is not held back by the gap after the last one...
+        XCTAssertTrue(start(faceTracked: false, wokeAt: now.addingTimeInterval(-1), lastEnded: now.addingTimeInterval(-1)))
+        // ...but following turned off, or unavailable, still means no.
+        XCTAssertFalse(start(faceTracked: false, wokeAt: now, enabled: false))
+        XCTAssertFalse(start(faceTracked: false, wokeAt: now, reason: "Connect to the robot first."))
+    }
+}
+
 final class HeadFollowingTests: XCTestCase {
     // MARK: helpers
 

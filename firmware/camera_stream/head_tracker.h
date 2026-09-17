@@ -160,6 +160,12 @@ struct FollowConfig {
   int searchSweepRaw = 32;           // yaw the other way from where it was lost
   int searchStepRaw = 3;             // ~11 deg/s: slower than attending
   uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
+  // The wake scan (beginScan): one look around the whole allowed range for
+  // someone to follow, when the robot has just woken and sees nobody. Quicker
+  // than a search, since there is further to go, but still unhurried.
+  int scanStepRaw = 5;               // ~18 deg/s
+  int scanPitchUpRaw = 90;           // how far above level the upward look goes
+  uint32_t scanHoldMs = 300;         // a beat before the first turn
 
   // Manual control, from the app's joystick (H lines). Full deflection moves
   // manualStepRaw per tick, about 15 deg/s: calm, like the rest. Deflection is
@@ -262,6 +268,8 @@ class HeadTracker {
     lastSequence_ = sequence;
     if (inManual(nowMs)) return false;   // the person steering wins; consumed, not queued
     if (confidence < config_.confidenceToAttend) return false;
+    if (scanning()) foundDuringScan_ = true;   // the look around found someone
+    scanning_ = false;
     lastTargetMs_ = nowMs;
     // -1 is the left of the image; +1 raw is robot-right on the yaw servo.
     // -1 is the top of the image, so the head tilts up for negative y.
@@ -323,9 +331,10 @@ class HeadTracker {
     int stepLimit = config_.maxStepRaw;
     if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
     if (mode_ == FollowMode::Searching) {
-      stepLimit = config_.searchStepRaw;
+      stepLimit = scanning_ ? config_.scanStepRaw : config_.searchStepRaw;
       if (!advanceSearch(nowMs)) return {false, yaw_, pitch_, mode_};
     }
+    if (mode_ != FollowMode::Searching) scanning_ = false;   // the scan has handed over
     if (mode_ == FollowMode::Idle || !haveGoal_) return {false, yaw_, pitch_, mode_};
 
     int dy = goalYaw_ - yaw_;
@@ -361,6 +370,38 @@ class HeadTracker {
   int pitchHigh() const { return pitchHigh_; }
   int pitchHome() const { return pitchHome_; }
   FollowMode mode() const { return mode_; }
+
+  // One look around on waking: to the left limit, the right limit, back to
+  // centre and up, then down, then home. Every waypoint is inside the session's
+  // limits. Any accepted observation ends it at once, as it does a search.
+  void beginScan(uint32_t nowMs) {
+    mode_ = FollowMode::Searching;
+    scanning_ = true;
+    foundDuringScan_ = false;
+    searchStartMs_ = nowMs;
+    arrivedMs_ = 0;
+    waypoint_ = 0;
+    haveGoal_ = false;
+    const int level = !config_.pitchEnabled ? pitch_
+                    : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_) : pitchHome_;
+    const int up = clamp(level + limits_.pitchUpSign * config_.scanPitchUpRaw, pitchLow_, pitchHigh_);
+    const int down = limits_.pitchUpSign > 0 ? pitchLow_ : pitchHigh_;
+    waypoints_[0] = {limits_.yawMin, level};
+    waypoints_[1] = {limits_.yawMax, level};
+    waypoints_[2] = {limits_.yawRest, up};
+    waypoints_[3] = {limits_.yawRest, down};
+    waypointCount_ = 4;
+  }
+
+  // True while the wake scan is looking around.
+  bool scanning() const { return scanning_ && mode_ == FollowMode::Searching; }
+
+  // True once, when a face ended the wake scan: the moment to react.
+  bool takeFoundDuringScan() {
+    const bool found = foundDuringScan_;
+    foundDuringScan_ = false;
+    return found;
+  }
 
  private:
   static int clamp(int value, int low, int high) {
@@ -438,7 +479,7 @@ class HeadTracker {
 
   // Returns whether the controller should move this tick.
   bool advanceSearch(uint32_t nowMs) {
-    if (nowMs - searchStartMs_ < config_.searchHoldMs) return false;   // hold still first
+    if (nowMs - searchStartMs_ < (scanning_ ? config_.scanHoldMs : config_.searchHoldMs)) return false;   // hold still first
     if (haveGoal_) return true;                                        // still travelling
     if (arrivedMs_ != 0 && nowMs - arrivedMs_ < config_.searchDwellMs) return false;
     if (arrivedMs_ != 0) ++waypoint_;
@@ -476,7 +517,9 @@ class HeadTracker {
   int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
   float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
   struct Waypoint { int yaw, pitch; };
-  Waypoint waypoints_[2] = {};
+  Waypoint waypoints_[4] = {};
+  bool scanning_ = false;
+  bool foundDuringScan_ = false;
   unsigned waypoint_ = 0, waypointCount_ = 0;
   uint32_t searchStartMs_ = 0, arrivedMs_ = 0;
   bool haveGoal_ = false;

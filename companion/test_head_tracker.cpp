@@ -828,7 +828,59 @@ void measuredPitchLevelFromDroop() {
   assert(tracker.commandedPitch() == 594);
 }
 
+// The wake scan: one look around the whole allowed range and home again, never
+// outside the limits, over in good time; a face ends it at once and says so.
+void wakeScanLooksAroundWithinLimits() {
+  const FollowLimits& limits = stanbot::kFollowLimits;
+  FollowConfig config;
+  config.pitchEnabled = true;
+  HeadTracker tracker(limits, config);
+  uint32_t now = 1000;
+  tracker.begin(limits.yawRest, 614, now);
+  tracker.beginScan(now);
+  assert(tracker.scanning());
+  int lowestYaw = limits.yawRest, highestYaw = limits.yawRest, lowestPitch = 614, highestPitch = 614;
+  uint32_t finishedAt = 0;
+  for (int i = 0; i < 2000; ++i) {
+    now += config.controlPeriodMs;
+    const FollowCommand command = tracker.step(now);
+    assert(command.yaw >= limits.yawMin && command.yaw <= limits.yawMax);
+    assert(command.pitch >= tracker.pitchLow() && command.pitch <= tracker.pitchHigh());
+    if (command.yaw < lowestYaw) lowestYaw = command.yaw;
+    if (command.yaw > highestYaw) highestYaw = command.yaw;
+    if (command.pitch < lowestPitch) lowestPitch = command.pitch;
+    if (command.pitch > highestPitch) highestPitch = command.pitch;
+    if (finishedAt == 0 && !tracker.scanning() && tracker.mode() == FollowMode::Idle) finishedAt = now;
+  }
+  std::printf("  wake scan reached yaw %d..%d (limits %d..%d), pitch %d..%d\n", lowestYaw, highestYaw,
+              limits.yawMin, limits.yawMax, lowestPitch, highestPitch);
+  // Both sides, to within the controller's deadband of each limit.
+  assert(lowestYaw <= limits.yawMin + config.deadbandRaw && highestYaw >= limits.yawMax - config.deadbandRaw);
+  assert(highestPitch >= 614 + 60 && lowestPitch <= tracker.pitchLow() + config.deadbandRaw);  // up, then down
+  assert(finishedAt != 0 && finishedAt - 1000 < 25000);                   // and home, in good time
+  assert(std::abs(tracker.commandedYaw() - limits.yawRest) < config.deadbandRaw + 1);
+  assert(!tracker.takeFoundDuringScan());                                 // nobody was there
+  std::printf("  wake scan: %.1f s, yaw %d..%d, pitch %d..%d\n", (finishedAt - 1000) / 1000.0,
+              lowestYaw, highestYaw, lowestPitch, highestPitch);
+
+  // A face part way through: the scan stops there, and reports it once.
+  HeadTracker found(limits, config);
+  now = 1000;
+  found.begin(limits.yawRest, 614, now);
+  found.beginScan(now);
+  for (int i = 0; i < 60; ++i) { now += config.controlPeriodMs; found.step(now); }
+  assert(found.scanning());
+  assert(found.observe(1, 0.3f, 0.0f, 0.95f, now, now));
+  assert(!found.scanning() && found.mode() == FollowMode::Attending);
+  assert(found.takeFoundDuringScan());
+  assert(!found.takeFoundDuringScan());   // once
+  // An ordinary search finding the face is not a scan finding it.
+  assert(found.observe(2, 0.1f, 0.0f, 0.95f, now + 50, now + 50));
+  assert(!found.takeFoundDuringScan());
+}
+
 int main() {
+  wakeScanLooksAroundWithinLimits();
   measuredPitchLevelFromDroop();
   lowPitchRestIsAcceptedAndNeverPushedLower();
   manualControl();

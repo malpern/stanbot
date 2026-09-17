@@ -355,6 +355,13 @@ final class RobotConnection: ObservableObject {
     /// network and Wake brings it back (SBSL).
     @Published private(set) var asleep = false
     private var sleepCommandedAt = Date.distantPast
+    /// When the owner last woke the robot, until the look-around session it asks
+    /// for has started (AutoFollow.wakeScanWindow).
+    private var wokeAt: Date?
+    private var lookingAroundSince: Date?
+    /// The robot looked around on waking and found someone: the face reacts
+    /// (surprised, glee, focused), as the robot's own does. A new date each time.
+    @Published private(set) var foundSomeoneAt: Date?
     private var followLogUntil = Date.distantPast
     private var telemetryCheck = TelemetryCheck()
     /// Longer than the robot's 3 minute maximum session plus its telemetry, so a missing
@@ -973,6 +980,7 @@ final class RobotConnection: ObservableObject {
         guard connectedOverUSB || connectedOverWiFi, asleep else { return }
         guard send("C,WAKE\n") else { return }
         sleepCommandedAt = Date()
+        wokeAt = Date()
         asleep = false
         lastAction = "Woke the robot."
         if wantsCamera { startCamera() }
@@ -1153,8 +1161,21 @@ final class RobotConnection: ObservableObject {
                 }
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
                                           state: self.follow, faceTracked: self.faceSelection.state == .tracking,
-                                          lastEnded: self.lastFollowEnded, now: Date()) {
+                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: self.wokeAt) {
+                    // Just woken with nobody in view, this session is the robot
+                    // looking around; the first face it then finds is a finding.
+                    let lookingAround = self.wokeAt != nil && self.faceSelection.state != .tracking
+                    self.wokeAt = nil
+                    self.lookingAroundSince = lookingAround ? Date() : nil
                     self.startFollowing()
+                }
+                if let since = self.lookingAroundSince {
+                    if self.faceSelection.state == .tracking {
+                        self.foundSomeoneAt = Date()
+                        self.lookingAroundSince = nil
+                    } else if Date().timeIntervalSince(since) > 20 {
+                        self.lookingAroundSince = nil   // the look around is long over
+                    }
                 }
                 self.logFollowFrame(faces: boxes, sent: sent, receivedAt: receivedAt)
                 self.display(image, receivedAt: receivedAt, session: session)

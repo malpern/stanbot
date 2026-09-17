@@ -63,7 +63,10 @@ need the side (head) port.
    `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept).
 4. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-5. **Voice conversation: planned** in `docs/voice.md` (OpenAI `gpt-live-1`,
+5. **Wake scan: built, never run on the robot.** See "The wake scan" in
+   `docs/head-following.md`. Flash it and watch the first wake with the owner
+   at the robot: the head sweeps the whole allowed range.
+6. **Voice conversation: planned** in `docs/voice.md` (OpenAI `gpt-live-1`,
    Studio Display audio, a male expressive voice, transcripts kept, a mouth on
    the robot over its own UDP path). Phase 1 (the mouth, driven by a recorded
    voice: Robot menu, Play Mouth Test) is built; confirm it on the robot and set
