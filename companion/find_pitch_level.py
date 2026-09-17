@@ -56,6 +56,15 @@ def main(argv=None, ask=input, run=subprocess.run):
     parser.add_argument("port")
     parser.add_argument("--record", default="calibration-pitch-level.jsonl")
     args = parser.parse_args(argv)
+    # Stanbot must be closed. On 2026-09-17 it was open on Wi-Fi with automatic
+    # following on: it started a session, the robot was busy powering the head
+    # for that, never ran the level move or reported power off, and the probe
+    # stopped with DISABLE LATCH NOT VERIFIED.
+    if run is subprocess.run and subprocess.run(["pgrep", "-f", "Stanbot.app/Contents/MacOS/Stanbot"],
+                                                capture_output=True).returncode == 0:
+        print("Quit Stanbot first: it can start a follow session over Wi-Fi, and the robot "
+              "cannot run the level move during one.")
+        return 1
     low, high, found, steps = LOW, HIGH, None, 0
     while low <= high and high - low >= 4 and steps < 8:
         raw = (low + high) // 2
