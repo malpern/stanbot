@@ -60,7 +60,13 @@ final class HeadFollowingTests: XCTestCase {
         robot.enhancement = .off
         usb.line(version(measured: measured))
         for sequence in UInt32(1)...3 { usb.write(frame(sequence)) }
-        wait(upTo: 3) { robot.cameraState == .receiving && robot.firmware != .asking }
+        // Up to 10 s, not 3: the first frame goes through Vision, and in the full
+        // suite its first face request (loading the model) has taken longer than
+        // 3 s. When this wait ran out, every later step failed with a misleading
+        // "no result" (seen 2026-09-16); now it fails here, saying why.
+        wait(upTo: 10) { robot.cameraState == .receiving && robot.firmware != .asking }
+        XCTAssertEqual(robot.cameraState, .receiving, "fake robot never reached a live camera")
+        XCTAssertNotEqual(robot.firmware, .asking, "fake robot's version was never parsed")
         _ = usb.read()   // discard V and S
         return (robot, usb)
     }
