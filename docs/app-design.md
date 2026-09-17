@@ -20,7 +20,10 @@ the robot's view, with a little of the robot's character in it.
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption, and a gear in the
-  corner. **Clicking the face puts the robot to sleep or wakes it.** An orange
+  corner. **Clicking the face puts the robot to sleep or wakes it**: on the
+  robot the eyes close over 0.7 s before the screen darkens
+  (`SleepCurtain.h`), and the light bar goes off while it sleeps; waking opens
+  them again over 0.4 s. An orange
   line appears above the face when something is wrong (unreachable, or a refusal
   that will not clear). Nothing else: the panel is Stanbot, not a control board.
 - **The gear sheet** holds everything else, in four sections: Head (Follow/Stop
