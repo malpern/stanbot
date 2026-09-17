@@ -313,10 +313,29 @@ general area. Only if that fails, then do a full scan search."
 
 The remembered place is where the head would have had to point to look straight
 at the last accepted observation. `HeadTracker` records it; the sketch carries
-it from one session to the next in RAM (`lastSeenYaw`/`lastSeenPitch`). **A
-reboot forgets it**, deliberately: it is a guess about where a person was, not a
-calibration, and it is not worth a flash write. With nothing remembered the
-sweep starts robot-left as before.
+it from one session to the next and **keeps it across reboots** in NVS (the
+`stanbot` namespace the Wi-Fi profiles already use), so a flash or a power cut
+does not lose you. It was RAM-only at first, on the argument that a guess about
+a person is not worth a flash write; the owner disagreed, reasonably -- a robot
+that forgets the moment it is flashed is not remembering where you were. The
+write happens at the end of a session and only when the place has moved by more
+than `kLastSeenWriteThreshold` (16 raw, ~5 deg), which for someone who sits in
+the same chair is almost never. With nothing remembered at all -- a robot that
+has never seen anyone -- the sweep starts robot-left as before.
+
+## Eyes first, then the head
+
+A follow session is what moves the head, and the robot will not begin one while
+its face is not yet there: `loop()` holds `followRequested` until the boot
+screen has handed over **and** `eyes.eyesOpen()` says the lids are all the way
+up. The request is not dropped, it waits. The app holds its side too: nothing
+starts while its own waking sequence is running (`appIsWaking`, 2.4 s).
+
+Asked for on 2026-09-17, watching a reboot: the look around began while the
+network boot screen was still up, so the head swung with no eyes to see it
+with. "I'd like the eyes to open first (on the device and stanbot) and only
+then start moving the head."
+
 
 **The reboot's own look around** takes two agreeing halves, and they have to
 agree or the head powers up and does nothing for 12 s:

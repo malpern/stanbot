@@ -106,6 +106,20 @@ final class WakeScanTests: XCTestCase {
                             lastEnded: now.addingTimeInterval(-1)))
     }
 
+    /// Stanbot opens its eyes before it moves its head: while the app's own
+    /// waking sequence runs, nothing starts a session at all.
+    func testNothingStartsWhileTheEyesAreStillOpening() {
+        let now = Date()
+        func start(faceTracked: Bool, waking: Bool) -> Bool {
+            AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .idle,
+                                   faceTracked: faceTracked, lastEnded: nil, now: now,
+                                   wokeAt: nil, bootedAt: now, appIsWaking: waking)
+        }
+        XCTAssertTrue(start(faceTracked: false, waking: false), "eyes open: the look around may start")
+        XCTAssertFalse(start(faceTracked: false, waking: true), "eyes still opening: wait")
+        XCTAssertFalse(start(faceTracked: true, waking: true), "even for a face in view")
+    }
+
     /// A reboot asked for during a session ends it, and that ending must not be
     /// retried: nothing should shout C,FOLLOW at a robot that is restarting.
     func testAStopForARebootIsNotRetried() {

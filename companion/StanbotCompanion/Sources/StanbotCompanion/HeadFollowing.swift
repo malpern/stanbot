@@ -81,7 +81,12 @@ enum AutoFollow {
     /// around for someone. Otherwise a session needs a face to follow.
     static func shouldStart(enabled: Bool, unavailableReason: String?, state: FollowState,
                             faceTracked: Bool, lastEnded: Date?, now: Date, wokeAt: Date? = nil,
-                            bootedAt: Date? = nil) -> Bool {
+                            bootedAt: Date? = nil, appIsWaking: Bool = false) -> Bool {
+        // Stanbot opens its eyes, and only then moves its head -- on the robot's
+        // screen, where the firmware holds the session until the lids are up,
+        // and here, where the app's own waking runs 2.4 s. Asked for
+        // 2026-09-17, having watched the head swing behind a boot screen.
+        if appIsWaking { return false }
         let justWoke = wokeAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
         let justBooted = bootedAt.map { now.timeIntervalSince($0) < wakeScanWindow } ?? false
         guard enabled, unavailableReason == nil, faceTracked || justWoke || justBooted else { return false }

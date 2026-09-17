@@ -62,6 +62,9 @@ class StanbotEyes {
   void beginSleep(uint32_t now) { curtain_.close(now); }
   void endSleep(uint32_t now) { curtain_.open(now); }
   bool closedForSleep(uint32_t now) const { return curtain_.closed(now); }
+  // The lids are all the way up. The head must not move before this: Stanbot
+  // opens its eyes, and only then looks around (asked for 2026-09-17).
+  bool eyesOpen(uint32_t now) const { return curtain_.openness(now) >= 1.0f; }
 
   // A loudness packet from the Mac while it plays speech (MouthModel.h).
   bool mouthReceive(uint32_t sequence, uint8_t open, int8_t shape, uint32_t now) {

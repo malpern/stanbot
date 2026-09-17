@@ -245,6 +245,8 @@ private struct LiveView: View {
         .onChange(of: picture != nil, initial: true) { _, has in
             guard has, !robot.asleep, frozen == nil, motion == nil else { return }
             motion = (false, Date(), EyeMotionSequence.wakeDuration, nil)
+            // Nothing moves the head while these eyes are opening.
+            robot.appWakingUntil = Date().addingTimeInterval(EyeMotionSequence.wakeDuration)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(EyeMotionSequence.wakeDuration))
                 if motion?.asleep == false { motion = nil }

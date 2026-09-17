@@ -367,6 +367,11 @@ final class RobotConnection: ObservableObject {
     private var bootedAt: Date?
     private var bootSessionRequested = false
     private var lastReportedUptimeMs: Int?
+    /// While the app's own eyes are opening (MainWindow's waking sequence), no
+    /// session starts: the head must not move before Stanbot has opened its
+    /// eyes on this screen as well as its own.
+    @Published var appWakingUntil: Date?
+    var appIsWaking: Bool { appWakingUntil.map { Date() < $0 } ?? false }
     private var lookingAroundSince: Date?
     /// The look-around session has been asked for and not refused. A refusal
     /// for cooldown does not use the wake up: the robot will not start a session
@@ -1270,7 +1275,8 @@ final class RobotConnection: ObservableObject {
                 let boot = self.bootSessionRequested ? nil : self.bootedAt
                 if AutoFollow.shouldStart(enabled: self.followAutomatically, unavailableReason: self.followUnavailableReason,
                                           state: self.follow, faceTracked: self.faceSelection.state == .tracking,
-                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake, bootedAt: boot) {
+                                          lastEnded: self.lastFollowEnded, now: Date(), wokeAt: wake, bootedAt: boot,
+                                          appIsWaking: self.appIsWaking) {
                     // Just woken or just back, with nobody in view: this session
                     // is the robot looking around; the first face it then finds
                     // is a finding.

@@ -36,8 +36,13 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   first session after a boot, and the app asks for that session on seeing a
   small `uptime_ms` in `V`. Reconnecting to a robot that was already up does
   nothing. Built, NOT yet seen.
-- **A look around starts where someone was last seen**, carried between
-  sessions in RAM and forgotten by a reboot. Built, NOT yet seen.
+- **A look around starts where someone was last seen**, kept in NVS so a
+  reboot remembers. Built, NOT yet seen.
+- **Eyes open before the head moves**, on the robot (the session waits for the
+  boot screen to hand over and the lids to rise) and in the app (nothing starts
+  during its 2.4 s waking). Built, NOT yet seen.
+- **A reboot asked for mid-session** now ends the session (`stopped_for_reboot`)
+  instead of waiting out the 3-minute cap in silence. Built, NOT yet seen.
 - **The light bar** now separates looking from not finding: blue with a face,
   orange pulsing every 900 ms while the head hunts, dim purple when the camera
   is on and nobody has been found, dark otherwise. Built, NOT yet seen.

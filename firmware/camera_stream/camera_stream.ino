@@ -249,12 +249,42 @@ constexpr uint32_t kWakeScanWindowMs = 20000;
 // The first session after a boot looks around too: the robot has just come
 // back from a flash or a power cycle and has never seen anyone. Consumed once.
 std::atomic<bool> scanOnFirstSession{true};
-// Where a face was last seen, carried from one session to the next so a look
-// around can start there instead of at a limit. RAM only, deliberately: this
-// is a guess about a person's whereabouts, not a calibration, and it is not
-// worth a flash write. A reboot forgets, and then the sweep starts robot-left.
+// Where a face was last seen, so a look around can start there instead of at a
+// limit. Carried from one session to the next, and KEPT ACROSS REBOOTS in NVS
+// (the "stanbot" namespace the Wi-Fi profiles already use). It was RAM-only at
+// first, on the argument that a guess about a person is not worth a flash
+// write; the owner disagreed, reasonably -- a robot that forgets the moment it
+// is flashed is not remembering where you were. Written only when the place
+// has actually moved (kLastSeenWriteThreshold), which for someone who sits in
+// the same chair is almost never.
 std::atomic<bool> haveLastSeen{false};
 std::atomic<int> lastSeenYaw{0}, lastSeenPitch{0};
+constexpr int kLastSeenWriteThreshold = 16;   // ~5 degrees: below this, not worth a write
+int storedLastSeenYaw = 0, storedLastSeenPitch = 0;
+
+void loadLastSeen() {
+  storage.begin("stanbot", true);
+  const int yaw = storage.getInt("lsy", -1);
+  const int pitch = storage.getInt("lsp", -1);
+  storage.end();
+  if (yaw < 0 || pitch < 0) return;
+  storedLastSeenYaw = yaw;
+  storedLastSeenPitch = pitch;
+  lastSeenYaw.store(yaw);
+  lastSeenPitch.store(pitch);
+  haveLastSeen.store(true);
+}
+
+void saveLastSeen(int yaw, int pitch) {
+  if (haveLastSeen.load() && abs(yaw - storedLastSeenYaw) < kLastSeenWriteThreshold &&
+      abs(pitch - storedLastSeenPitch) < kLastSeenWriteThreshold) return;
+  storage.begin("stanbot", false);
+  storage.putInt("lsy", yaw);
+  storage.putInt("lsp", pitch);
+  storage.end();
+  storedLastSeenYaw = yaw;
+  storedLastSeenPitch = pitch;
+}
 std::atomic<uint32_t> reactionStartedMs{0};
 constexpr uint32_t kReactionSurprisedMs = 700;
 constexpr uint32_t kReactionGleeMs = 900;
@@ -2298,6 +2328,7 @@ void runFollowSession() {
   headLookingAround.store(false);
   // Hand what this session learned to the next one.
   if (tracker.haveLastSeen()) {
+    saveLastSeen(tracker.lastSeenYaw(), tracker.lastSeenPitch());   // before the flag: it reads it
     lastSeenYaw.store(tracker.lastSeenYaw());
     lastSeenPitch.store(tracker.lastSeenPitch());
     haveLastSeen.store(true);
@@ -2514,7 +2545,13 @@ void cameraTask(void*) {
       vTaskDelay(pdMS_TO_TICKS(500));
       M5.Power.powerOff();   // i2c-ok: only reached if the write above failed, and nothing runs after it
     }
-    if (followRequested.exchange(false)) {
+    // Stanbot opens its eyes, and only then moves its head. A session asked for
+    // while the boot screen is still up, or while the lids are still rising
+    // after a wake, WAITS: the request is left set and runs as soon as the face
+    // is there. Before this, a reboot's look around began behind the network
+    // screen, so the head swung with no eyes to see it with (2026-09-17).
+    const bool faceIsUp = !bootScreenActive && eyes.eyesOpen(millis());
+    if (faceIsUp && followRequested.exchange(false)) {
       if (asleep.load()) Telemetry.println("SBMV {\"result\":\"follow_refused_asleep\",\"plan\":\"follow\"}");
       else runFollowSession();
     }
@@ -2609,6 +2646,7 @@ void setup() {
   esp_rom_install_channel_putc(2, nullptr);
   // Join automatically when provisioned, so the robot needs no USB command to
   // come up on the network after a power cycle at the base connector.
+  loadLastSeen();   // where the last session saw someone, before this reboot
   if (storedProfileCount() > 0) beginWifi();
   if (xTaskCreatePinnedToCore(cameraTask, "camera", 8192, nullptr, 1, nullptr, 0) != pdPASS) {
     Serial.println("CAMERA_TASK_FAILED");
