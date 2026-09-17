@@ -129,8 +129,6 @@ struct TitlebarFace<Content: View>: NSViewRepresentable {
 
     private func attach(to window: NSWindow?, _ coordinator: Coordinator) {
         guard let window, coordinator.host == nil else { return }
-        // The name lives in the accessory, so the window's own title would double it.
-        window.titleVisibility = .hidden
         let host = NSHostingView(rootView: content)
         host.frame = NSRect(x: 0, y: 0, width: RobotFaceBadge.size.width + 12, height: RobotFaceBadge.size.height)
         let accessory = NSTitlebarAccessoryViewController()

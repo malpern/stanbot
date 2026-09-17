@@ -21,15 +21,18 @@ the robot's view, with a little of the robot's character in it.
   sidebar comes back with real places in it.
 - **Title bar:** Stanbot's live eyes and mouth, an icon for the link (Wi-Fi or
   USB), its name, and the red dot when it cannot be reached — all one titlebar
-  accessory (`RobotFaceBadge`), with the window's own title hidden so the dot
-  can sit right of the name. Hovering says what is wrong; the panel says the
+  accessory (`RobotFaceBadge`); the window's own title is a single space so the
+  dot can sit right of the name. (Hiding the title instead, with
+  `titleVisibility`, let the content slide up under the toolbar: the video was
+  cut off and the panel's top was out of view, 2026-09-17.) Hovering says what is wrong; the panel says the
   same in words. The link, firmware and the rest of the read-only detail is in
   Diagnostics.
 - **Toolbar (2026-09-17):** Sleep/Wake and the Controls toggle. Follow/Stop lives in the panel (and in the Robot menu, ⌘.).
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption, and a gear in the
-  corner. **Clicking the face puts the robot to sleep or wakes it**: on the
+  corner, and it scrolls, so nothing is ever pushed out of view at small window
+  sizes. **Clicking the face puts the robot to sleep or wakes it**: on the
   robot the eyes close over 0.7 s before the screen darkens
   (`SleepCurtain.h`), and the light bar goes off while it sleeps; waking opens
   them again over 0.4 s. An orange
@@ -219,7 +222,9 @@ writes every expression icon to one image.
 A snapshot run quits as soon as the picture is written, so it leaves nothing on
 screen; add `-g` to `open` to keep it in the background as well.
 
-`STANBOT_SNAPSHOT_WINDOW=Diagnostics` opens and captures that window instead.
+`STANBOT_SNAPSHOT_WINDOW=Diagnostics` opens and captures that window instead,
+`=sheet` captures an open sheet, and `STANBOT_WINDOW_SIZE=1800x1100` checks a
+layout at another size.
 The snapshot is taken 3 s after launch, which can catch the eyes mid-reaction.
 
 `STANBOT_PREVIEW` fills the model with made-up state and opens no USB, Wi-Fi or

@@ -1339,14 +1339,28 @@ extension RobotConnection {
     /// recording permission. Preview only.
     private func scheduleSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT"] else { return }
+        // STANBOT_WINDOW_SIZE=1400x900 forces the window's size first, so a
+        // layout can be checked at sizes other than the default.
+        if let size = ProcessInfo.processInfo.environment["STANBOT_WINDOW_SIZE"] {
+            let parts = size.split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    guard let window = NSApp.windows.first(where: { $0.isVisible && $0.sheetParent == nil }) else { return }
+                    window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+                }
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             // STANBOT_SNAPSHOT_WINDOW names another window to capture: a window
             // title, e.g. Diagnostics, or "sheet" for whatever sheet is open.
             let title = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] ?? "Stanbot"
-            guard let window = NSApp.windows.first(where: {
-                      guard $0.isVisible else { return false }
-                      return title == "sheet" ? $0.sheetParent != nil : $0.title == title
-                  }),
+            let named = NSApp.windows.first {
+                guard $0.isVisible else { return false }
+                return title == "sheet" ? $0.sheetParent != nil : $0.title == title
+            }
+            // The main window's title is a space (the name is in the titlebar
+            // accessory), so fall back to the frontmost ordinary window.
+            guard let window = named ?? NSApp.windows.first(where: { $0.isVisible && $0.sheetParent == nil }),
                   let frame = window.contentView?.superview else { return }
             guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
             frame.cacheDisplay(in: frame.bounds, to: rep)

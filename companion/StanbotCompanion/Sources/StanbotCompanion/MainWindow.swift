@@ -89,7 +89,10 @@ struct CompanionView: View {
             // The stage is always black (a camera, or Stanbot asleep), so what
             // floats on it is always dark, whatever the system appearance.
             .environment(\.colorScheme, .dark)
-            .navigationTitle("Stanbot")
+            // A space, not "Stanbot": the name is drawn in the titlebar accessory
+            // beside the red dot (RobotFaceBadge). Hiding the title instead
+            // (titleVisibility) let the content slide under the toolbar.
+            .navigationTitle(" ")
             .navigationSubtitle(subtitle)
             .toolbar { toolbar }
             // Stanbot's face, left of its name. SwiftUI's .navigation toolbar

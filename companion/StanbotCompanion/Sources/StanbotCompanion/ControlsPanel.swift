@@ -23,30 +23,9 @@ struct ControlsPanel: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            if let alert {
-                Label(alert, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            RobotFace(mood: mood, width: 260, reaction: reaction, detailed: true,
-                      onTap: connected ? { robot.asleep ? robot.wake() : robot.sleep() } : nil)
-                .help(connected
-                      ? (robot.asleep ? "Click to wake Stanbot" : "Click to put Stanbot to sleep")
-                      : mood.caption)
-
-            Text(mood.caption)
-                .font(.title3.weight(.semibold))
-                .fontDesign(.rounded)
-                .contentTransition(.opacity)
-                .animation(.smooth(duration: 0.25), value: mood.caption)
-
-            Spacer(minLength: 0)
+        ScrollView {
+            content
         }
-        .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .overlay(alignment: .topTrailing) {
             Button { showingDetails = true } label: {
@@ -59,6 +38,40 @@ struct ControlsPanel: View {
             .accessibilityLabel("Stanbot controls")
         }
         .sheet(isPresented: $showingDetails) { DetailsSheet() }
+    }
+
+    private var content: some View {
+        VStack(spacing: 14) {
+            if let alert {
+                Label(alert, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // As wide as the panel allows, never wider than it looks good.
+            GeometryReader { proxy in
+                let width = min(max(proxy.size.width, 120), 260)
+                RobotFace(mood: mood, width: width, reaction: reaction, detailed: true,
+                          onTap: connected ? { robot.asleep ? robot.wake() : robot.sleep() } : nil)
+                    .frame(maxWidth: .infinity)
+                    .help(connected
+                          ? (robot.asleep ? "Click to wake Stanbot" : "Click to put Stanbot to sleep")
+                          : mood.caption)
+            }
+            .frame(height: min(max(0, 260 * RobotFace.aspect), 260 * RobotFace.aspect))
+            .frame(maxWidth: .infinity)
+
+            Text(mood.caption)
+                .font(.title3.weight(.semibold))
+                .fontDesign(.rounded)
+                .contentTransition(.opacity)
+                .animation(.smooth(duration: 0.25), value: mood.caption)
+
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity)
     }
 }
 
