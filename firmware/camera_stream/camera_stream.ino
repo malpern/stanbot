@@ -1158,7 +1158,15 @@ void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
   nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
-  if (lightBarWakeRequested.exchange(false)) lightBar.wake(now);
+  if (lightBarWakeRequested.exchange(false)) {
+    lightBar.wake(now);
+    // Sleep darkens the display through the PMIC, and the LED expander can
+    // lose its pin setup with it: after a wake the bar stayed dark although
+    // every colour write "succeeded" (2026-09-17). Set the pin up again and
+    // write whatever colour comes next, even if it matches the last one.
+    ledPinReady = false;
+    lightBarApplied = false;
+  }
   lightBar.update(attending, streamEnabled.load(), now);
   // Asleep the bar is off, whatever the bar's own rules would show.
   const uint16_t color = asleep.load() ? 0 : lightBar.color(now);
