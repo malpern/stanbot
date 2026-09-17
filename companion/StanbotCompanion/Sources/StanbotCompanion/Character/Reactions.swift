@@ -46,7 +46,8 @@ struct EyeReaction: Equatable {
         case .giggle:
             Plan(openness: [0.7, 0.7, 1, 1, 1, 1], dy: [-6, 0, -3, 0, -1, 0], durations: [0.09, 0.09, 0.08, 0.08, 0.06, 0.06])
         case .recognize:
-            Plan(openness: [1.14, 1.14, 1, 1, 1, 1], scale: [1.04, 1.04, 1, 1, 1, 1], durations: [0.1, 0.16, 0.22, 0.01, 0.01, 0.01])
+            // A slow, slight widening; the quick 14% pop read as a start.
+            Plan(openness: [1.05, 1.05, 1, 1, 1, 1], scale: [1.01, 1.01, 1, 1, 1, 1], durations: [0.25, 0.25, 0.27, 0.01, 0.01, 0.01])
         case .sparkle:
             Plan(openness: [1, 0.15, 1, 1, 1, 1], scale: [1.08, 1, 1.05, 1, 1, 1], durations: [0.1, 0.08, 0.12, 0.1, 0.01, 0.01])
         }

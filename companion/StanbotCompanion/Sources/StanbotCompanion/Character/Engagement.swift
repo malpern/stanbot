@@ -40,8 +40,12 @@ struct EngagementTracker {
 /// Where the eyes rest next when nobody is engaging: the Mac side of the
 /// firmware's GazeBrain.chooseFixation, with the same proportions. Pure and
 /// seeded, so it can be tested for how often it looks at someone.
+///
+/// Calm on purpose (2026-09-17): the robot and this face sit in front of their
+/// owner all day, so resting points are near the middle and held 5-10 s, and a
+/// look at someone is rare and unhurried. Keep in step with GazeBrain.h.
 struct GazePlanner {
-    static let peekChance = 0.22
+    static let peekChance = 0.06
 
     struct Fixation: Equatable {
         var point: CGPoint
@@ -56,16 +60,16 @@ struct GazePlanner {
 
     mutating func next(face: CGPoint?) -> Fixation {
         if let face, uniform(0, 1) < Self.peekChance {
-            return Fixation(point: face, hold: uniform(0.26, 0.52), isPeek: true)
+            return Fixation(point: face, hold: uniform(1.5, 2.5), isPeek: true)
         }
         if let face {
             let side: Double = face.x > 0.05 ? -1 : (face.x < -0.05 ? 1 : (uniform(0, 1) < 0.5 ? 1 : -1))
-            return Fixation(point: CGPoint(x: side * uniform(0.45, 0.9), y: uniform(0.1, 0.55)),
-                            hold: uniform(0.9, 2.6), isPeek: false)
+            return Fixation(point: CGPoint(x: side * uniform(0.2, 0.45), y: uniform(0.05, 0.25)),
+                            hold: uniform(5, 10), isPeek: false)
         }
         let side: Double = uniform(0, 1) < 0.5 ? 1 : -1
-        return Fixation(point: CGPoint(x: side * uniform(0.3, 0.9), y: uniform(-0.35, 0.5)),
-                        hold: uniform(0.9, 2.6), isPeek: false)
+        return Fixation(point: CGPoint(x: side * uniform(0.15, 0.45), y: uniform(-0.15, 0.2)),
+                        hold: uniform(5, 10), isPeek: false)
     }
 
     private mutating func uniform(_ low: Double, _ high: Double) -> Double {

@@ -3,16 +3,19 @@
 // so companion/test_gaze_brain.cpp tests it natively; StanbotEyes draws it.
 //
 // Modelled loosely on how people use their eyes, within what a 30 fps 320x240
-// screen can show:
-//  - Eyes do not glide; they jump (saccades, tens of milliseconds) between
-//    fixations and hold still in between.
-//  - With nobody engaging, the gaze wanders the room and avoids staring at
-//    the middle of the view, which is where a person in front would be.
-//  - With someone there who is not facing the robot, it mostly looks away,
-//    with an occasional brief, shy glance toward them.
-//  - When someone faces the robot, the eyes lock on and follow them smoothly
-//    (pursuit), with tiny micro-saccades, and the pupils dilate. When they
-//    turn away the pupils relax, more slowly than they widened.
+// screen can show, and then calmed down deliberately (2026-09-17): the robot
+// sits on the desk in front of its owner all day, so it must never pull the
+// eye. The lively first tuning (20 ms jumps every 1-2.6 s across most of the
+// screen, quarter-second glances, a twitch every second while locked on) was
+// accurate to people and a distraction in practice.
+//  - Moves glide over about half a second, then hold still for 5-10 s.
+//  - With nobody engaging, the gaze drifts a little either side of centre,
+//    not resting dead centre, where a person in front would be.
+//  - With someone there who is not facing the robot, it mostly rests a little
+//    away, with a rare, unhurried look toward them.
+//  - When someone faces the robot, the eyes settle on them and follow smoothly,
+//    with a barely visible adjustment now and then, and the pupils widen a
+//    little. When they turn away the pupils relax, more slowly than they widened.
 //
 // "Engaged" comes from the Mac: a face turned toward the camera, held for
 // several frames (the app's head-pose check). It is not eye contact, and the
@@ -28,12 +31,16 @@ struct GazeBrain {
   float dilation = 1.0f;
 
   // Tunables, shared in spirit with the Mac (docs/app-design.md).
-  static constexpr float kDilated = 1.38f;
-  static constexpr float kSaccadeMs = 22.0f;      // time constant of a jump
-  static constexpr float kPursuitMs = 90.0f;      // time constant of following
-  static constexpr float kDilateMs = 140.0f;      // widening is quick...
-  static constexpr float kRelaxMs = 520.0f;       // ...relaxing is slow
-  static constexpr float kPeekChance = 0.22f;     // shy glance toward someone not engaging
+  static constexpr float kDilated = 1.15f;
+  static constexpr float kSaccadeMs = 160.0f;     // time constant of a move: ~0.5 s to settle
+  static constexpr float kPursuitMs = 250.0f;     // time constant of following
+  static constexpr float kDilateMs = 500.0f;      // widening is gentle...
+  static constexpr float kRelaxMs = 1500.0f;      // ...relaxing slower still
+  static constexpr float kPeekChance = 0.06f;     // an unhurried look toward someone not engaging
+  // Top speed, in eye-widths per second. An easing curve alone moves fastest at
+  // the start, so a side-to-side change still snapped 0.16 of the screen in one
+  // frame; capping speed makes every move start gently.
+  static constexpr float kMaxSpeed = 1.5f;
 
   explicit GazeBrain(uint32_t seed = 0x9E3779B9u) : rng_(seed ? seed : 1u) {}
 
@@ -48,9 +55,9 @@ struct GazeBrain {
     if (locked) {
       // Follow the face, with a micro-saccade now and then so it never looks frozen.
       if (nowMs >= nextMicroMs_) {
-        microX_ = uniform(-0.04f, 0.04f);
-        microY_ = uniform(-0.03f, 0.03f);
-        nextMicroMs_ = nowMs + static_cast<uint32_t>(uniform(700, 1400));
+        microX_ = uniform(-0.015f, 0.015f);
+        microY_ = uniform(-0.01f, 0.01f);
+        nextMicroMs_ = nowMs + static_cast<uint32_t>(uniform(4000, 8000));
       }
       fixX_ = clampUnit(faceX + microX_);
       fixY_ = clampUnit(faceY + microY_);
@@ -78,8 +85,16 @@ struct GazeBrain {
 
   void approach(float dt, float tauMs) {
     const float r = rate(dt, tauMs);
-    lookX += (fixX_ - lookX) * r;
-    lookY += (fixY_ - lookY) * r;
+    float dx = (fixX_ - lookX) * r;
+    float dy = (fixY_ - lookY) * r;
+    const float step = std::sqrt(dx * dx + dy * dy);
+    const float limit = kMaxSpeed * dt / 1000.0f;
+    if (step > limit && step > 0.0f) {
+      dx *= limit / step;
+      dy *= limit / step;
+    }
+    lookX += dx;
+    lookY += dy;
   }
 
   uint32_t next() {   // xorshift32
@@ -92,24 +107,24 @@ struct GazeBrain {
 
   void chooseFixation(uint32_t nowMs, bool hasFace, float faceX, float faceY) {
     if (hasFace && uniform(0, 1) < kPeekChance) {
-      // A shy glance at them, held briefly, then away again.
+      // An unhurried look at them, then away again.
       fixX_ = clampUnit(faceX);
       fixY_ = clampUnit(faceY);
-      nextSaccadeMs_ = nowMs + static_cast<uint32_t>(uniform(260, 520));
+      nextSaccadeMs_ = nowMs + static_cast<uint32_t>(uniform(1500, 2500));
       return;
     }
     if (hasFace) {
-      // Away from them: the other side, and a little down, like looking off in thought.
+      // A little away from them, and slightly down, like looking off in thought.
       const float side = faceX > 0.05f ? -1.0f : (faceX < -0.05f ? 1.0f : (next() & 1u ? 1.0f : -1.0f));
-      fixX_ = side * uniform(0.45f, 0.9f);
-      fixY_ = uniform(0.1f, 0.55f);
+      fixX_ = side * uniform(0.2f, 0.45f);
+      fixY_ = uniform(0.05f, 0.25f);
     } else {
-      // Around the room, never resting on the middle of the view.
+      // A small drift either side of centre, not resting dead centre.
       const float side = next() & 1u ? 1.0f : -1.0f;
-      fixX_ = side * uniform(0.3f, 0.9f);
-      fixY_ = uniform(-0.35f, 0.5f);
+      fixX_ = side * uniform(0.15f, 0.45f);
+      fixY_ = uniform(-0.15f, 0.2f);
     }
-    nextSaccadeMs_ = nowMs + static_cast<uint32_t>(uniform(900, 2600));
+    nextSaccadeMs_ = nowMs + static_cast<uint32_t>(uniform(5000, 10000));
   }
 };
 

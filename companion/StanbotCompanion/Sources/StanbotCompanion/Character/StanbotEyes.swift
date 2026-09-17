@@ -123,14 +123,14 @@ struct StanbotEyesView: View {
         .aspectRatio(4 / 3, contentMode: .fit)
         .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: emotion)
         // Smooth pursuit while locked on: the eyes follow the face between frames.
-        .animation(reduceMotion || !locked ? nil : .spring(response: 0.28, dampingFraction: 1), value: look)
+        .animation(reduceMotion || !locked ? nil : .spring(response: 0.6, dampingFraction: 1), value: look)
         .animation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0), value: pointer)
         .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0), value: asleep)
         .onChange(of: look, initial: true) { _, new in latestFace = new }
         .onChange(of: locked, initial: true) { was, now in
             // Pupils widen quickly and relax slowly, as people's do.
-            let spring: Animation = now ? .spring(duration: 0.3, bounce: 0) : .spring(duration: 0.9, bounce: 0)
-            withAnimation(reduceMotion ? nil : spring) { dilation = now ? 1.38 : 1 }
+            let spring: Animation = now ? .spring(duration: 0.8, bounce: 0) : .spring(duration: 1.5, bounce: 0)
+            withAnimation(reduceMotion ? nil : spring) { dilation = now ? 1.15 : 1 }
             if now && !was { recognized = EyeReaction(kind: .recognize) }
         }
         .accessibilityElement()
@@ -207,9 +207,10 @@ struct StanbotEyesView: View {
     private struct IdleKey: Hashable { let scanning: Bool, asleep: Bool, reduceMotion: Bool, locked: Bool, hasFace: Bool }
     private struct BlinkKey: Hashable { let asleep: Bool, locked: Bool }
 
-    /// A 180 ms blink every five to eight seconds; less often while locked on,
-    /// as people blink less when they attend. A little after locking on, one
-    /// slow, soft blink.
+    /// A 180 ms blink every twelve to twenty seconds; less often while locked
+    /// on, as people blink less when they attend. A little after locking on,
+    /// one slow, soft blink. Every five to eight seconds was lifelike and, on a
+    /// face that is always in view, too busy.
     private func blinkLoop() async {
         guard !asleep else { blinking = false; return }
         if locked && !reduceMotion {
@@ -220,7 +221,7 @@ struct StanbotEyesView: View {
             withAnimation(.easeInOut(duration: 0.34)) { blinking = false }
         }
         while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(locked ? Int.random(in: 7000...11000) : Int.random(in: 5000...8000)))
+            try? await Task.sleep(for: .milliseconds(locked ? Int.random(in: 15000...25000) : Int.random(in: 12000...20000)))
             guard !Task.isCancelled else { return }
             withAnimation(.easeIn(duration: 0.09)) { blinking = true }
             try? await Task.sleep(for: .milliseconds(90))
@@ -228,12 +229,12 @@ struct StanbotEyesView: View {
         }
     }
 
-    /// Scanning sweeps side to side. Locked on, small micro-saccades around the
-    /// face. Otherwise quick jumps between fixations chosen by GazePlanner:
-    /// around the room, or away from someone who is there with the odd glance.
+    /// Scanning sweeps side to side. Locked on, a barely visible adjustment
+    /// every few seconds. Otherwise slow glides between resting points chosen
+    /// by GazePlanner, held 5-10 s. Calm on purpose; see GazePlanner.
     private func gazeLoop() async {
         guard !asleep, !reduceMotion else { fixation = .zero; micro = .zero; return }
-        let saccade = Animation.spring(response: 0.07, dampingFraction: 0.92)
+        let glide = Animation.spring(response: 0.7, dampingFraction: 1)
         var right = true
         while !Task.isCancelled {
             if scanning {
@@ -243,13 +244,13 @@ struct StanbotEyesView: View {
                 right.toggle()
                 try? await Task.sleep(for: .milliseconds(1300))
             } else if locked {
-                withAnimation(saccade) {
-                    micro = CGPoint(x: Double.random(in: -0.04...0.04), y: Double.random(in: -0.03...0.03))
+                withAnimation(glide) {
+                    micro = CGPoint(x: Double.random(in: -0.015...0.015), y: Double.random(in: -0.01...0.01))
                 }
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 700...1400)))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 4000...8000)))
             } else {
                 let next = planner.next(face: latestFace)
-                withAnimation(saccade) { fixation = next.point }
+                withAnimation(glide) { fixation = next.point }
                 try? await Task.sleep(for: .milliseconds(Int(next.hold * 1000)))
             }
         }

@@ -66,15 +66,21 @@ for a change is a pure rule (`ReactionFacts.reaction`), both tested.
 
 Both faces (the robot's and the Mac's) use the same idea of gaze:
 
-- **Nobody there:** quick jumps (saccades) between resting points around the
-  room, never resting on the middle of the view, where a person would stand.
-- **Someone there, not facing Stanbot:** mostly looking away, to the other
-  side and a little down, with an occasional brief, shy glance at them (22% of
-  fixations, each held about a quarter to half a second; about 5% of the time
-  overall on the robot's model).
+**Calm first (2026-09-17).** The robot sits on the desk in front of its owner
+all day, so the eyes must never pull attention. The first tuning was lively
+and accurate to people (20 ms jumps every 1-2.6 s across most of the screen,
+quarter-second glances, a twitch every second while locked on, blinks every
+5-8 s on the Mac) and it was a distraction. Both faces now:
+
+- **Nobody there:** slow glides (speed-capped, about half a second to a second)
+  between resting points a little either side of centre, each held 5-10 s.
+  About one move every seven seconds.
+- **Someone there, not facing Stanbot:** resting a little away from them and
+  slightly down, with a rare, unhurried look at them (6% of fixations, held
+  1.5-2.5 s; about 2% of the time overall).
 - **Someone facing Stanbot for a moment** (`EngagementTracker`: head turned
   toward the camera for 0.4 s; let go after 0.8 s turned away or gone; faces
-  too small to judge hold the state): the eyes lock on and follow smoothly,
+  too small to judge hold the state): the eyes settle on them and follow smoothly,
   with tiny micro-saccades, and the pupils dilate by about 38%, quickly. When
   the person turns away, the pupils relax slowly.
 

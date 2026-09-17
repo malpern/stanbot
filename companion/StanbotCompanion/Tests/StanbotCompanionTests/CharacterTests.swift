@@ -186,21 +186,23 @@ final class CharacterTests: XCTestCase {
             total += fixation.hold
             if fixation.isPeek {
                 XCTAssertEqual(fixation.point, face)
-                XCTAssertLessThan(fixation.hold, 0.6, "a glance, not a stare")
+                XCTAssertTrue((1.5...2.5).contains(fixation.hold), "an unhurried look, not a flick")
                 peekTime += fixation.hold
             } else {
                 away += 1
                 if fixation.point.x < 0 { awaySide += 1 }
             }
         }
-        XCTAssertLessThan(peekTime / total, 0.12, "looking at them a small share of the time")
+        XCTAssertLessThan(peekTime / total, 0.05, "looking at them rarely")
         XCTAssertGreaterThan(peekTime, 0)
         XCTAssertEqual(awaySide, away, "looks to the other side from where they are")
         var alone = GazePlanner(seed: 7)
         for _ in 0..<500 {
             let fixation = alone.next(face: nil)
             XCTAssertFalse(fixation.isPeek)
-            XCTAssertGreaterThanOrEqual(abs(fixation.point.x), 0.3, "never resting on the middle of the view")
+            XCTAssertGreaterThanOrEqual(abs(fixation.point.x), 0.15, "not resting dead centre")
+            XCTAssertLessThanOrEqual(abs(fixation.point.x), 0.45, "a small drift, not across the screen")
+            XCTAssertTrue((5...10).contains(fixation.hold), "held for seconds, not moving constantly")
         }
     }
 
