@@ -132,8 +132,7 @@ struct CompanionView: View {
     /// robot is reachable, Follow/Stop, and the panel itself.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            ReachabilityIndicator()
+        ToolbarItem(placement: .primaryAction) {
             SleepWakeButton()
         }
         ToolbarItem(placement: .primaryAction) {
@@ -387,11 +386,11 @@ struct SleepWakeButton: View {
     }
 }
 
-/// A small red dot, shown only when the robot has not been reachable for a few
-/// seconds; hover for what is wrong. Nothing at all while things are fine, and
-/// nothing during the brief connecting at launch or a switch between USB and
-/// Wi-Fi.
-private struct ReachabilityIndicator: View {
+/// A small red dot beside Stanbot's name, shown only when the robot has not been
+/// reachable for a few seconds; hover for what is wrong. Nothing at all while
+/// things are fine, and nothing during the brief connecting at launch or a
+/// switch between USB and Wi-Fi. The controls panel says the same in words.
+struct ReachabilityDot: View {
     @EnvironmentObject private var robot: RobotConnection
     @State private var showing = false
 

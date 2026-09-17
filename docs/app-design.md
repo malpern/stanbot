@@ -10,18 +10,22 @@ the robot's view, with a little of the robot's character in it.
   selected face outlined. No sidebar: there is one robot and no
   hierarchy to navigate. If several robots or recorded sessions arrive, a
   sidebar comes back with real places in it.
-- **Title bar:** "Stanbot", with no subtitle in ordinary use (a standing
-  refusal is the exception). Left of the title, Stanbot itself: the live eyes
-  and mouth and one small icon for the link, Wi-Fi or USB (`RobotFaceBadge`).
-  The link, firmware and everything else read-only is in Diagnostics.
-- **Toolbar (2026-09-17):** the red reachability dot, Sleep/Wake, and the
-  Controls toggle. Follow/Stop lives in the panel (and in the Robot menu, ⌘.).
+- **Title bar:** Stanbot's live eyes and mouth, an icon for the link (Wi-Fi or
+  USB), its name, and the red dot when it cannot be reached — all one titlebar
+  accessory (`RobotFaceBadge`), with the window's own title hidden so the dot
+  can sit right of the name. Hovering says what is wrong; the panel says the
+  same in words. The link, firmware and the rest of the read-only detail is in
+  Diagnostics.
+- **Toolbar (2026-09-17):** Sleep/Wake and the Controls toggle. Follow/Stop lives in the panel (and in the Robot menu, ⌘.).
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
   (the CoreS3 front, `RobotFace`) with its mood caption; Follow/Stop and
   Sleep/Wake; and **Details…**, a sheet with the head settings (Follow
   automatically, the round direction pad), the expression grid (the 18 faces)
-  and the camera (show/hide, mirror). The mouth test is in the Robot menu.
+  and the camera (show/hide, mirror). The mouth test is in the Robot menu. At
+  the top of the panel, an orange line when something is wrong (unreachable, or
+  a refusal that will not clear); at the bottom, the connection method and
+  Reconnect.
   Things to do, not things to read. Turning the robot off completely is Turn
   Robot Off… in the Robot menu, with a confirmation: only its own button turns
   it on again.

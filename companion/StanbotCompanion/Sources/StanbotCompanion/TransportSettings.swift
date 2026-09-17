@@ -92,14 +92,10 @@ private struct ConnectionSettings: View {
     var body: some View {
         Form {
             Section {
-                Picker("Connect to StackChan", selection: $robot.transport) {
-                    ForEach(TransportPreference.allCases) { preference in
-                        Text(preference.title).tag(preference)
-                    }
-                }
+                LabeledContent("Connect over", value: robot.transport.title)
                 LabeledContent("Now using", value: robot.linkSummary)
             } footer: {
-                Text(robot.transport.detail).settingsFootnote()
+                Text("\(robot.transport.detail) Change it in the controls panel.").settingsFootnote()
             }
             Section {
                 Picker("USB device", selection: $robot.selectedPort) {

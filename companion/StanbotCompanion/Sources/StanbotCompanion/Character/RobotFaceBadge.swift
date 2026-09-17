@@ -53,14 +53,15 @@ struct RobotFace: View {
     }
 }
 
-/// Stanbot in the title bar, left of its name: just the eyes and mouth, with a
-/// small icon for how it is connected. The bezel and camera ring are left to
-/// the large face in the controls panel; connection details are in Diagnostics.
+/// The whole title bar's left side: Stanbot's live eyes and mouth, an icon for
+/// how it is connected, its name, and the red dot when it cannot be reached.
+/// The window's own title is hidden so the dot can sit right of the name.
+/// Connection details are in Diagnostics; hovering the dot says what is wrong.
 struct RobotFaceBadge: View {
     @EnvironmentObject private var robot: RobotConnection
     var mood: Mood
 
-    static let size = CGSize(width: 64, height: 26)
+    static let size = CGSize(width: 150, height: 26)
 
     var body: some View {
         HStack(spacing: 6) {
@@ -68,14 +69,19 @@ struct RobotFaceBadge: View {
                             scanning: mood.scanning, engaged: mood.engaged,
                             mouthMinimumPoints: 1.2, mouthGlow: false)
                 .frame(width: 34, height: 26)
+                .help(mood.caption)
             Image(systemName: linkSymbol)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .help(robot.linkSummary)
                 .accessibilityHidden(true)
+            Text("Stanbot")
+                .font(.headline)
+            ReachabilityDot()
+            Spacer(minLength: 0)
         }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .help("\(mood.caption). \(robot.linkSummary)")
-        .accessibilityElement()
+        .frame(width: Self.size.width, height: Self.size.height, alignment: .leading)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("Stanbot, \(mood.caption.lowercased()), \(robot.linkSummary)")
     }
 
@@ -121,6 +127,8 @@ struct TitlebarFace<Content: View>: NSViewRepresentable {
 
     private func attach(to window: NSWindow?, _ coordinator: Coordinator) {
         guard let window, coordinator.host == nil else { return }
+        // The name lives in the accessory, so the window's own title would double it.
+        window.titleVisibility = .hidden
         let host = NSHostingView(rootView: content)
         host.frame = NSRect(x: 0, y: 0, width: RobotFaceBadge.size.width + 12, height: RobotFaceBadge.size.height)
         let accessory = NSTitlebarAccessoryViewController()

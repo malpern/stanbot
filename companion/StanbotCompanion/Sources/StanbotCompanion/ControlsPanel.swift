@@ -10,8 +10,28 @@ struct ControlsPanel: View {
     let reaction: EyeReaction?
     @State private var showingDetails = false
 
+    /// What is wrong, in words, beside the red dot in the title bar: the robot
+    /// unreachable, or a refusal that will not clear by itself.
+    private var alert: String? {
+        if case .finished(let result) = robot.follow, !result.retryable { return result.summary }
+        switch robot.connection {
+        case .connected: return nil
+        case .connecting: return nil
+        case .disconnected, .unavailable: return "\(robot.connection.title). \(robot.lastAction)"
+        }
+    }
+
     var body: some View {
         Form {
+            if let alert {
+                Section {
+                    Label(alert, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Section {
                 GeometryReader { proxy in
                     RobotFace(mood: mood, width: min(proxy.size.width, 300), reaction: reaction, detailed: true)
@@ -40,6 +60,16 @@ struct ControlsPanel: View {
 
             Section {
                 Button("Details…") { showingDetails = true }
+                    .frame(maxWidth: .infinity)
+            }
+
+            Section("Connection") {
+                Picker("Connect over", selection: $robot.transport) {
+                    ForEach(TransportPreference.allCases) { preference in
+                        Text(preference.title).tag(preference)
+                    }
+                }
+                Button("Reconnect") { robot.connect() }
                     .frame(maxWidth: .infinity)
             }
         }
