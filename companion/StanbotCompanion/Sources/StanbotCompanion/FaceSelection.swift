@@ -98,7 +98,7 @@ struct FaceSelection {
             let clipped = r.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
             guard !clipped.isNull, clipped.width >= 0.03, clipped.height >= 0.03,
                   clipped.width * clipped.height >= 0.5 * r.width * r.height else { return nil }
-            return FaceBox(id: $0.id, rect: clipped, confidence: $0.confidence)
+            return FaceBox(id: $0.id, rect: clipped, confidence: $0.confidence, pose: $0.pose, frameWidth: $0.frameWidth)
         }
         if let previous = candidate {
             // A detection continues the selection if it overlaps it, or if its
@@ -157,7 +157,8 @@ struct FaceSelection {
                                     dy: velocity.dy + 0.6 * (sample.dy - velocity.dy))
             }
             lastCentre = CGPoint(x: new.midX, y: new.midY)
-            candidate = FaceBox(id: previous.id, rect: smooth, confidence: match.confidence)
+            candidate = FaceBox(id: previous.id, rect: smooth, confidence: match.confidence,
+                                pose: match.pose, frameWidth: match.frameWidth)
             hits += 1
         } else {
             // A person who was just lost and is back near where they left is

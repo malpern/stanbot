@@ -762,9 +762,14 @@ final class RobotConnection: ObservableObject {
     /// dropping it; these lines can.
     private func logFollowFrame(faces: [FaceBox], sent: FaceBox?, receivedAt: TimeInterval) {
         guard case .following = follow, let followLog, Date() < followLogUntil else { return }
-        let detected = faces.map { String(format: "[%.3f,%.3f,%.3f,%.3f,%.2f]", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.rect.height, $0.confidence) }
+        let angle = { (value: Double?) in value.map { String(format: "%.1f", $0) } ?? "null" }
+        let detected = faces.map {
+            String(format: "[%.3f,%.3f,%.3f,%.3f,%.2f,", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.rect.height, $0.confidence)
+                + "\(angle($0.pose?.yaw)),\(angle($0.pose?.pitch)),\"\(Facing.classify($0).rawValue)\"]"
+        }
         var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces.count),\"detections\":[\(detected.joined(separator: ","))],\"state\":\"\(faceSelection.state)\""
         if let sent {
+            fields += ",\"facing\":\"\(Facing.classify(sent).rawValue)\""
             fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1)),\"y\":\(String(format: "%.3f", 1 - sent.rect.midY * 2))"
         }
         followLog.write(Data("APP {\(fields)}\n".utf8))
@@ -908,10 +913,14 @@ final class RobotConnection: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let request = VNDetectFaceRectanglesRequest()
+            request.revision = VNDetectFaceRectanglesRequestRevision3   // adds pitch to yaw and roll
             let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
             try? handler.perform([request])
-            let boxes = (request.results ?? []).filter { $0.confidence >= 0.7 }.map {
-                FaceBox(rect: $0.boundingBox, confidence: $0.confidence)
+            let degrees = { (value: NSNumber?) in value.map { $0.doubleValue * 180 / .pi } }
+            let boxes = (request.results ?? []).filter { $0.confidence >= 0.7 }.map { face in
+                FaceBox(rect: face.boundingBox, confidence: face.confidence,
+                        pose: degrees(face.yaw).map { HeadPose(yaw: $0, pitch: degrees(face.pitch), roll: degrees(face.roll)) },
+                        frameWidth: image.width)
             }
             DispatchQueue.main.async {
                 self?.analyzing = false
@@ -981,6 +990,10 @@ struct FaceBox: Identifiable {
     var id = UUID()
     let rect: CGRect  // Vision coordinates: origin at lower left.
     let confidence: Float
+    /// Head orientation from Vision, when it reported one.
+    var pose: HeadPose? = nil
+    /// Width in pixels of the frame the face was found in, for its size in pixels.
+    var frameWidth: Int? = nil
 }
 
 struct CameraFrame: Sendable {
