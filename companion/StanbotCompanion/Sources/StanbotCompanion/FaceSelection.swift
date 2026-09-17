@@ -25,6 +25,17 @@ struct FaceSelection {
     /// arrives the rate is genuinely unknown, and assuming a fast stream would
     /// discard the first hit before the frame that would confirm it ever lands.
     private var sampled = false
+    /// Smoothed motion of the selected face, in frame widths per second. Used
+    /// to predict where it will be, so two people crossing are told apart by
+    /// where each was heading rather than only by who is nearer this frame.
+    private var velocity = CGVector(dx: 0, dy: 0)
+    /// The unsmoothed centre of the last match. Prediction starts here, not at
+    /// the smoothed box, which lags a moving face by design.
+    private var lastCentre: CGPoint?
+    /// Where the last confirmed face was when it was lost, so a person who
+    /// steps out of view briefly is preferred on return over whoever is largest.
+    private var lastLost: (centre: CGPoint, width: CGFloat, at: TimeInterval)?
+    static let rememberLostFor: TimeInterval = 3
 
     /// Roughly one and a half frames without the selected face, then four.
     /// Floors keep a fast stream from becoming twitchy; ceilings stop a very
@@ -45,8 +56,16 @@ struct FaceSelection {
         (interval, sampled) = learned
     }
 
+    /// A reset that remembers where a confirmed face was lost.
+    private mutating func lose(at now: TimeInterval) {
+        let lost = (hits >= 3 ? candidate : nil).map { (centre: CGPoint(x: $0.rect.midX, y: $0.rect.midY), width: $0.rect.width, at: now) }
+        let remembered = lost ?? lastLost
+        reset()
+        lastLost = remembered
+    }
+
     mutating func expire(at now: TimeInterval) {
-        if now - lastSeen >= lostAfter { reset() }
+        if now - lastSeen >= lostAfter { lose(at: now) }
         else if now - lastSeen >= uncertainAfter, state == .tracking {
             state = .uncertain
             box = nil
@@ -93,13 +112,25 @@ struct FaceSelection {
             // face a few metres away is under 0.1 wide and 1.2 widths of it is
             // less than the face moves between frames while the head turns.
             let gate = max(1.2 * previous.rect.width, 0.2)
+            // Ranked by distance from where the face was heading, plus a
+            // penalty for a very different size: someone crossing in front or
+            // behind is rarely the same size. Both are zero for a still face of
+            // steady size, so two equal faces either side stay ambiguous.
+            let dt = lastSeen.isFinite ? min(max(now - lastSeen, 0), 1) : 0
+            let base = lastCentre ?? CGPoint(x: previous.rect.midX, y: previous.rect.midY)
+            let predicted = CGPoint(x: base.x + velocity.dx * dt, y: base.y + velocity.dy * dt)
             let near = valid
-                .map { (box: $0, distance: centreDistance(previous.rect, $0.rect)) }
+                .map { box -> (box: FaceBox, distance: CGFloat, score: CGFloat) in
+                    let actual = centreDistance(previous.rect, box.rect)
+                    let ahead = hypot(box.rect.midX - predicted.x, box.rect.midY - predicted.y)
+                    let sizeChange = abs(box.rect.width - previous.rect.width) / max(previous.rect.width, 0.01)
+                    return (box, min(actual, ahead), ahead + 0.3 * sizeChange)
+                }
                 .filter { overlap(previous.rect, $0.box.rect) >= 0.2 || $0.distance <= gate }
-                .sorted { $0.distance < $1.distance }
+                .sorted { $0.score < $1.score }
             // Two faces near the selection are ambiguous unless one is clearly
-            // nearer; ambiguity is never permission to switch people.
-            let unambiguous = near.count == 1 || (near.count > 1 && near[1].distance >= 2 * near[0].distance + 0.02)
+            // the better match; ambiguity is never permission to switch people.
+            let unambiguous = near.count == 1 || (near.count > 1 && near[1].score >= 2 * near[0].score + 0.02)
             let matches = unambiguous ? [near[0].box] : near.map(\.box)
             guard matches.count == 1, let match = matches.first else {
                 box = nil
@@ -120,10 +151,33 @@ struct FaceSelection {
                                 y: old.minY + alpha * (new.minY - old.minY),
                                 width: old.width + alpha * (new.width - old.width),
                                 height: old.height + alpha * (new.height - old.height))
+            if dt > 0, let lastCentre {
+                let sample = CGVector(dx: (new.midX - lastCentre.x) / dt, dy: (new.midY - lastCentre.y) / dt)
+                velocity = CGVector(dx: velocity.dx + 0.6 * (sample.dx - velocity.dx),
+                                    dy: velocity.dy + 0.6 * (sample.dy - velocity.dy))
+            }
+            lastCentre = CGPoint(x: new.midX, y: new.midY)
             candidate = FaceBox(id: previous.id, rect: smooth, confidence: match.confidence)
             hits += 1
         } else {
-            // Initial selection is deterministic: largest, then closest to center.
+            // A person who was just lost and is back near where they left is
+            // preferred over anyone else, even someone larger.
+            if let lost = lastLost, now - lost.at <= Self.rememberLostFor {
+                let gate = max(1.2 * lost.width, 0.2)
+                if let returning = valid
+                    .map({ (box: $0, distance: hypot($0.rect.midX - lost.centre.x, $0.rect.midY - lost.centre.y)) })
+                    .filter({ $0.distance <= gate })
+                    .min(by: { $0.distance < $1.distance }) {
+                    candidate = returning.box
+                    lastCentre = CGPoint(x: returning.box.rect.midX, y: returning.box.rect.midY)
+                    hits = 1
+                    lastSeen = now
+                    state = .acquiring
+                    box = nil
+                    return
+                }
+            }
+            // Otherwise deterministic: largest, then closest to center.
             candidate = valid.sorted {
                 let a = $0.rect.width * $0.rect.height, b = $1.rect.width * $1.rect.height
                 if a != b { return a > b }
@@ -131,6 +185,7 @@ struct FaceSelection {
             }.first
             guard candidate != nil else { state = .searching; return }
             hits = 1
+            lastCentre = candidate.map { CGPoint(x: $0.rect.midX, y: $0.rect.midY) }
         }
         lastSeen = now
         state = hits >= 3 ? .tracking : .acquiring

@@ -30,3 +30,31 @@ stable IDs, loss/other-face suppression, brief reacquisition, confidence filteri
 ambiguity, expiry and reset; two existing pseudo-terminal disconnect tests.
 Release app built and relaunched with local camera streaming. Real-person target
 entry/exit and multiple-person behavior require physical validation.
+
+## Several people, 2026-09-16 (host-tested, not yet seen with real people)
+
+The rules above have moved on (the match gate, clipping at the frame edge, and
+missed-frame tolerance are described in `FaceSelection.swift` and
+[head following](head-following.md)). Three rules now help when more than one
+person is in view:
+
+- **Where it was heading.** The selection keeps a smoothed velocity from the
+  unsmoothed centres of its matches. Candidates inside the gate are ranked by
+  distance from the predicted position, not only from the last one. Two people
+  crossing are told apart by direction: at the crossing frame the stranger may
+  be nearer, but the selected face is where it was going.
+  (`testCrossingFacesKeepTheOneThatWasMovingThatWay`)
+- **Size.** A candidate whose width differs a lot from the selection's costs
+  0.3 x the fractional change, so a much smaller face (someone further back)
+  that happens to be nearer is not taken for the selected person.
+  (`testMuchSmallerNearbyFaceIsNotTheSelectedPerson`)
+- **Returning person.** When a confirmed face is lost, its position is
+  remembered for 3 s. A face back near it is preferred over anyone larger,
+  though it still needs three matching frames. After 3 s the usual rule
+  (largest, then most central) applies.
+  (`testReturningPersonIsPreferredOverALargerStranger`)
+
+The ambiguity rule is unchanged in spirit: a match must score clearly better
+than the next (at most half its score, less 0.02), otherwise the state is
+uncertain. Two equal faces either side of a still selection stay ambiguous.
+The first two tests fail against the previous selector.

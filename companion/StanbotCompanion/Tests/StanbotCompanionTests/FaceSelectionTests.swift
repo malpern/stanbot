@@ -180,4 +180,50 @@ final class FaceSelectionTests: XCTestCase {
         XCTAssertEqual(tracker.state, .searching)
         XCTAssertNil(tracker.box)
     }
+    /// Two people crossing: the selected one moving right, a stranger moving
+    /// left. At the crossing frame the stranger is nearer the last position,
+    /// but the selected face is where it was heading, so it keeps the lock.
+    func testCrossingFacesKeepTheOneThatWasMovingThatWay() {
+        var tracker = FaceSelection()
+        var t = 0.0
+        for x in [0.1, 0.2, 0.3, 0.4] { tracker.update([face(x)], at: t); t += 0.2 }
+        XCTAssertEqual(tracker.state, .tracking)
+        let id = tracker.box?.id
+        tracker.update([face(0.5), face(0.42)], at: t)
+        XCTAssertEqual(tracker.state, .tracking)
+        XCTAssertEqual(tracker.box?.id, id)
+        XCTAssertGreaterThan(tracker.box!.rect.minX, 0.44, "stayed with the face heading right")
+    }
+
+    /// A much smaller face (someone further back) that happens to be nearer is
+    /// not taken for the selected person.
+    func testMuchSmallerNearbyFaceIsNotTheSelectedPerson() {
+        var tracker = FaceSelection()
+        for t in [0.0, 0.2, 0.4] { tracker.update([face(0.3)], at: t) }
+        let id = tracker.box?.id
+        let small = FaceBox(rect: CGRect(x: 0.385, y: 0.4, width: 0.07, height: 0.1), confidence: 0.9)
+        tracker.update([face(0.36), small], at: 0.6)
+        XCTAssertEqual(tracker.state, .tracking)
+        XCTAssertEqual(tracker.box?.id, id)
+        XCTAssertGreaterThan(tracker.box!.rect.width, 0.15)
+    }
+
+    /// Someone who steps out of view and comes back where they left is chosen
+    /// again over a larger stranger elsewhere.
+    func testReturningPersonIsPreferredOverALargerStranger() {
+        var tracker = FaceSelection()
+        for t in [0.0, 0.2, 0.4] { tracker.update([face(0.1)], at: t) }
+        tracker.expire(at: 2.0)
+        XCTAssertEqual(tracker.state, .searching)
+        let stranger = FaceBox(rect: CGRect(x: 0.55, y: 0.2, width: 0.35, height: 0.45), confidence: 0.95)
+        for t in [2.2, 2.4, 2.6] { tracker.update([stranger, face(0.12)], at: t) }
+        XCTAssertEqual(tracker.state, .tracking)
+        XCTAssertLessThan(tracker.box!.rect.minX, 0.3, "the returning person, not the larger stranger")
+        // Long after, the memory is gone and the usual rule (largest) applies.
+        var fresh = FaceSelection()
+        for t in [0.0, 0.2, 0.4] { fresh.update([face(0.1)], at: t) }
+        fresh.expire(at: 2.0)
+        for t in [6.0, 6.2, 6.4] { fresh.update([stranger, face(0.12)], at: t) }
+        XCTAssertGreaterThan(fresh.box!.rect.minX, 0.5)
+    }
 }
