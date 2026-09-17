@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include "GazeBrain.h"
 #include "MouthModel.h"
+#include "SleepCurtain.h"
 
 enum class StanbotEmotion : uint8_t {
   Normal, Angry, Glee, Happy, Sad, Worried, Focused, Annoyed, Surprised,
@@ -50,6 +51,12 @@ class StanbotEyes {
   }
 
   void setEmotion(StanbotEmotion emotion) { targetPose_ = poseFor(emotion); }
+
+  // Sleep: the eyes close over SleepCurtain::kCloseMs, and only then may the
+  // screen go dark (closedForSleep). Waking opens them again.
+  void beginSleep(uint32_t now) { curtain_.close(now); }
+  void endSleep(uint32_t now) { curtain_.open(now); }
+  bool closedForSleep(uint32_t now) const { return curtain_.closed(now); }
 
   // A loudness packet from the Mac while it plays speech (MouthModel.h).
   bool mouthReceive(uint32_t sequence, uint8_t open, int8_t shape, uint32_t now) {
@@ -126,6 +133,7 @@ class StanbotEyes {
   uint32_t lastEngagedMs_ = 0;
   stanbot::GazeBrain gaze_{0xC0FFEEu};
   stanbot::MouthModel mouth_;
+  stanbot::SleepCurtain curtain_;
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
   Pose targetPose_{86, 112, 0, 1};
@@ -158,7 +166,10 @@ class StanbotEyes {
   void draw(Display& display, bool attending, float blink) {
     constexpr int kBaseY = 120;
     const int width = static_cast<int>(currentPose_.width);
-    const int height = max(6, static_cast<int>(currentPose_.height * (1.0f - blink)));
+    // The sleep curtain closes the lids the same way a blink does, but slowly
+    // and all the way (SleepCurtain.h).
+    const float lids = (1.0f - blink) * curtain_.openness(lastFrameMs_);
+    const int height = max(2, static_cast<int>(currentPose_.height * lids));
     const int radius = min(30, height / 2);
     const int pupilX = static_cast<int>(lookX_ * 18);
     const int pupilY = static_cast<int>(lookY_ * 12);

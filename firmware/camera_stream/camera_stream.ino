@@ -232,6 +232,7 @@ std::atomic<bool> wifiLinkUp{false};
 // and cannot be undone from here: only its button brings it back.
 constexpr uint8_t kAwakeBrightness = 255;
 std::atomic<bool> asleep{false};
+std::atomic<bool> sleepRequested{false};   // the eyes are closing; the screen darkens after
 std::atomic<int> brightnessRequest{-1};   // applied by the camera task, which owns internal I2C
 std::atomic<bool> powerDownRequested{false};
 std::atomic<bool> sleepStateChanged{false};
@@ -642,12 +643,15 @@ void handleCommand(const char* line) {
     pitchLevelRequested.store(stanbot::parsePitchLevel(line + 13, raw) ? raw : -1);
   }
   else if (strcmp(line, "C,SLEEP") == 0) {
+    // The eyes close first (SleepCurtain); loop() darkens the screen once they
+    // have shut, so sleeping looks like falling asleep.
     streamEnabled.store(false);
+    sleepRequested.store(true);
     asleep.store(true);
-    brightnessRequest.store(0);
     sleepStateChanged.store(true);
   }
   else if (strcmp(line, "C,WAKE") == 0) {
+    sleepRequested.store(false);
     asleep.store(false);
     brightnessRequest.store(kAwakeBrightness);
     sleepStateChanged.store(true);
@@ -1149,7 +1153,8 @@ void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
   lightBar.update(attending, streamEnabled.load(), now);
-  const uint16_t color = lightBar.color(now);
+  // Asleep the bar is off, whatever the bar's own rules would show.
+  const uint16_t color = asleep.load() ? 0 : lightBar.color(now);
   if (lightBarApplied && color == appliedLightColor) return;
   i2c_master_dev_handle_t device = sessionDevice;
   i2c_master_bus_handle_t master = nullptr;
@@ -2444,6 +2449,7 @@ void updateBootScreen(uint32_t now) {
 }
 
 bool screenDarkened = false;
+bool sleepAnimating = false;
 
 void loop() {
   const uint32_t now = millis();
@@ -2476,17 +2482,24 @@ void loop() {
     MouthPacket packet;
     while (xQueueReceive(mouthQueue, &packet, 0) == pdTRUE) eyes.mouthReceive(packet.sequence, packet.open, packet.shape, now);
   }
-  if (asleep.load()) {
-    // Dark screen, no eyes, no light bar (the bar follows the stopped stream).
-    if (eyeFrameReady && !screenDarkened) {
-      eyeFrame.fillScreen(TFT_BLACK);
-      eyeFrame.pushSprite(0, 0);
-      screenDarkened = true;
+  // Sleeping: let the eyes finish closing, then darken the screen and stop.
+  if (sleepRequested.load()) {
+    if (!sleepAnimating) { eyes.beginSleep(now); sleepAnimating = true; }
+    if (eyes.closedForSleep(now)) {
+      if (eyeFrameReady && !screenDarkened) {
+        eyeFrame.fillScreen(TFT_BLACK);
+        eyeFrame.pushSprite(0, 0);
+        brightnessRequest.store(0);   // the camera task owns the backlight
+        screenDarkened = true;
+      }
+      delay(20);
+      return;
     }
-    delay(20);
-    return;
+  } else if (sleepAnimating) {
+    eyes.endSleep(now);
+    sleepAnimating = false;
+    screenDarkened = false;
   }
-  screenDarkened = false;
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {
       // Drawn after the face and before the push, so it costs no extra frame.
