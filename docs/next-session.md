@@ -13,7 +13,8 @@ flashed over Wi-Fi and verified (`V` reports `follow_limits_measured:true`,
 
 - **Yaw** +-96 raw (~30 deg) around 460. Operator: "left and right looking good".
 - **Pitch** level measured by eye at raw **614** (`calibration-pitch-level.jsonl`).
-  Limits 598..870. Up was verified 2026-09-17: steered all the way up, the head
+  Limits 582..870 (down widened to level -32 on 2026-09-17, first supervised
+  step, not yet seen at the bottom). Up was verified 2026-09-17: steered all the way up, the head
   met a hard stop at ~885 that the owner saw as vertical (`stall_detected`,
   power off verified), so pitch is ~3.0 raw/deg and the maximum is 870, 15 short
   of the stop. Unpowered the head droops to 594, accepted as a start and never
@@ -53,7 +54,8 @@ need the side (head) port.
    verified (stop at ~885, maximum now 870). Also watch for a repeat of the one
    `position_status_error` so far (yaw servo stopped answering at pitch 710,
    session ended safely); if it recurs at high pitch, suspect cable tension.
-2. **Widen pitch down** in small steps, watching for the head meeting the body.
+2. **Widen pitch down** in 16-raw steps, watching for the head meeting the body.
+   Now at 582; next 566 if the owner reports room below.
 3. **Widen yaw** one supervised session per step:
    `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept).
 4. **When calibration is done**, decide whether `measured` can be true in the
