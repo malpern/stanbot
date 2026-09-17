@@ -309,6 +309,10 @@ the live app.
 
 ## Not done yet
 
-- Settings is still one long form; splitting it into tabs is next.
-- Not yet seen live: glass over real video, the eyes at the control bar's
-  size on a Retina display, light appearance for the inspector.
+- The Talk control and everything after the mouth in `docs/voice.md`.
+- The panel's large face costs about 5% CPU at rest (its glow and LCD grid); it
+  is the app's biggest standing cost and has not been looked at.
+- Not yet judged by the owner on real video: the Metal light-through-the-lids
+  and bokeh (strength, redness), and the wake scan's reaction in the app's face.
+- Light appearance has never been checked; the window forces dark because the
+  stage is always black.

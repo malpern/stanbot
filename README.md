@@ -8,69 +8,76 @@ On startup, display a simple animated avatar, detect a person with the camera, s
 
 ## Status
 
-The project has an animated-eye firmware slice, an explicit factory-recovery
-workflow, a local camera stream, and supervised bounded head motion. Verified on
-the attached robot: USB flashing and factory restore, the animated display, live
-640×480 capture streamed as QVGA JPEG, and a full 180° yaw sweep plus a first 5°
-pitch move, both observed physically. The companion app locks onto a face and
-holds it, and supervised head following turns the head toward it (yaw) without
-overshooting. Built and host-tested but not yet run on the robot: up-and-down
-following (`STANBOT_FOLLOW_PITCH=1`), searching for a lost face, eased motion,
-eyes that look at the face, telling several people apart, continuous following
-under a renewable power lease, telemetry integrity checks, staged yaw widening,
-a guided pitch-level finder, and stopping a session before an OTA update. A
-replay tool turns each session log into a chart. See
-[head following](docs/head-following.md), and
-[next session](docs/next-session.md) for the checklist to run at the robot.
-The planned voice conversation (OpenAI `gpt-live-1`, a mouth on the robot) is
-in [voice](docs/voice.md).
+Working on the attached robot, as of 2026-09-17:
 
-Not yet verified: pitch following on the robot, pitch travel beyond 5°, yaw
-beyond centre ±48, image quality under varied lighting, and following started
-over Wi-Fi. Servo travel is bounded by explicit guards rather than by a measured
-calibration.
-Every servo position settles 2–6 raw steps short of its goal, which is the
+- **Head following.** The Mac app finds faces in the robot's camera picture and
+  the head follows the selected one, left-right and up-down, continuously:
+  sessions repeat on their own, each on a renewable motor-power lease with a
+  3-minute maximum. It searches when it loses you and returns to rest. Yaw is
+  limited to +-96 raw (about 30 degrees) and pitch to 594..870 (rest to just
+  short of vertical) while calibration is widened one supervised step at a time.
+- **A calm face.** Two grey eyes with 19 expressions, a body light bar that is
+  blue with a face and breathes orange without one, a mouth that moves while
+  the Mac plays speech, and a "trouble" face after the Sad Mac when something
+  is wrong.
+- **Sleep and wake.** The robot closes its eyes, darkens its screen and light
+  bar and stays on Wi-Fi; the app shows waking as a shot from behind its eyes.
+  On waking it looks around the room for someone (built; first run pending).
+- **Wi-Fi first.** Camera, control and firmware updates all go over Wi-Fi, with
+  USB as the fallback and the recovery path. Starting motion, rebooting and
+  powering off over Wi-Fi need a passphrase challenge.
+- **It says when it is broken.** The robot reports the health of its link to
+  its base, the app shows faults plainly, and nothing retries into silence.
+
+Not done: widening yaw beyond +-96, the wake scan's first supervised run, the
+spoken conversation (planned in [voice](docs/voice.md): the mouth is built, the
+conversation is not), and everything in [hardware coverage](docs/hardware-coverage.md)
+still marked unverified.
+
+Start with [next session](docs/next-session.md): what is on the robot, what has
+not been seen by eye, what comes next, and how to build, flash and test. Then
+[head following](docs/head-following.md), [app design](docs/app-design.md) and
+[transport](docs/transport.md). Face detection is never presented as eye
+contact or identity.
+
+Every servo position settles 2-6 raw steps short of its goal, which is the
 factory configuration rather than a fault; see
 [servo startup review](docs/servo-startup-review.md).
 
-## Mini companion control app
+## The Mac app
 
-`companion/StanbotCompanion` is a native macOS SwiftUI app. It is intentionally
-local and conservative: it opens the selected USB serial device, shows whether
-the control connection is available, sends display-only expression commands,
-and renders bounded local camera frames with macOS Vision face rectangles.
-The rectangle is labelled `person detected`, never eye contact or identity.
+`companion/StanbotCompanion` is a native macOS SwiftUI app, Stanbot.
 
-The camera feed starts by itself once the USB connection is up, and restarts on
-every automatic reconnect: the feed is the point of the app, so it does not wait
-for a button. Stop Camera stops it and it stays stopped until asked for again.
-Only one process can hold the serial port, so close the app before running
-`companion/probe_servos.py`.
-Head movement remains unavailable until calibration is complete.
+- **The window is the robot's view:** the camera picture at the top, mirrored
+  like a selfie camera, with the selected face outlined. Nothing floats over it.
+- **Title bar:** Stanbot's name, and a red dot only when something is wrong.
+- **Toolbar:** Sleep/Wake and the controls panel toggle.
+- **Controls panel** (right, hideable): Stanbot's face, large. Click it to
+  sleep or wake the robot. A gear opens Head (Follow/Stop, follow automatically,
+  a direction pad for pointing the head by hand), Camera, Expression and
+  Connection.
+- **Diagnostics** (Window menu): live status, recent follow sessions with their
+  results, and the activity log.
+- **Settings** (Stanbot menu): general, connection and video preferences.
 
-**Transport** is chosen in Stanbot → Settings (⌘,):
-
-- **Wi-Fi, falling back to USB** (default). Uses Wi-Fi when the robot is on the
-  network, the side-port USB cable when it is not, and moves back to Wi-Fi when
-  the robot reappears, retrying every 30 seconds.
-- **Wi-Fi only.** Never opens the serial port, so it stays free for scripts.
-- **USB only.** Never contacts the robot over the network.
-
-**Video** settings in the same window improve what is displayed, never what
-face detection sees: color, temporal noise reduction, smooth motion (one
-generated frame between each pair, about 0.1 s of added delay, can ghost on fast
-movement) and 2x super-resolution upscaling. The last three use the macOS 26
-VideoToolbox frame processors and cost about 10 ms per frame together. See
-[camera performance](docs/camera-performance.md#mac-side-enhancement--2026-09-16).
-
-The choice is stored under `StanbotTransport` (`automatic`, `wifi`, `usb`), so
+**Transport** (in the gear): Wi-Fi falling back to USB (the default), Wi-Fi only
+(never opens the serial port, leaving it free for scripts), or USB only (never
+touches the network). Stored under `StanbotTransport`, so
 `open Stanbot.app --args -StanbotTransport usb` overrides it for one launch.
+
+**Video** settings improve what is displayed, never what face detection sees:
+color, temporal noise reduction, smooth motion and 2x upscaling, the last three
+through the macOS 26 VideoToolbox frame processors. See
+[camera performance](docs/camera-performance.md#mac-side-enhancement--2026-09-16).
 
 ```sh
 cd companion/StanbotCompanion
-./build-app.sh
+swift test && ./build-app.sh
 open build/Stanbot.app
 ```
+
+Close the app before running the USB bench tools (`companion/probe_servos.py`,
+`companion/find_pitch_level.py`, `tools/check_sleep_wake.py`).
 
 See [project brief](docs/project-brief.md), [hardware coverage](docs/hardware-coverage.md),
 and [transport](docs/transport.md) for what the link can and cannot do.

@@ -18,6 +18,12 @@ not a design limit, and the likely path is the internal seven-wire base-to-head
 cable. [Issue 78](https://github.com/m5stack/StackChan/issues/78) reports the
 same symptom set on another unit, with charging through the base also failing.
 
+**Update, 2026-09-17:** at 11:47 that day the base port began enumerating
+(`/dev/cu.usbmodem31201`, the robot's MAC), with the cable still in the back,
+and a full flash backup and the USB bench tools then ran through it. Nothing
+explains the change (the head had been steered into its hard stop and lowered
+by hand that morning); treat it as luck, and the head port as the recovery path.
+
 Consequences while it stays broken:
 
 - All USB **data** goes through the head port, including every flash.

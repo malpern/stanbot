@@ -1,83 +1,99 @@
 # Next session
 
-Handoff written 2026-09-17, replacing the earlier checklist (its pitch-level,
-Wi-Fi and first-session steps are done). Everything below is committed and
-pushed; `main` was clean at `84661e7`.
+Handoff rewritten at the end of 2026-09-17, a long day that added voice phase 1,
+sleep and wake, a redesigned app, and found and fixed a fault that had silently
+killed head following for hours (read "The day following died silently" in
+`docs/head-following.md` first: its lessons shape how to work here). Everything
+below is committed and pushed.
 
 ## State right now
 
-**On the robot:** firmware `ba9e961`, a calibration build made with
+**On the robot:** firmware `f907097`, a calibration build made with
 `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 STANBOT_FOLLOW_YAW_RANGE=96`,
-flashed over Wi-Fi and verified (`V` reports `follow_limits_measured:true`,
-`follow_pitch:true`, `follow_yaw_range:96`). Later commits changed only the app.
+flashed over Wi-Fi and verified. `tools/check_sleep_wake.py` passes on it, and a
+full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
 
 - **Yaw** +-96 raw (~30 deg) around 460. Operator: "left and right looking good".
 - **Pitch** level measured by eye at raw **614** (`calibration-pitch-level.jsonl`).
-  Limits 594..870. Down: 582 was tried 2026-09-17; the head stopped at 592,
-  10 short and pressing, looking nearly straight down to the owner, so the
-  minimum is the unpowered rest, 594. That look does not fit ~3 raw/deg from
-  level 614: re-check level before changing pitch again. Up was verified 2026-09-17: steered all the way up, the head
-  met a hard stop at ~885 that the owner saw as vertical (`stall_detected`,
-  power off verified), so pitch is ~3.0 raw/deg and the maximum is 870, 15 short
-  of the stop. Unpowered the head droops to 594, accepted as a start and never
-  pushed lower. A head left resting above 870 is refused until lowered by hand.
+  Limits 594..870. Up verified: steered all the way up, the head met a hard stop
+  at ~885 that the owner saw as vertical (`stall_detected`, power off verified),
+  so pitch is ~3.0 raw/deg and the maximum is 870. Down: 582 was tried; the head
+  stopped at 592, pressing, and looked nearly straight down to the owner, so the
+  minimum is the unpowered rest, 594. That look does not fit ~3 raw/deg from a
+  level of 614: **re-check level before changing pitch again.** A head left
+  resting above 870 is refused until lowered by hand.
 - **Following** is continuous: sessions repeat without reboots (3 s cooldown),
   each on a renewable power lease with a 3-minute hard maximum, and end after
-  12 s with no face. Corrections use the head position when the frame was
-  taken (frame sequence numbers), 60% gain, which stopped the hunting.
-- **Manual steering:** `H,<seq>,<x>,<y>` from the app's joystick or arrow
-  keys; steering wins over faces, holds after 300 ms without input, hands back
-  to following 1.5 s after release.
-- **Light bar:** soft blue while a face is attended to; a gentle orange breath
-  (5 s) while the camera streams with no face; dark otherwise. The eyes stay
-  grey. Confirmed by the owner 2026-09-17.
-- **Eyes:** calm tuning (slow glides, 5-10 s holds, rare looks).
-- **Wi-Fi security:** only stream/display commands and `C,UNFOLLOW` are
-  accepted over Wi-Fi; `C,FOLLOW` and `C,REBOOT` need an HMAC challenge keyed
-  by the OTA passphrase; OTA requires the passphrase. The app reads it from
-  `~/dotfiles/secrets.env` with sops (not the Keychain: its permission dialog
-  was unwanted).
+  12 s with no face. Corrections use the head position when the frame was taken,
+  60% gain, which stopped the hunting.
+- **Manual steering:** `H,<seq>,<x>,<y>` from the app's direction pad or arrow
+  keys; steering wins over faces and hands back to following 1.5 s after release.
+- **Sleep and wake** (`C,SLEEP`, `C,WAKE`, no passphrase needed): the eyes close
+  over 0.7 s, then the screen and backlight go dark, the light bar goes off and
+  the stream stops; Wi-Fi stays up. Waking opens the eyes and ramps the light
+  bar up over 0.6 s. `C,OFF` powers the robot down (passphrase over Wi-Fi); only
+  its button brings it back. The backlight and power-off go through the camera
+  task's own I2C driver (`backlight.h`), never M5Unified.
+- **Wake scan:** a session starting within 20 s of a wake first looks around
+  (left, right, up, down, home, ~10 s); a face ends it and the face reacts
+  surprised, glee, focused. **Built and flashed; never yet seen working**, because
+  until 14:30 no session could power the head.
+- **Mouth:** opens and shapes with speech the Mac plays, from UDP port 3334,
+  shown only while speaking. **Never yet seen on the robot.**
+- **Trouble face** (X eyes, a frown) for 12 s after a session that ends in a
+  fault. Never yet seen on the robot.
+- **Light bar:** blue with a face, a gentle orange breath while the camera
+  streams with none, dark otherwise and while asleep. Confirmed by the owner in
+  the morning; **not yet confirmed after a sleep and wake** (it was dark all
+  afternoon because of the I2C fault, now fixed).
+- **Health:** `SBHL` reports whether the head can reach its base, on connect and
+  on change; motor power found on outside a session is turned off and reported.
+- **Wi-Fi security:** only stream/display commands, `C,UNFOLLOW`, `C,SLEEP` and
+  `C,WAKE` are accepted over Wi-Fi unauthenticated; `C,FOLLOW`, `C,REBOOT` and
+  `C,OFF` need an HMAC challenge keyed by the OTA passphrase, which the app reads
+  from `~/dotfiles/secrets.env` with sops.
 
-**The Stanbot app** (`companion/StanbotCompanion/build/Stanbot.app`, rebuilt
-from `84661e7`): video fills the window, mirrored by default; toolbar top right
-has a red dot (only when the robot is unreachable for 3 s, details on hover),
-the direction-pad joystick, and Follow/Stop. Settings: transport (Wi-Fi with USB
-fallback by default), Follow automatically (on at every launch; Stop pauses it
-until the next launch), firmware-change sound (Purr), video enhancement,
-mirror. Toolbar, direction pad and mirroring confirmed by the owner 2026-09-17.
+**The Stanbot app** (`companion/StanbotCompanion/build/Stanbot.app`): see
+`docs/app-design.md`. In short: the picture at the top of the window, mirrored;
+the title bar has Stanbot's name and a red dot only when something is wrong
+(and its eyes, while the panel is hidden); the toolbar has Sleep/Wake and the
+panel toggle; the right panel is Stanbot's face (click it to sleep or wake) and
+a gear with Head, Camera, Expression and Connection; Diagnostics is its own
+window (Option-Command-D); Settings has tabs. Waking plays as a shot from behind
+Stanbot's eyes (a Metal pass adds light through the lids and bokeh), at launch
+too; asleep, z's drift up where the picture was.
 
-**Cable:** the owner moved it to the back (power-only) port. Everything works
-over Wi-Fi except `companion/find_pitch_level.py` and other USB probes, which
-need the side (head) port.
+**USB:** the cable is in the back port, and **since 11:47 on 2026-09-17 that
+port enumerates** (`/dev/cu.usbmodem31201`), which it never did before
+(`docs/transport.md`). So USB tools work without moving the cable. Nothing
+explains the change; do not rely on it.
+
+**Secrets:** `OPENAI_API_KEY_STANBOT` is in sops (a dedicated project key;
+`gpt-live-1` and `gpt-realtime-2.1` both answer). A full 16 MB flash backup of
+the robot is at `~/local-code/lottie-spike/FLASH-BACKUP-16MB.bin` (sha256
+`ceb2f336...4c5848`, verified against the chip), taken with `ba9e961`-era
+firmware plus the sleep work.
 
 ## Next, in order
 
-1. **Done 2026-09-17:** light bar, toolbar, mirroring confirmed; vertical
-   verified (stop at ~885, maximum now 870). Also watch for a repeat of the one
-   `position_status_error` so far (yaw servo stopped answering at pitch 710,
-   session ended safely); if it recurs at high pitch, suspect cable tension.
-2. **Widen pitch down** in 16-raw steps, watching for the head meeting the body.
-   Stopped at 594 (the rest). First re-check level: steer until the face looks
-   straight ahead and read pitch from the follow log.
+1. **See what has never been seen**, with the owner at the robot: the wake scan
+   (sleep, then wake while out of view), the light bar after a wake, the mouth
+   (Robot menu, Play Mouth Test; then set `robotLead` by eye), the sleep
+   animation on the robot's screen, and the trouble face.
+2. **Re-check pitch level** (steer until the face looks straight ahead, read
+   pitch from the follow log), then decide the down limit.
 3. **Widen yaw** one supervised session per step:
-   `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept).
-4. **When calibration is done**, decide whether `measured` can be true in the
+   `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept). The
+   owner asked for 144 on 2026-09-17 and then dismissed the supervised prompt:
+   ask again when they are at the robot.
+4. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
+   Mac, then a command-line `gpt-live-1` client. The Talk button is phase 4.
+5. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-5. **Wake scan: built, never run on the robot.** See "The wake scan" in
-   `docs/head-following.md`. Flash it and watch the first wake with the owner
-   at the robot: the head sweeps the whole allowed range.
-6. **Voice conversation: planned** in `docs/voice.md` (OpenAI `gpt-live-1`,
-   Studio Display audio, a male expressive voice, transcripts kept, a mouth on
-   the robot over its own UDP path). Phase 1 (the mouth, driven by a recorded
-   voice: Robot menu, Play Mouth Test) is built; confirm it on the robot and set
-   `robotLead` by eye. A dedicated key `OPENAI_API_KEY_STANBOT` is still to be
-   created (owner: project key with a budget, then Add Secret).
-7. **Gaze: paused.** Nothing has been measured. If gaze matters for a feature,
-   first build a 2-minute prompted test (look at robot / screen / away) that logs
-   the robot-only engaged flag against the prompt. See `docs/gaze.md`. The Studio
-   Display (desk) camera code was removed 2026-09-17 to keep the app to the
-   robot's camera; `92ab70b` is the last commit with it (`DeskCamera.swift`,
-   `tools/desk_camera/`, `docs/desk-camera.md`) if it is ever wanted back.
+6. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
+   was removed 2026-09-17; `92ab70b` is the last commit with it.
+7. **Worth doing:** the 5% CPU the panel's large face costs at rest
+   (`docs/app-design.md`, "What it costs") is the app's biggest standing cost.
 
 ## How to work here
 
@@ -121,6 +137,17 @@ need the side (head) port.
 ## The owner's preferences, learned this week
 
 Calm over lively: the robot sits in front of them all day, so no fast eye
-motion, no bright or flashing light. Native Mac design, nothing floating over
-the video. Plain safety signals. Wants things done and verified, reported
-briefly.
+motion, no bright or flashing light, no bouncing (one blink on waking, not two).
+Native Mac design, nothing floating over the video, and a spare one: the panel
+is Stanbot's face and a gear, not a control board. Cinematic where it counts:
+the waking shot is theirs, and they wanted it to feel like a first-person point
+of view, not an effect. Plain safety signals. Wants things done and verified,
+reported briefly, and wants failures loud: after the silent outage they asked
+for both prevention and detection, not just the fix.
+
+**Verify on the running thing.** Twice on 2026-09-17 still renders looked right
+while the app did something else (an animation that never played; eyes drawn in
+the wrong place). Photograph the running preview (`STANBOT_PREVIEW`,
+`STANBOT_SNAPSHOT_DELAY`), and read the session logs after any firmware change
+that could touch following: they showed the outage for hours before anyone
+looked.

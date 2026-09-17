@@ -220,7 +220,7 @@ Recorded from the commit messages of that afternoon; the logs are in
 Session 2's open problems 1 (sparse targets) and 2 (slow motion) are
 addressed; 3 (the +-48 limit) and 4 (a lost telemetry byte) remain.
 
-## Pitch following (built, not yet run on the robot)
+## Pitch following (running on the robot since 2026-09-17)
 
 Up and down now follows the same way as left and right, in a build made with
 `STANBOT_FOLLOW_PITCH=1 firmware/build.sh` (add `STANBOT_FOLLOW_CALIBRATION=1`
@@ -258,7 +258,7 @@ First supervised pitch session: flash a calibration + pitch build, stand so
 your face is above the camera's centre, and confirm the head tilts up and
 returns to where it started when you step away.
 
-## Searching for a lost face (built, not yet run on the robot)
+## Searching for a lost face (running on the robot; seen in session traces as mode 3)
 
 When no target arrives for 900 ms the head no longer goes straight home. The
 tracker enters `Searching` (telemetry `mode` 3):
@@ -281,7 +281,7 @@ once a face is confirmed. Host tests: `searchHoldsThenGlancesTowardTheLostSide`,
 `searchGlancesUpForAFaceLostOffTheTop`, `searchNeverMovesDisabledPitch`,
 `searchIsClampedAndFinite`.
 
-## Continuous following (built, not yet run on the robot)
+## Continuous following (running on the robot since 2026-09-17)
 
 Sessions used to end every 20 s, followed by a 3 s cooldown the app waited
 out. Now the motor-power cutoff is a **lease** (`power_lease.h`):
@@ -312,7 +312,7 @@ with the lease never lapsing first. What it cannot show is the servo and
 supply behaviour over three minutes of torque; watch temperature and voltage
 in the first long session.
 
-## Telemetry integrity (built, not yet run on the robot)
+## Telemetry integrity (running: every session log carries its check)
 
 Session 2 lost one byte on USB, and the damaged result (`yaw_fnal`) still
 looked like valid JSON. `SBTE` now carries `lines` and `crc32`: the number of
@@ -348,7 +348,7 @@ left. That mirror is reasoned from the measured image orientation and needs a
 look on the robot. With no gaze for 900 ms the eyes drift back to idle.
 Tested by `companion/test_eye_gaze.cpp` and `test_network_policy.cpp`.
 
-## Easing (built, not yet run on the robot)
+## Easing (in use on the robot; never judged on its own)
 
 Moves used to be a fixed 6 raw per tick from the first tick to the last. Each
 tick now moves 40% of the remaining distance, at least 2 raw, never more than
@@ -482,7 +482,7 @@ bar stayed dark, for about two and a half hours, and nothing reported it.
   connector for the first time that day looked like the cause (a shifted internal
   cable). It was a coincidence. The probe, not the theory, settled it.
 
-## The wake scan, 2026-09-17 (built, not yet run on the robot)
+## The wake scan, 2026-09-17 (built and flashed; not yet seen working)
 
 When the owner wakes the robot, it looks around for someone before it settles.
 
