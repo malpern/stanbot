@@ -197,6 +197,18 @@ final class NetworkTransportTests: XCTestCase {
         fake.sendLine("SBSL {\"asleep\":false}")
         wait(upTo: 2, tick: robot) { !robot.asleep }
         XCTAssertFalse(robot.asleep)
+
+        // Sleep clicked again straight away: the robot's report of the earlier
+        // wake, arriving late, must not flip the app back (it made the eyes open,
+        // close and open again). A report that agrees, or a later one, is taken.
+        robot.sleep()
+        XCTAssertTrue(robot.asleep)
+        fake.sendLine("SBSL {\"asleep\":false}")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertTrue(robot.asleep, "a contradicting report just after a command is the old state, late")
+        fake.sendLine("SBSL {\"asleep\":true}")
+        wait(upTo: 2, tick: robot) { robot.asleep }
+        XCTAssertTrue(robot.asleep)
     }
 
     @MainActor

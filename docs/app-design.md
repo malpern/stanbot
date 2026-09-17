@@ -31,6 +31,12 @@ the robot's view, with a little of the robot's character in it.
   frame is held while the eyes close, because the robot stops sending as soon as
   it is asked to sleep, and the app stops analysing once they are shut. Reduce
   Motion fades instead.
+  A sequence interrupted by another (Sleep clicked mid-wake, or the reverse)
+  carries on from where the eyes are, blended over 0.3 s, rather than snapping
+  to the new sequence's start; and the robot's report of its sleep state is
+  ignored when it contradicts a command sent in the last two seconds, since
+  that is the earlier state arriving late (together these made a click mid-wake
+  open, close and open the eyes again).
   Two things this depends on, both learned by breaking them (2026-09-17): the
   veil is applied to the **picture**, not the pane around it (on the pane the
   eyes centre on the window and sit below the letterboxed video), and it keeps

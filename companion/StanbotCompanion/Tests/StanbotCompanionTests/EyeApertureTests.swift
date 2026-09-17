@@ -110,6 +110,25 @@ final class EyeApertureTests: XCTestCase {
         XCTAssertLessThan(narrow.height, pose.height * 0.25)
     }
 
+    /// Sleep clicked mid-wake (or the reverse) carries on from where the eyes
+    /// are rather than snapping to the new sequence's start.
+    func testAnInterruptedSequenceIsBlendedFromWhereTheEyesWere() {
+        let midWake = EyeMotionSequence.wake(at: 1.4)
+        XCTAssertGreaterThan(midWake.left, 0.2, "part way open")
+        XCTAssertLessThan(midWake.left, 0.95)
+        // At the moment of interruption, the eyes are exactly where they were...
+        XCTAssertEqual(midWake.blended(toward: EyeMotionSequence.sleep(at: 0), by: 0), midWake)
+        // ...and by the end of the handover they are on the new sequence.
+        let later = EyeMotionSequence.sleep(at: EyeMotionSequence.handoverDuration)
+        let arrived = midWake.blended(toward: later, by: 1)
+        XCTAssertEqual(arrived.left, later.left, accuracy: 1e-9)
+        XCTAssertEqual(arrived.right, later.right, accuracy: 1e-9)
+        XCTAssertEqual(arrived.focus, later.focus, accuracy: 1e-9)
+        // Nothing snaps: halfway through the handover is halfway between.
+        let half = midWake.blended(toward: later, by: 0.5)
+        XCTAssertEqual(half.left, (midWake.left + later.left) / 2, accuracy: 1e-9)
+    }
+
     func testFallingAsleepClosesWithOneFlutter() {
         XCTAssertEqual(EyeMotionSequence.sleep(at: 0).left, 1, accuracy: 0.001)
         XCTAssertEqual(EyeMotionSequence.sleep(at: EyeMotionSequence.sleepDuration), .closed)

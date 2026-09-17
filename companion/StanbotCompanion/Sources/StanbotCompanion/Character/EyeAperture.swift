@@ -30,7 +30,19 @@ enum EyeMotionSequence {
 
         static let open = State(left: 1, right: 1, growth: 1, focus: 1)
         static let closed = State(left: 0, right: 0, growth: 0, focus: 0)
+
+        /// Between two states, for carrying an interrupted sequence into the next.
+        func blended(toward other: State, by t: Double) -> State {
+            let t = t.clamped()
+            return State(left: left + (other.left - left) * t, right: right + (other.right - right) * t,
+                         growth: growth + (other.growth - growth) * t, focus: focus + (other.focus - focus) * t)
+        }
     }
+
+    /// A sequence interrupted by another (sleep clicked while waking, or the
+    /// reverse) must not snap: the new one is blended in from where the eyes
+    /// were over this long.
+    static let handoverDuration = 0.3
 
     /// Waking: lids in stages with one half-blink, the right eye a beat behind,
     /// the aperture holding its eye shape until the last quarter.

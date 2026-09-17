@@ -354,6 +354,7 @@ final class RobotConnection: ObservableObject {
     /// The robot's screen is dark and its stream stopped, but it is still on the
     /// network and Wake brings it back (SBSL).
     @Published private(set) var asleep = false
+    private var sleepCommandedAt = Date.distantPast
     private var followLogUntil = Date.distantPast
     private var telemetryCheck = TelemetryCheck()
     /// Longer than the robot's 3 minute maximum session plus its telemetry, so a missing
@@ -720,6 +721,11 @@ final class RobotConnection: ObservableObject {
         if line.hasPrefix("SBSL "),
            let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
            let sleeping = object["asleep"] as? Bool {
+            // A report that disagrees with a command sent in the last two seconds
+            // is the previous state arriving late (sleep clicked mid-wake made the
+            // eyes open, close and open again, 2026-09-17). The robot's next
+            // report settles it.
+            if sleeping != asleep, Date().timeIntervalSince(sleepCommandedAt) < 2 { return }
             asleep = sleeping
             return
         }
@@ -949,6 +955,7 @@ final class RobotConnection: ObservableObject {
         guard connectedOverUSB || connectedOverWiFi, !asleep else { return }
         if case .following = follow { stopFollowing() }
         guard send("C,SLEEP\n") else { return }
+        sleepCommandedAt = Date()
         asleep = true   // confirmed by the robot's SBSL
         lastAction = "Asked the robot to sleep."
         // The robot stops sending straight away; stop analysing once the
@@ -965,6 +972,7 @@ final class RobotConnection: ObservableObject {
     func wake() {
         guard connectedOverUSB || connectedOverWiFi, asleep else { return }
         guard send("C,WAKE\n") else { return }
+        sleepCommandedAt = Date()
         asleep = false
         lastAction = "Woke the robot."
         if wantsCamera { startCamera() }

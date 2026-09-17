@@ -163,7 +163,7 @@ private struct LiveView: View {
     /// A sequence in flight: falling asleep or waking, and when it began. While
     /// one runs the picture is redrawn every frame from EyeMotionSequence; when
     /// it ends the aperture rests open or closed.
-    @State private var motion: (asleep: Bool, start: Date, duration: Double)?
+    @State private var motion: (asleep: Bool, start: Date, duration: Double, from: EyeMotionSequence.State?)?
 
     private var picture: NSImage? { robot.cameraImage ?? frozen }
     private var showingVideo: Bool {
@@ -175,8 +175,11 @@ private struct LiveView: View {
     private func aperture(at date: Date) -> EyeMotionSequence.State {
         guard let motion else { return robot.asleep ? .closed : .open }
         let elapsed = date.timeIntervalSince(motion.start)
-        return motion.asleep ? EyeMotionSequence.sleep(at: elapsed)
-                             : EyeMotionSequence.wake(at: elapsed, duration: motion.duration)
+        let state = motion.asleep ? EyeMotionSequence.sleep(at: elapsed)
+                                  : EyeMotionSequence.wake(at: elapsed, duration: motion.duration)
+        // Interrupted mid-sequence: carry on from where the eyes were.
+        guard let from = motion.from else { return state }
+        return from.blended(toward: state, by: elapsed / EyeMotionSequence.handoverDuration)
     }
 
     var body: some View {
@@ -210,7 +213,7 @@ private struct LiveView: View {
         // after sleep, whose own wake is already running (and holds a frame).
         .onChange(of: picture != nil, initial: true) { _, has in
             guard has, !robot.asleep, frozen == nil, motion == nil else { return }
-            motion = (false, Date(), EyeMotionSequence.wakeDuration)
+            motion = (false, Date(), EyeMotionSequence.wakeDuration, nil)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(EyeMotionSequence.wakeDuration))
                 if motion?.asleep == false { motion = nil }
@@ -218,7 +221,8 @@ private struct LiveView: View {
         }
         .onChange(of: robot.asleep) { _, sleeping in
             let duration = sleeping ? EyeMotionSequence.sleepDuration : EyeMotionSequence.wakeFromSleepDuration
-            motion = (sleeping, Date(), duration)
+            let interrupted = motion != nil ? aperture(at: Date()) : nil
+            motion = (sleeping, Date(), duration, interrupted)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(duration))
                 if motion?.asleep == sleeping { motion = nil }
