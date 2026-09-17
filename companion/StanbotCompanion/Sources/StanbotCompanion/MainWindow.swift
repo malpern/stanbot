@@ -237,7 +237,7 @@ private struct LiveView: View {
                 .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
                 // On the picture itself, not the pane around it: the eyes must
                 // land where the robot draws them within the frame.
-                .eyeAperture(state, pose: EyePose.of(mood.emotion), reduceMotion: reduceMotion)
+                .eyeAperture(state, pose: EyePose.of(.normal), reduceMotion: reduceMotion)
                 // Top of the window, not centred: the picture stays put as the
                 // window grows.
                 .position(x: proxy.size.width / 2, y: fitted.height / 2)

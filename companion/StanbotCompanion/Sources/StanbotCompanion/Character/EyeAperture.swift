@@ -4,9 +4,10 @@ import SwiftUI
 ///
 /// Waking is the one that matters: eyes prising open in the morning. They come
 /// up in stages, not one smooth glide; the two lids do not move in step; there
-/// are a couple of half-blinks on the way; everything is soft until they are
-/// properly open, and only at the very end does the aperture grow past the
-/// frame so the picture is simply *there*. Falling asleep is the same machinery,
+/// is one half-blink on the way (two, and a settle at the end, read as bouncing
+/// — owner, 2026-09-17); everything is soft until they are properly open, and
+/// only at the very end does the aperture grow past the frame so the picture is
+/// simply *there*. Falling asleep is the same machinery,
 /// quicker and with one last flutter.
 ///
 /// Every value is a pure function of time since the sequence began, so the whole
@@ -20,18 +21,16 @@ enum EyeMotionSequence {
         /// How open each eye is, 0...1. They differ: one lid is always lazier.
         var left: Double
         var right: Double
-        /// How far the eye windows have grown past the frame, 1 = eye-sized.
+        /// 0 eye-sized ... 1 covering the frame, whatever the eye pose.
         var growth: Double
         /// 0 soft and washed out, 1 sharp: focus arrives with the lids.
         var focus: Double
 
-        static let open = State(left: 1, right: 1, growth: Self.fullGrowth, focus: 1)
-        static let closed = State(left: 0, right: 0, growth: 1, focus: 0)
-        /// Enough for one eye window to cover a 4:3 frame on its own.
-        static let fullGrowth = 4.6
+        static let open = State(left: 1, right: 1, growth: 1, focus: 1)
+        static let closed = State(left: 0, right: 0, growth: 0, focus: 0)
     }
 
-    /// Waking: lids in stages with two half-blinks, the right eye a beat behind,
+    /// Waking: lids in stages with one half-blink, the right eye a beat behind,
     /// the aperture holding its eye shape until the last quarter.
     static func wake(at time: Double) -> State {
         let t = (time / wakeDuration).clamped()
@@ -40,7 +39,7 @@ enum EyeMotionSequence {
         let left = lidCurve(t)
         let right = lidCurve((t - 0.085 / 1.0).clamped()) * 0.94
         // The aperture stays eye-shaped while the lids work, then opens out.
-        let growth = 1 + (State.fullGrowth - 1) * easeIn(progress(t, from: 0.74, to: 1), power: 2.2)
+        let growth = easeIn(progress(t, from: 0.74, to: 1), power: 2.2)
         // Focus follows the lids, and arrives a little after them.
         let focus = easeInOut(progress(min(left, right + 0.1), from: 0.25, to: 0.95))
         return State(left: left, right: right, growth: growth, focus: focus)
@@ -56,24 +55,19 @@ enum EyeMotionSequence {
         let left = (fall + flutter).clamped()
         let right = (fall + flutter * 0.6 - 0.05).clamped()
         // The aperture closes in from the frame almost at once.
-        let growth = 1 + (State.fullGrowth - 1) * pow(1 - (t / 0.3).clamped(), 2)
+        let growth = pow(1 - (t / 0.3).clamped(), 2)
         let focus = easeInOut(progress(max(left, right), from: 0.2, to: 0.9))
         return State(left: left, right: right, growth: growth, focus: focus)
     }
 
-    /// The lid's own rise: up, a half-blink back, further up, a smaller dip,
-    /// then all the way with a touch of overshoot. Values are how open the eye
-    /// is at each stage; the animation reads as effort, not a slider.
+    /// The lid's own rise: a first crack of light, back down, then a long
+    /// unbroken rise to open. One dip is effort; more read as bouncing.
     static func lidCurve(_ t: Double) -> Double {
         let stops: [(at: Double, value: Double)] = [
             (0.00, 0.00),
-            (0.12, 0.30),   // a first crack of light
-            (0.22, 0.10),   // and shut again
-            (0.40, 0.62),
-            (0.50, 0.34),   // a second, smaller blink
-            (0.72, 0.92),
-            (0.82, 0.86),   // settling
-            (1.00, 1.00),
+            (0.14, 0.30),   // a first crack of light
+            (0.27, 0.10),   // and shut again
+            (1.00, 1.00),   // then all the way, slowly
         ]
         for index in 1..<stops.count where t <= stops[index].at {
             let previous = stops[index - 1], next = stops[index]
@@ -122,15 +116,21 @@ struct EyeApertureShape: Shape {
         var path = Path()
         let scale = min(rect.width / 320, rect.height / 240)
         let sx = rect.width / 320, sy = rect.height / 240
+        // Fully grown, one window covers the whole frame on its own, whatever
+        // the eye pose: a squinting expression must not crop the picture.
+        let coverWidth = rect.width * 2.4, coverHeight = rect.height * 2.4
+        let g = state.growth.clamped()
         for (centre, openness) in [(102.0, state.left), (218.0, state.right)] {
             let open = openness.clamped()
             guard open > 0.001 else { continue }
             // Lids gather speed at the ends of their travel.
-            let height = pose.height * scale * pow(open, 1.35) * state.growth
-            let width = pose.width * scale * state.growth
+            let eyeHeight = pose.height * scale * pow(open, 1.35)
+            let eyeWidth = pose.width * scale
+            let height = eyeHeight + (coverHeight - eyeHeight) * g
+            let width = eyeWidth + (coverWidth - eyeWidth) * g
             // While the eye is narrow its centre sits low: the upper lid travels.
-            let drop = (1 - open) * pose.height * scale * 0.3
-            let radius = min(min(30, pose.height / 2) * scale * state.growth, height / 2)
+            let drop = (1 - open) * pose.height * scale * 0.3 * (1 - g)
+            let radius = min(min(30, pose.height / 2) * scale * (1 + 3 * g), height / 2)
             path.addRoundedRect(in: CGRect(x: centre * sx - width / 2,
                                            y: 120 * sy + drop - height / 2,
                                            width: width, height: height),

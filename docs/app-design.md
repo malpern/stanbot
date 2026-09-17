@@ -8,12 +8,17 @@ the robot's view, with a little of the robot's character in it.
 - **Waking is a shot from behind Stanbot's eyes.** The owner's brief: a
   first-person view of someone slowly opening their eyes in the morning. So it is
   a *sequence*, not an eased mask (`EyeAperture.swift`, `EyeMotionSequence`):
-  2.4 s long; the lids come up in stages with two half-blinks on the way; the
+  2.4 s long; the lids come up with one half-blink on the way and then an
+  unbroken rise (two blinks and a settle at the end read as bouncing); the
   right lid lags the left, so they are never in step; the picture is soft,
   washed out and drained of colour until the lids are well open, and focus
   arrives a beat after them; the aperture stays the shape of the robot's two
   eyes, where it draws them, for the first three quarters, then grows past the
-  frame so the picture is simply there. Falling asleep is the same machinery in
+  frame so the picture is simply there — sized to the frame, not to the eye
+  pose, because a smiling expression's 26 px eyes once left the open aperture
+  covering half the picture whenever a face was detected. The aperture is
+  always the resting eye shape, whatever the expression. Falling asleep is the
+  same machinery in
   1.1 s with one flutter on the way down. Every value is a pure function of
   time, so `EyeApertureTests` checks the blinks, the lag, the focus and the
   shape frame by frame, and can write a filmstrip (`STANBOT_WAKE_STRIP=1`). It

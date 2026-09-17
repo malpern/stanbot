@@ -27,18 +27,22 @@ final class EyeApertureTests: XCTestCase {
         XCTAssertEqual(EyeMotionSequence.wake(at: 99), .open, "and stays open")
     }
 
-    /// The lids must come up in stages: a crack of light, shut again, more, a
-    /// smaller dip, then open. Without the dips it reads as a slider, not a face.
-    func testWakingBlinksOnTheWayUp() {
+    /// The lids must come up in stages: a crack of light, shut again, then open.
+    /// Without the dip it reads as a slider; with more than one it bounces.
+    func testWakingBlinksOnceOnTheWayUp() {
         let samples = wakeSamples()
+        // A blink is a peak the lid falls back from: count interior maxima.
         var dips = 0
         for index in 1..<(samples.count - 1) {
             let previous = samples[index - 1].state.left
             let current = samples[index].state.left
             let next = samples[index + 1].state.left
-            if current < previous - 0.001, next <= current + 0.001 { dips += 1 }
+            if current > previous + 0.001, next < current - 0.001 { dips += 1 }
         }
-        XCTAssertGreaterThanOrEqual(dips, 2, "at least two half-blinks while the eyes fight open")
+        XCTAssertEqual(dips, 1, "exactly one half-blink: more read as bouncing")
+        // And no wobble once open: from the blink on, the lid only rises.
+        let afterBlink = samples.filter { $0.t > 0.8 }.map(\.state.left)
+        XCTAssertEqual(afterBlink, afterBlink.sorted(), "an unbroken rise after the blink")
         // And they really are half-blinks: the eye closes a good way, not a wobble.
         let opennessAfterFirstRise = samples.first { $0.state.left > 0.28 }?.state.left ?? 0
         let lowest = samples.first { $0.t > 0.4 && $0.t < 0.7 }.map { _ in
@@ -73,12 +77,16 @@ final class EyeApertureTests: XCTestCase {
             guard !path.isEmpty else { continue }
             XCTAssertFalse(path.contains(CGPoint(x: 6, y: 6)), "a corner shows through at \(t)")
             XCTAssertFalse(path.contains(CGPoint(x: 160, y: 30)), "above the eyes shows through at \(t)")
-            XCTAssertEqual(state.growth, 1, accuracy: 0.001, "still eye-sized at \(t)")
+            XCTAssertEqual(state.growth, 0, accuracy: 0.001, "still eye-sized at \(t)")
         }
-        // By the end one window covers the frame, so the picture is simply there.
-        let open = EyeApertureShape(state: .open, pose: pose).path(in: frame)
-        for corner in [CGPoint(x: 2, y: 2), CGPoint(x: 318, y: 2), CGPoint(x: 2, y: 238), CGPoint(x: 318, y: 238)] {
-            XCTAssertTrue(open.contains(corner), "the whole picture at \(corner)")
+        // By the end one window covers the frame, so the picture is simply there,
+        // whatever expression the eyes have (a smile's eyes are 26 px tall: with
+        // the window sized from them, a detected face cropped the picture).
+        for emotion in Emotion.allCases {
+            let open = EyeApertureShape(state: .open, pose: EyePose.of(emotion)).path(in: frame)
+            for corner in [CGPoint(x: 2, y: 2), CGPoint(x: 318, y: 2), CGPoint(x: 2, y: 238), CGPoint(x: 318, y: 238)] {
+                XCTAssertTrue(open.contains(corner), "the whole picture at \(corner) with \(emotion)")
+            }
         }
     }
 
@@ -89,7 +97,7 @@ final class EyeApertureTests: XCTestCase {
         XCTAssertFalse(path.isEmpty)
         XCTAssertFalse(path.contains(CGPoint(x: 160, y: 120)), "nothing between the eyes")
         // A narrow eye's slit sits below the eye's centre: the upper lid travels.
-        let narrow = EyeApertureShape(state: .init(left: 0.15, right: 0, growth: 1, focus: 0), pose: pose)
+        let narrow = EyeApertureShape(state: .init(left: 0.15, right: 0, growth: 0, focus: 0), pose: pose)
             .path(in: frame).boundingRect
         XCTAssertGreaterThan(narrow.midY, 120)
         XCTAssertLessThan(narrow.height, pose.height * 0.25)
@@ -102,7 +110,7 @@ final class EyeApertureTests: XCTestCase {
             .map { EyeMotionSequence.sleep(at: $0).left }
         let rises = zip(samples, samples.dropFirst()).filter { $1 > $0 + 0.001 }.count
         XCTAssertGreaterThan(rises, 0, "the lids catch themselves once on the way down")
-        XCTAssertLessThan(EyeMotionSequence.sleep(at: EyeMotionSequence.sleepDuration * 0.5).growth, 1.2,
+        XCTAssertLessThan(EyeMotionSequence.sleep(at: EyeMotionSequence.sleepDuration * 0.5).growth, 0.05,
                           "the aperture is eye-sized almost at once")
     }
 
