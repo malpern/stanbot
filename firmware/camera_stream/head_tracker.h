@@ -70,7 +70,7 @@ struct FollowLimits {
 // to centre +-48 per checklist step 1 and comes from a committed tree, so V
 // reports its commit and follow_limits_measured:true, and the app flags it.
 // The pitch limits, shared by both builds; measured below.
-constexpr int kFollowPitchMin = 614 - 32;
+constexpr int kFollowPitchMin = 594;
 constexpr int kFollowPitchMax = 870;
 #if defined(STANBOT_FOLLOW_CALIBRATION) && STANBOT_FOLLOW_CALIBRATION
 // Checklist step 4 widens yaw one supervised session at a time without editing
@@ -88,9 +88,12 @@ constexpr int kFollowYawRange = 48;
 // raw ~885 (stall_detected, goal 902), which the operator saw as vertical: 271
 // raw for 90 deg, so this servo is ~3.0 raw/deg, not the yaw servo's 3.2. The
 // 15 raw of margin keeps steering from grinding into the stop. Down: widened in
-// supervised 16-raw steps, watching for the head meeting the body: level -16
-// until 2026-09-17, now level -32 (582, ~11 deg), which is 12 below the 594 the
-// unpowered head droops to, so steering can now press it past its rest.
+// supervised steps. 582 was tried on 2026-09-17: held full down, the head
+// stopped at 592 and stayed 10 short of the goal (pressing against something),
+// and the owner saw it facing nearly straight down. So the minimum is 594, the
+// unpowered rest: a session never presses the head below where gravity leaves it.
+// "Nearly straight down" at 592 does not fit ~3 raw/deg from a level of 614,
+// so level itself is due a re-check before any further pitch change.
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
   kFollowPitchMin, kFollowPitchMax, 614,

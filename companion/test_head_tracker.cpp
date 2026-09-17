@@ -789,7 +789,7 @@ void lowPitchRestIsAcceptedAndNeverPushedLower() {
 }
 
 // The real limits, from the head's unpowered droop at 594: pitch stays between
-// 582 (level -32, the supervised down step) and 870, just short of the stop at
+// 594 (the unpowered rest; 582 pressed against something) and 870, just short of the stop at
 // vertical (~885), and a lost face returns it to level (614, measured
 // 2026-09-17), not to the droop.
 void measuredPitchLevelFromDroop() {
@@ -801,7 +801,7 @@ void measuredPitchLevelFromDroop() {
   HeadTracker tracker(limits, config);
   uint32_t now = 1000;
   tracker.begin(460, 594, now);
-  assert(tracker.pitchLow() == 582);
+  assert(tracker.pitchLow() == 594);
   assert(tracker.pitchHigh() == 870);   // just short of vertical
   // A face high in frame: climbs, never past vertical.
   uint32_t sequence = 0;
@@ -809,7 +809,7 @@ void measuredPitchLevelFromDroop() {
     now += config.controlPeriodMs;
     if (i % 3 == 0) tracker.observe(++sequence, 0.0f, -1.0f, 0.95f, now);
     const FollowCommand command = tracker.step(now);
-    assert(command.pitch >= 582 && command.pitch <= 870);
+    assert(command.pitch >= 594 && command.pitch <= 870);
   }
   assert(tracker.commandedPitch() > 630);
   // The face goes: after the search, pitch comes back to level.
@@ -818,14 +818,14 @@ void measuredPitchLevelFromDroop() {
     tracker.step(now);
   }
   assert(std::abs(tracker.commandedPitch() - 614) < config.deadbandRaw);
-  // Held full down on the pad: reaches 582 and stops there.
+  // Held full down on the pad: reaches the rest, 594, and stops there.
   for (int i = 0; i < 400; ++i) {
     now += config.controlPeriodMs;
     tracker.manual(0.0f, -1.0f, now);
     const FollowCommand command = tracker.step(now);
-    assert(command.pitch >= 582);
+    assert(command.pitch >= 594);
   }
-  assert(tracker.commandedPitch() == 582);
+  assert(tracker.commandedPitch() == 594);
 }
 
 int main() {
