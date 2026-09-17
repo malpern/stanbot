@@ -37,6 +37,7 @@
 #include "network_policy.h"     // which commands a Wi-Fi viewer may send
 #include "command_auth.h"       // passphrase-authorized FOLLOW/REBOOT over Wi-Fi
 #include "light_bar.h"          // the body's LED bar, blue while a face is attended to
+#include "backlight.h"          // the screen backlight, through this task's own I2C driver
 #include <mbedtls/md.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
@@ -1118,6 +1119,29 @@ esp_err_t readBaseRegisters(i2c_master_dev_handle_t device, uint8_t start,
   return ESP_OK;
 }
 
+// The screen backlight, for sleep and wake: the AXP2101's DLDO1, written through
+// this task's i2c_master driver (backlight.h says why it must not be
+// M5.Display.setBrightness). Only the camera task calls this.
+bool setBacklight(uint8_t brightness) {
+  i2c_master_bus_handle_t master = nullptr;
+  i2c_master_dev_handle_t axp = nullptr;
+  i2c_device_config_t config{};
+  config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  config.device_address = stanbot::kAxpAddress;
+  config.scl_speed_hz = 100000;
+  if (i2c_master_get_bus_handle(kSccbPort, &master) != ESP_OK ||
+      i2c_master_bus_add_device(master, &config, &axp) != ESP_OK) return false;
+  uint8_t ldoControl = 0;
+  bool ok = readBaseRegisters(axp, stanbot::kAxpLdoControl, &ldoControl, 1) == ESP_OK;
+  if (ok) {
+    stanbot::AxpWrite writes[2];
+    const size_t n = stanbot::backlightWrites(brightness, ldoControl, writes);
+    for (size_t i = 0; i < n && ok; ++i) ok = writeBase(axp, writes[i].reg, writes[i].value);
+  }
+  i2c_master_bus_rm_device(axp);
+  return ok;
+}
+
 // The body's LED bar. Only the camera task calls this: outside a session it
 // opens its own short-lived handle to the expander, and inside a follow session
 // it borrows the session's, so it never competes with a power window for the
@@ -1167,15 +1191,7 @@ void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
   if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
   nextLightBarCheckMs = now + 125;
   const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
-  if (lightBarWakeRequested.exchange(false)) {
-    lightBar.wake(now);
-    // Sleep darkens the display through the PMIC, and the LED expander can
-    // lose its pin setup with it: after a wake the bar stayed dark although
-    // every colour write "succeeded" (2026-09-17). Set the pin up again and
-    // write whatever colour comes next, even if it matches the last one.
-    ledPinReady = false;
-    lightBarApplied = false;
-  }
+  if (lightBarWakeRequested.exchange(false)) lightBar.wake(now);
   lightBar.update(attending, streamEnabled.load(), now);
   // Asleep the bar is off, whatever the bar's own rules would show.
   const uint16_t color = asleep.load() ? 0 : lightBar.color(now);
@@ -2324,8 +2340,9 @@ void cameraTask(void*) {
       runBoundedMotion(plan);
     }
     if (const int brightness = brightnessRequest.exchange(-1); brightness >= 0) {
-      // The backlight is on the PMIC, on the internal I2C bus this task owns.
-      M5.Display.setBrightness(static_cast<uint8_t>(brightness));
+      // Through this task's own driver, never M5.Display.setBrightness: that
+      // one broke the bus for everything else (backlight.h).
+      if (!setBacklight(static_cast<uint8_t>(brightness))) brightnessRequest.store(brightness);   // try again
     }
     if (sleepStateChanged.exchange(false)) emitSleepState();
     if (powerDownRequested.exchange(false)) {
