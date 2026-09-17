@@ -951,6 +951,15 @@ final class RobotConnection: ObservableObject {
         guard send("C,SLEEP\n") else { return }
         asleep = true   // confirmed by the robot's SBSL
         lastAction = "Asked the robot to sleep."
+        // The robot stops sending straight away; stop analysing once the
+        // eyelids have finished closing, so the animation has frames to use.
+        let wanted = wantsCamera
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Eyelids.closeDuration + 0.1))
+            guard let self, self.asleep else { return }
+            self.stopCamera()
+            self.wantsCamera = wanted   // wake brings the picture back
+        }
     }
 
     func wake() {

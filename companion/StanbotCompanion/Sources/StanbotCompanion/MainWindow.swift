@@ -153,12 +153,19 @@ private struct LiveView: View {
     let mood: Mood
     let reaction: EyeReaction?
 
-    private var showingVideo: Bool { robot.cameraImage != nil && robot.cameraState == .receiving }
+    /// The last frame before the robot went to sleep, so the lids have something
+    /// to close over: the robot stops sending as soon as it is asked to sleep.
+    @State private var frozen: NSImage?
+
+    private var picture: NSImage? { robot.cameraImage ?? frozen }
+    private var showingVideo: Bool {
+        picture != nil && (robot.cameraState == .receiving || robot.asleep || frozen != nil)
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let image = robot.cameraImage, showingVideo {
+            if let image = picture, showingVideo {
                 GeometryReader { proxy in
                     let fitted = fit(image.size, in: proxy.size)
                     Image(nsImage: image)
@@ -175,6 +182,12 @@ private struct LiveView: View {
                         .position(x: proxy.size.width / 2, y: fitted.height / 2)
                 }
                 .accessibilityLabel("What Stanbot sees")
+                // Falling asleep and waking are seen through Stanbot's own eyes:
+                // the picture narrows to two eye shapes and the lids close,
+                // losing focus as they go (EyelidVeil).
+                .eyelidVeil(openness: robot.asleep ? 0 : 1, pose: EyePose.of(mood.emotion),
+                            reduceMotion: reduceMotion)
+                .animation(Eyelids.animation(asleep: robot.asleep), value: robot.asleep)
                 // The picture clears in, like eyes focusing, rather than popping.
                 .transition(reduceMotion ? .opacity : .modifier(active: Focusing(amount: 1), identity: Focusing(amount: 0)))
             } else {
@@ -183,6 +196,17 @@ private struct LiveView: View {
             }
         }
         .animation(.smooth(duration: 0.45), value: showingVideo)
+        .onChange(of: robot.asleep) { _, sleeping in
+            if sleeping {
+                frozen = robot.cameraImage       // hold the last frame while the lids close
+            } else {
+                // Keep it until live frames arrive, so the lids open onto a picture.
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    if !robot.asleep, robot.cameraImage != nil { frozen = nil }
+                }
+            }
+        }
     }
 
     private func fit(_ image: CGSize, in space: CGSize) -> CGSize {
