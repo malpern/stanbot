@@ -389,6 +389,16 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
 2. **Pitch direction.** Same session, face high in frame, `pitchMax` at rest
    +32. Observe nod up or down; record `pitchUpSign`. If +raw nods *down*,
    the safe range is on the other side of rest and both pitch limits change.
+   Direction is done (+raw is up). **Level** is not, and is what pitch
+   following needs: `python3 companion/find_pitch_level.py <port>` bisects
+   596..672 with `C,PITCHLEVEL,<raw>` (move pitch there and hold 4 s, one
+   power window per boot, USB only), rebooting between steps and asking you
+   up, down or level. At most seven steps; it logs each answer to
+   `calibration-pitch-level.jsonl` and prints the edit (set `pitchRest`,
+   lower `pitchMin` if level is below 620, set `pitchRestConfirmed`). It never
+   edits the header itself. Tests: `test_pitch_level.cpp` (parsing, and that
+   Wi-Fi refuses it) and `test_find_pitch_level.py` (the bisection finds
+   level within 4 raw for any level in range).
 3. **Gains.** With directions right, check the head settles on a still face
    without oscillating. If it hunts, the deadbands are too narrow for this
    unit's standing error; if it lags, raise `rawPerUnitX/Y` a little.

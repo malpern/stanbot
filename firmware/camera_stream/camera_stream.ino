@@ -19,6 +19,7 @@
 #include "eye_gaze.h"
 #include "power_lease.h"
 #include "telemetry_check.h"
+#include "pitch_level.h"
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
@@ -124,6 +125,7 @@ std::atomic<bool> yawRampRequested{false};
 std::atomic<bool> yawSweepRequested{false};
 std::atomic<bool> yawCenterRequested{false};
 std::atomic<bool> pitchNudgeRequested{false};
+std::atomic<int> pitchLevelRequested{0};   // raw goal, 0 when none
 std::atomic<bool> rebootRequested{false};
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
 std::atomic<uint32_t> maxEyeGapMs{0};
@@ -521,6 +523,11 @@ void handleCommand(const char* line) {
   else if (strcmp(line, "C,YAWSWEEP") == 0) yawSweepRequested.store(true);
   else if (strcmp(line, "C,CENTER") == 0) yawCenterRequested.store(true);
   else if (strcmp(line, "C,PITCHNUDGE") == 0) pitchNudgeRequested.store(true);
+  else if (strncmp(line, "C,PITCHLEVEL,", 13) == 0) {
+    int raw = 0;
+    if (stanbot::parsePitchLevel(line + 13, raw)) pitchLevelRequested.store(raw);
+    else Serial.println("SBPW {\"error\":\"pitch_level_out_of_range\"}");
+  }
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
@@ -1322,6 +1329,7 @@ struct MotionPlan {
   int startLow, startHigh;     // refuse unless the driven servo starts here
   int otherLow, otherHigh;     // sanity range for the idle servo
   uint32_t cutoffMs;
+  uint32_t pauseMs = kSweepPauseMs;   // hold at each goal before the next leg
 };
 
 // Center, 90 degrees robot-left (-raw), 90 degrees robot-right (+raw), center.
@@ -1438,8 +1446,8 @@ void runBoundedMotion(const MotionPlan& plan) {
               // Both intervals count from a timestamp that is never in the
               // future; the first run (2026-09-15) subtracted the next scheduled
               // waypoint time, wrapped, and ended every leg early.
-              const bool settledNow = arrivedAt && now - arrivedAt >= kSweepPauseMs;
-              const bool gaveUp = !arrivedAt && now - finalSentAt >= kSweepSettleMs + kSweepPauseMs;
+              const bool settledNow = arrivedAt && now - arrivedAt >= plan.pauseMs;
+              const bool gaveUp = !arrivedAt && now - finalSentAt >= kSweepSettleMs + plan.pauseMs;
               if (settledNow || gaveUp) break;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -1974,6 +1982,13 @@ void cameraTask(void*) {
     if (yawSweepRequested.exchange(false)) runBoundedMotion(kYawSweepPlan);
     if (yawCenterRequested.exchange(false)) runBoundedMotion(kYawCenterPlan);
     if (pitchNudgeRequested.exchange(false)) runBoundedMotion(kPitchNudgePlan);
+    if (const int level = pitchLevelRequested.exchange(0)) {
+      // One absolute pitch goal, held so a person can judge level by eye.
+      const MotionPlan plan = {"pitch_level", 2, 1, {level, 0, 0, 0}, {"pitch_level", "", "", ""}, false,
+        stanbot::kPitchLevelLow - 6, stanbot::kPitchLevelHigh, 300, 620,
+        kSweepSettleMs + stanbot::kPitchLevelHoldMs + 4000, stanbot::kPitchLevelHoldMs};
+      runBoundedMotion(plan);
+    }
     if (followRequested.exchange(false)) runFollowSession();
     if (rebootRequested.exchange(false)) {
       // Software restart so a fresh once-per-boot power window is available

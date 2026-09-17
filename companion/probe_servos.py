@@ -70,10 +70,14 @@ def main():
     actions.add_argument("--yaw-sweep", action="store_true", help="Supervised full sweep: center, 90 deg robot-left, 90 deg robot-right, center; 20-second cutoff")
     actions.add_argument("--center", action="store_true", help="Supervised move of yaw to the factory center only")
     actions.add_argument("--pitch-nudge", action="store_true", help="First supervised pitch motion: +16 raw (5 deg) from rest and back")
+    actions.add_argument("--pitch-level", type=int, metavar="RAW", help="Supervised: move pitch to RAW (596..672) and hold 4 s, to judge level by eye")
     actions.add_argument("--reboot", action="store_true", help="Ask the firmware to restart so a fresh once-per-boot power window is available")
     args = parser.parse_args()
     session = args.yaw_session or args.yaw_ramp
-    plan_motion = args.yaw_sweep or args.center or args.pitch_nudge
+    if args.pitch_level is not None and not 596 <= args.pitch_level <= 672:
+        parser.error("--pitch-level must be between 596 and 672")
+    pitch_level = args.pitch_level is not None
+    plan_motion = args.yaw_sweep or args.center or args.pitch_nudge or pitch_level
     yaw_motion = args.yaw_test or args.yaw_back or session or plan_motion
     powered = args.power_test or yaw_motion
     fd = os.open(args.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
@@ -95,7 +99,7 @@ def main():
             time.sleep(0.5)
             print("Reboot requested; wait for the device to re-enumerate.")
             return
-        os.write(fd, b"C,REBOOT\n" if args.reboot else b"C,CENTER\n" if args.center else b"C,PITCHNUDGE\n" if args.pitch_nudge else b"C,YAWSWEEP\n" if args.yaw_sweep else b"C,YAWRAMP\n" if args.yaw_ramp else b"C,YAWSESSION\n" if session else b"C,POWEROFF\n" if args.disable_only else b"C,YAWBACK\n" if args.yaw_back else b"C,YAWTEST\n" if args.yaw_test else b"C,POWERTEST\n" if args.power_test else b"Q\n")
+        os.write(fd, ("C,PITCHLEVEL,%d\n" % args.pitch_level).encode() if pitch_level else b"C,REBOOT\n" if args.reboot else b"C,CENTER\n" if args.center else b"C,PITCHNUDGE\n" if args.pitch_nudge else b"C,YAWSWEEP\n" if args.yaw_sweep else b"C,YAWRAMP\n" if args.yaw_ramp else b"C,YAWSESSION\n" if session else b"C,POWEROFF\n" if args.disable_only else b"C,YAWBACK\n" if args.yaw_back else b"C,YAWTEST\n" if args.yaw_test else b"C,POWERTEST\n" if args.power_test else b"Q\n")
         buffer = bytearray()
         records = {}
         power = None
@@ -162,8 +166,8 @@ def main():
                 raise RuntimeError("Servo preflight NOT passed; do not enable motion")
         print("Feedback received; physical calibration still required.")
         if plan_motion:
-            validate_sweep(movement, legs, power, expected_legs=4 if args.yaw_sweep else 1 if args.center else 2,
-                           servo=2 if args.pitch_nudge else 1)
+            validate_sweep(movement, legs, power, expected_legs=4 if args.yaw_sweep else 1 if (args.center or pitch_level) else 2,
+                           servo=2 if (args.pitch_nudge or pitch_level) else 1)
             print("Plan completed with verified writes; direction and smoothness need your observation.")
         elif session:
             validate_session(movement, legs, power, args.yaw_ramp)
