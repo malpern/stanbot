@@ -357,6 +357,26 @@ closed-loop simulations (compensated yaw, pitch and both axes) still settle
 without crossing the centre. Tests that count exact ticks use a linear
 configuration (`kLinear`), and `easingRampsUpAndSlowsDown` pins the new shape.
 
+## Replaying a session
+
+```sh
+python3 tools/follow_replay.py ~/Library/Logs/Stanbot/follow-YYYYMMDD-HHMMSS.log         # writes .html beside it
+python3 tools/follow_replay.py ~/Library/Logs/Stanbot/follow-YYYYMMDD-HHMMSS.log --json  # summary only
+```
+
+One self-contained page per log: commanded and measured yaw and pitch against
+time, shaded by tracker mode (idle, attending, returning, searching); the
+face's offset from the frame centre with the targets that were sent; and a
+summary of the result, the telemetry check, targets sent, error median and
+maximum, range and reversals per axis, and time in each mode. Robot and app
+clocks are aligned only approximately (the first APP line is time zero).
+`tools/test_follow_replay.py` checks it on a synthetic log; it also runs on
+every log from 2026-09-16. The app's APP lines now include the target's `y`.
+
+On session 5's successor (`follow-20260916-165311.log`) it shows yaw holding at
+~499 against a 506 goal with the face still 0.28 right of centre for 16 s: the
+head was at the calibration build's +48 limit, which is checklist step 4.
+
 ## Calibration checklist, before `measured` may become true
 
 Each step is one supervised session with a person at the robot, the cable in

@@ -765,7 +765,7 @@ final class RobotConnection: ObservableObject {
         let detected = faces.map { String(format: "[%.3f,%.3f,%.3f,%.3f,%.2f]", $0.rect.midX, $0.rect.midY, $0.rect.width, $0.rect.height, $0.confidence) }
         var fields = "\"t\":\(String(format: "%.3f", receivedAt)),\"faces\":\(faces.count),\"detections\":[\(detected.joined(separator: ","))],\"state\":\"\(faceSelection.state)\""
         if let sent {
-            fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1))"
+            fields += ",\"sent\":\(targetSequence),\"x\":\(String(format: "%.3f", sent.rect.midX * 2 - 1)),\"y\":\(String(format: "%.3f", 1 - sent.rect.midY * 2))"
         }
         followLog.write(Data("APP {\(fields)}\n".utf8))
     }
