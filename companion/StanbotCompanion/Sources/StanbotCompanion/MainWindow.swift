@@ -193,11 +193,13 @@ private struct LiveView: View {
                         TimelineView(.animation) { timeline in
                             picture(image, aperture(at: timeline.date))
                         }
+                    } else if robot.asleep {
+                        // Eyes shut: nothing of the picture shows, so it is not
+                        // drawn at all (the blurred, masked picture underneath
+                        // cost several percent CPU for nothing). Just the z's.
+                        Color.black.overlay { SleepingZs() }
                     } else {
-                        picture(image, robot.asleep ? .closed : .open)
-                            // Asleep with the eyes shut: a slow drift of z's
-                            // where the picture was (SleepingZs).
-                            .overlay { if robot.asleep { SleepingZs().transition(.opacity) } }
+                        picture(image, .open)
                     }
                 }
                 .accessibilityLabel("What Stanbot sees")

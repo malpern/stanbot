@@ -7,10 +7,12 @@ import SwiftUI
 /// grey, the eyes' colour. Calm enough to sit in the corner of the eye all
 /// afternoon. Reduce Motion: three still z's, faint.
 ///
-/// Every z is a pure function of its age, drawn from a slow clock (12 frames a
+/// Every z is a pure function of its age, drawn from a slow clock (6 frames a
 /// second is plenty for something this gentle). Started from `onAppear` with
 /// `withAnimation` instead, the first z jumped straight to its end state and
-/// nothing ever showed (2026-09-17).
+/// nothing ever showed; as Core Animation-style property animations it cost
+/// more than the clock, since SwiftUI on the Mac re-renders those every frame
+/// (14% against 6%, 2026-09-17).
 struct SleepingZs: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var zs: [FloatingZ] = []
@@ -51,7 +53,7 @@ struct SleepingZs: View {
                                   y: proxy.size.height * (0.6 - 0.14 * Double(index)))
                 }
             } else {
-                TimelineView(.periodic(from: .now, by: 1.0 / 12)) { timeline in
+                TimelineView(.periodic(from: .now, by: 1.0 / 6)) { timeline in
                     ForEach(zs) { z in
                         let rise = z.progress(at: timeline.date)
                         Text("z")
