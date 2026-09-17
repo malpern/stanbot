@@ -159,20 +159,22 @@ struct FollowConfig {
   int easeAccelRaw = 2;
 
   // Search. When the target times out the head does not go straight home: it
-  // holds still briefly (the face may simply have been missed), glances toward
-  // where the face was last seen, sweeps a little the other way, and only then
-  // returns to rest. Any accepted observation ends the search immediately.
-  // Every waypoint is clamped to the limits and the session's pitch bounds.
+  // holds still briefly (the face may simply have been missed), then looks
+  // around the whole allowed range for the person -- left, right, up, down --
+  // and only returns to rest when that finds nobody. Any accepted observation
+  // ends the search immediately. Every waypoint is clamped to the limits and
+  // the session's pitch bounds.
+  //
+  // It used to glance 32 raw toward the side the face left on and 32 the other
+  // way, which at the old +-96 limits was most of the range anyway. At +-288 a
+  // glance that size is a twitch, and the owner asked for the full look: "I
+  // expect it to do the full scan when it loses me. Only if it can't find me
+  // should it go back to center and rest." So a search and the wake scan are
+  // now the same motion, and differ only in what happens on finding someone.
   bool search = true;
-  uint32_t searchHoldMs = 600;
-  int searchGlanceRaw = 32;          // yaw toward the side the face left on
-  int searchGlancePitchRaw = 12;     // pitch toward it, if it left above or below
-  int searchSweepRaw = 32;           // yaw the other way from where it was lost
-  int searchStepRaw = 3;             // ~11 deg/s: slower than attending
+  uint32_t searchHoldMs = 600;       // a beat first: the face may simply have been missed
   uint32_t searchDwellMs = 400;      // pause at each waypoint, to give detection a chance
-  // The wake scan (beginScan): one look around the whole allowed range for
-  // someone to follow, when the robot has just woken and sees nobody. Quicker
-  // than a search, since there is further to go, but still unhurried.
+  // The look around itself, shared by a search and the wake scan (beginScan).
   int scanStepRaw = 5;               // ~18 deg/s
   int scanPitchUpRaw = 90;           // how far above level the upward look goes
   uint32_t scanHoldMs = 300;         // a beat before the first turn
@@ -341,7 +343,7 @@ class HeadTracker {
     int stepLimit = config_.maxStepRaw;
     if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
     if (mode_ == FollowMode::Searching) {
-      stepLimit = scanning_ ? config_.scanStepRaw : config_.searchStepRaw;
+      stepLimit = config_.scanStepRaw;
       if (!advanceSearch(nowMs)) return {false, yaw_, pitch_, mode_};
     }
     if (mode_ != FollowMode::Searching) scanning_ = false;   // the scan has handed over
@@ -385,6 +387,7 @@ class HeadTracker {
   // centre and up, then down, then home. Every waypoint is inside the session's
   // limits. Any accepted observation ends it at once, as it does a search.
   void beginScan(uint32_t nowMs) {
+    layOutLookAround(-1);   // the wake scan always starts robot-left
     mode_ = FollowMode::Searching;
     scanning_ = true;
     foundDuringScan_ = false;
@@ -392,12 +395,18 @@ class HeadTracker {
     arrivedMs_ = 0;
     waypoint_ = 0;
     haveGoal_ = false;
+  }
+
+  // One look around the whole allowed range: the far side `first` names, then
+  // the other, then up and down at rest. Shared by the wake scan and by a
+  // search that has lost its target.
+  void layOutLookAround(int first) {
     const int level = !config_.pitchEnabled ? pitch_
                     : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_) : pitchHome_;
     const int up = clamp(level + limits_.pitchUpSign * config_.scanPitchUpRaw, pitchLow_, pitchHigh_);
     const int down = limits_.pitchUpSign > 0 ? pitchLow_ : pitchHigh_;
-    waypoints_[0] = {limits_.yawMin, level};
-    waypoints_[1] = {limits_.yawMax, level};
+    waypoints_[0] = {first < 0 ? limits_.yawMin : limits_.yawMax, level};
+    waypoints_[1] = {first < 0 ? limits_.yawMax : limits_.yawMin, level};
     waypoints_[2] = {limits_.yawRest, up};
     waypoints_[3] = {limits_.yawRest, down};
     waypointCount_ = 4;
@@ -405,6 +414,9 @@ class HeadTracker {
 
   // True while the wake scan is looking around.
   bool scanning() const { return scanning_ && mode_ == FollowMode::Searching; }
+  // Any look around, a wake scan or a search: the head is actively hunting for
+  // someone, so the session must not time out underneath it.
+  bool lookingAround() const { return mode_ == FollowMode::Searching; }
 
   // True once, when a face ended the wake scan: the moment to react.
   bool takeFoundDuringScan() {
@@ -467,24 +479,18 @@ class HeadTracker {
 
   // Waypoints for one search, from where the head was when the target was lost
   // and the side of the frame the face was last seen on.
+  // Losing the target: look around the whole allowed range for them, the same
+  // motion as the wake scan, but starting on the side they were last seen so
+  // the likely answer comes first. `scanning_` stays false, so the surprised
+  // reaction on finding someone remains the wake scan's alone.
   void beginSearch(uint32_t nowMs) {
+    const int side = lastX_ < -config_.centreDeadband ? -1 : 1;   // where they went, if anywhere
+    layOutLookAround(side);
     mode_ = FollowMode::Searching;
     searchStartMs_ = nowMs;
     arrivedMs_ = 0;
     waypoint_ = 0;
     haveGoal_ = false;
-    const int side = lastX_ > config_.centreDeadband ? 1 : (lastX_ < -config_.centreDeadband ? -1 : 0);
-    int glancePitch = pitch_;
-    if (config_.pitchEnabled && (lastY_ > config_.centreDeadband || lastY_ < -config_.centreDeadband)) {
-      const int up = lastY_ < 0 ? 1 : -1;   // a face lost off the top: look up
-      glancePitch = clamp(pitch_ + up * limits_.pitchUpSign * config_.searchGlancePitchRaw, pitchLow_, pitchHigh_);
-    }
-    const int lostYaw = yaw_;
-    const int first = side != 0 ? side : 1;
-    const int firstReach = side != 0 ? config_.searchGlanceRaw : config_.searchSweepRaw;
-    waypoints_[0] = {clamp(lostYaw + first * firstReach, limits_.yawMin, limits_.yawMax), glancePitch};
-    waypoints_[1] = {clamp(lostYaw - first * config_.searchSweepRaw, limits_.yawMin, limits_.yawMax), glancePitch};
-    waypointCount_ = 2;
   }
 
   // Returns whether the controller should move this tick.

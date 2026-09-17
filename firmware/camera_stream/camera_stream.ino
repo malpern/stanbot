@@ -1920,7 +1920,9 @@ void endTelemetry(bool wasStreaming) {
 
 constexpr uint32_t kFollowSessionMs = 20000;    // the lease: power off within this of the last renewal
 constexpr uint32_t kFollowMaxMs = 180000;       // hard maximum for one window, never extended
-constexpr uint32_t kFollowIdleEndMs = 12000;    // no accepted target this long: end (a search takes ~4.6 s)
+constexpr uint32_t kFollowIdleEndMs = 12000;    // no accepted target this long: end. A look
+                                                // around holds this clock, so it is 12 s of
+                                                // resting, after the search has finished.
 constexpr uint32_t kFollowRenewEveryMs = 1000;
 constexpr uint32_t kFollowEndMarginMs = 500;    // end by the session's own path before the cutoff would
 constexpr uint32_t kFollowCooldownMs = 3000;
@@ -2142,8 +2144,11 @@ void runFollowSession() {
           // session powered like a target would, and hands back to following
           // manualResumeMs after the last input (HeadTracker::manual).
           // The look around is not idleness: the session's clock for "nobody
-          // here" starts when it has finished. It is one bounded pass.
-          if (tracker.scanning()) lastTargetAt = now;
+          // here" starts when it has finished. It is one bounded pass, and it
+          // is now a search's shape too, not the wake scan's alone -- at yaw
+          // +-288 a full look takes longer than the 12 s idle timeout, so
+          // holding the clock is what lets it finish before the head rests.
+          if (tracker.lookingAround()) lastTargetAt = now;
           if (tracker.takeFoundDuringScan()) { const uint32_t t = millis(); reactionStartedMs.store(t == 0 ? 1 : t); }
           const uint32_t manualSeq = manualSequence.load();
           if (manualSeq != lastManualSequence) {

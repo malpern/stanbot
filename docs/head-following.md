@@ -261,24 +261,37 @@ returns to where it started when you step away.
 ## Searching for a lost face (running on the robot; seen in session traces as mode 3)
 
 When no target arrives for 900 ms the head no longer goes straight home. The
-tracker enters `Searching` (telemetry `mode` 3):
+tracker enters `Searching` (telemetry `mode` 3) and looks around the whole
+allowed range for the person:
 
 1. **Hold** still for 600 ms, since the face may only have been missed.
-2. **Glance** 32 raw toward the side of the frame the face was last seen on,
-   and 12 raw up or down if it left off the top or bottom (pitch builds only,
-   inside the session's pitch bounds). If the face was last seen near the
-   centre, the first move is 32 raw to the robot's right.
-3. **Sweep** to 32 raw the other side of where it was lost.
-4. **Return** to rest (pitch to the session start) as before.
+2. **The far side they went**: all the way out to that yaw limit.
+3. **The other side**: all the way out to the opposite limit.
+4. **Up** at rest, then **down** at rest (pitch builds only, inside the
+   session's pitch bounds).
+5. **Return** to rest, and only then does the session's 12 s clock start.
 
-It dwells 400 ms at each waypoint and moves at 3 raw per tick (~11 deg/s),
-slower than attending. Every waypoint is clamped to the limits. Any accepted
-target ends the search immediately. A whole search takes about 4.6 s from the
-last target to resting, well inside the 12 s a session waits without a face. The app's "No stable face
-detected" state is still only a label; auto-follow still starts a session only
-once a face is confirmed. Host tests: `searchHoldsThenGlancesTowardTheLostSide`,
+This is the same motion as the wake scan (`layOutLookAround`), and the two now
+differ only in what happens on finding someone: the wake scan reacts surprised
+and reports it, an ordinary search simply resumes following. It dwells 400 ms
+at each waypoint and moves at `scanStepRaw` 5 raw per tick (~18 deg/s). Every
+waypoint is clamped to the limits. Any accepted target ends it immediately.
+
+**It used to be a local glance**, 32 raw toward the side the face left on and
+32 the other way, which at the old +-96 limits was most of the range anyway. At
++-288 that is a twitch, and on 2026-09-17 the owner asked for the full look:
+"I expect it to do the full scan when it loses me. Only if it can't find me
+should it go back to center and rest."
+
+**It is no longer well inside the idle timeout, and that matters.** At the
+limits now on the robot (yaw 143..719) a whole look around takes **21.2 s** from
+the last target to resting, against 8.9 s at +-96 and 4.6 s for the old glance.
+`kFollowIdleEndMs` is 12 s, so the session would have ended mid-sweep; the loop
+holds that clock while `tracker.lookingAround()`, which is true for a search as
+well as a wake scan, so the 12 s is 12 s of *resting* after the look has
+finished. Host tests: `searchHoldsThenLooksAroundEverything`,
 `searchStartsLeftWhenTheFaceLeftLeft`, `searchEndsWhenTheFaceReturns`,
-`searchGlancesUpForAFaceLostOffTheTop`, `searchNeverMovesDisabledPitch`,
+`searchLooksUpAndDown`, `searchNeverMovesDisabledPitch`,
 `searchIsClampedAndFinite`.
 
 ## Continuous following (running on the robot since 2026-09-17)

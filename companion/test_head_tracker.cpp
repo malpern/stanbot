@@ -601,7 +601,10 @@ SearchTrace loseFace(HeadTracker& tracker, float x, float y, uint32_t& now, int 
   return trace;
 }
 
-void searchHoldsThenGlancesTowardTheLostSide() {
+// Losing the target looks around the WHOLE allowed range, not a local glance:
+// the owner asked for "the full scan when it loses me. Only if it can't find me
+// should it go back to center and rest."
+void searchHoldsThenLooksAroundEverything() {
   HeadTracker tracker(kLimits, kConfig);
   uint32_t now = 1000;
   tracker.begin(460, 630, now);
@@ -613,18 +616,22 @@ void searchHoldsThenGlancesTowardTheLostSide() {
 
   HeadTracker full(kLimits, kConfig);
   now = 1000;
-  const SearchTrace trace = loseFace(full, 0.7f, 0.0f, now, 12);
+  const SearchTrace trace = loseFace(full, 0.7f, 0.0f, now, 30);
   assert(trace.maxYawAt < trace.minYawAt);                  // right first, then left
-  assert(trace.maxYaw > trace.minYaw + kConfig.searchSweepRaw);
-  assert(trace.finalMode == FollowMode::Idle);              // and then home
+  assert(trace.maxYaw >= kLimits.yawMax - kConfig.deadbandRaw);   // all the way out
+  assert(trace.minYaw <= kLimits.yawMin + kConfig.deadbandRaw);
+  assert(trace.finalMode == FollowMode::Idle);              // and only then home
   assert(std::abs(trace.finalYaw - kLimits.yawRest) < kConfig.deadbandRaw);
+  std::printf("  search looked around yaw %d..%d (limits %d..%d)\n",
+              trace.minYaw, trace.maxYaw, kLimits.yawMin, kLimits.yawMax);
 }
 
 void searchStartsLeftWhenTheFaceLeftLeft() {
   HeadTracker tracker(kLimits, kConfig);
   uint32_t now = 1000;
-  const SearchTrace trace = loseFace(tracker, -0.7f, 0.0f, now, 12);
+  const SearchTrace trace = loseFace(tracker, -0.7f, 0.0f, now, 30);
   assert(trace.minYawAt < trace.maxYawAt);                  // left first
+  assert(trace.minYaw <= kLimits.yawMin + kConfig.deadbandRaw);
   assert(trace.finalMode == FollowMode::Idle);
 }
 
@@ -637,13 +644,14 @@ void searchEndsWhenTheFaceReturns() {
   assert(tracker.mode() == FollowMode::Attending);
 }
 
-void searchGlancesUpForAFaceLostOffTheTop() {
+// The look around covers up and down as well, whichever way the face went.
+void searchLooksUpAndDown() {
   const FollowLimits limits = roomyPitch();
   HeadTracker tracker(limits, kConfig);
   uint32_t now = 1000;
-  const SearchTrace trace = loseFace(tracker, 0.0f, -0.9f, now, 12);
-  // Attending already tilted up; the search glance tilts further, within bounds.
+  const SearchTrace trace = loseFace(tracker, 0.0f, -0.9f, now, 30);
   assert(trace.maxPitch > trace.minPitch);
+  assert(trace.maxPitch <= limits.pitchMax && trace.minPitch >= limits.pitchMin);
   assert(trace.finalMode == FollowMode::Idle);
   assert(std::abs(tracker.commandedPitch() - 630) < kConfig.deadbandRaw);   // back to the session start
 }
@@ -665,8 +673,8 @@ void searchNeverMovesDisabledPitch() {
 void searchIsClampedAndFinite() {
   HeadTracker tracker(kLimits, kConfig);
   uint32_t now = 1000;
-  // Lost at the right-hand limit: the glance cannot go further right.
-  const SearchTrace trace = loseFace(tracker, 1.0f, 0.0f, now, 15, kLimits.yawMax - 2);
+  // Lost at the right-hand limit: the look around cannot go further right.
+  const SearchTrace trace = loseFace(tracker, 1.0f, 0.0f, now, 30, kLimits.yawMax - 2);
   assert(trace.maxYaw <= kLimits.yawMax);
   assert(trace.finalMode == FollowMode::Idle);
   // A whole search, from losing the face to resting, stays well inside a session.
@@ -678,7 +686,10 @@ void searchIsClampedAndFinite() {
   do { now += kConfig.controlPeriodMs; timed.step(now); ++ticks; }
   while (timed.mode() != FollowMode::Idle && ticks < 1000);
   std::printf("  search: idle %d ms after the last target\n", ticks * static_cast<int>(kConfig.controlPeriodMs));
-  assert(ticks * kConfig.controlPeriodMs < 10000);
+  // A whole look around at these limits, then rest. It is longer than the old
+  // local glance by design, and longer than kFollowIdleEndMs -- which is why
+  // the session holds its idle clock while lookingAround() (camera_stream.ino).
+  assert(ticks * kConfig.controlPeriodMs < 30000);
 }
 
 // Manual control from the app's joystick.
@@ -904,10 +915,10 @@ int main() {
   pitchClosedLoopSettles();
   easingRampsUpAndSlowsDown();
   easingRestartsFromRestOnReversal();
-  searchHoldsThenGlancesTowardTheLostSide();
+  searchHoldsThenLooksAroundEverything();
   searchStartsLeftWhenTheFaceLeftLeft();
   searchEndsWhenTheFaceReturns();
-  searchGlancesUpForAFaceLostOffTheTop();
+  searchLooksUpAndDown();
   searchNeverMovesDisabledPitch();
   searchIsClampedAndFinite();
   std::printf("head tracker: all tests passed\n");

@@ -27,6 +27,11 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   minimum is the unpowered rest, 594. That look does not fit ~3 raw/deg from a
   level of 614: **re-check level before changing pitch again.** A head left
   resting above 870 is refused until lowered by hand.
+- **Losing someone** starts a full look around -- out to one yaw limit, out to
+  the other, up, down -- and the head returns to rest only when that finds
+  nobody (2026-09-17, at the owner's request). It is the wake scan's motion;
+  at yaw 143..719 it takes 21.2 s, so the session holds its idle clock while it
+  runs. Built, NOT yet seen on the robot.
 - **Following** is continuous: sessions repeat without reboots (3 s cooldown),
   each on a renewable power lease with a 3-minute hard maximum, and end after
   12 s with no face. Corrections use the head position when the frame was taken,
