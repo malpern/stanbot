@@ -19,16 +19,15 @@ the robot's view, with a little of the robot's character in it.
 - **Toolbar (2026-09-17):** Sleep/Wake and the Controls toggle. Follow/Stop lives in the panel (and in the Robot menu, ⌘.).
 - **Nothing over the picture.** Controls live in a panel on the right.
 - **Controls panel** (right, hideable, remembered, ⌥⌘I): Stanbot's face large
-  (the CoreS3 front, `RobotFace`) with its mood caption; Follow/Stop and
-  Sleep/Wake; and **Details…**, a sheet with the head settings (Follow
-  automatically, the round direction pad), the expression grid (the 18 faces)
-  and the camera (show/hide, mirror). The mouth test is in the Robot menu. At
-  the top of the panel, an orange line when something is wrong (unreachable, or
-  a refusal that will not clear); at the bottom, the connection method and
-  Reconnect.
-  Things to do, not things to read. Turning the robot off completely is Turn
-  Robot Off… in the Robot menu, with a confirmation: only its own button turns
-  it on again.
+  (the CoreS3 front, `RobotFace`) with its mood caption, and a gear in the
+  corner. **Clicking the face puts the robot to sleep or wakes it.** An orange
+  line appears above the face when something is wrong (unreachable, or a refusal
+  that will not clear). Nothing else: the panel is Stanbot, not a control board.
+- **The gear sheet** holds everything else, in four sections: Head (Follow/Stop
+  and Sleep/Wake, Follow automatically, the round direction pad), Camera (show
+  the camera, mirror), Expression (all 18 faces, nine across), Connection (the
+  method, what it is using, Reconnect). The mouth test is in the Robot menu, and
+  app preferences stay in Settings (⌘,).
 - **Diagnostics window** (Window menu, ⌥⌘D): live status (link, firmware and its
   warnings, passphrase, following, limits, camera, face, facing), the recent
   follow sessions read from their logs with each result and a Show button, and

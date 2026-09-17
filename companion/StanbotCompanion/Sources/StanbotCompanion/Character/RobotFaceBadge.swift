@@ -12,6 +12,8 @@ struct RobotFace: View {
     /// Large faces: the LCD grid, the mouth's glow, and eyes that follow the
     /// pointer. Off for the title bar, where they only blur.
     var detailed = false
+    /// What a click on the face does. Nothing passed: the eyes giggle.
+    var onTap: (() -> Void)? = nil
 
     static let aspect: CGFloat = 36.0 / 38.0
 
@@ -35,7 +37,7 @@ struct RobotFace: View {
                     StanbotEyesView(emotion: mood.emotion, look: mood.look, asleep: mood.asleep, screen: false,
                                     scanning: mood.scanning, reaction: reaction, interactive: detailed,
                                     screenLook: detailed, engaged: mood.engaged, closeness: mood.closeness,
-                                    mouthMinimumPoints: detailed ? 0 : 1.2, mouthGlow: detailed)
+                                    onTap: onTap, mouthMinimumPoints: detailed ? 0 : 1.2, mouthGlow: detailed)
                 }
                 .frame(width: screenWidth, height: screenHeight)
                 .padding(.top, rim + 2.5 * s)

@@ -1331,9 +1331,13 @@ extension RobotConnection {
     private func scheduleSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT"] else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            // STANBOT_SNAPSHOT_WINDOW names another window to capture, e.g. Diagnostics.
+            // STANBOT_SNAPSHOT_WINDOW names another window to capture: a window
+            // title, e.g. Diagnostics, or "sheet" for whatever sheet is open.
             let title = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT_WINDOW"] ?? "Stanbot"
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == title }),
+            guard let window = NSApp.windows.first(where: {
+                      guard $0.isVisible else { return false }
+                      return title == "sheet" ? $0.sheetParent != nil : $0.title == title
+                  }),
                   let frame = window.contentView?.superview else { return }
             guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
             frame.cacheDisplay(in: frame.bounds, to: rep)

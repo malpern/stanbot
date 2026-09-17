@@ -61,6 +61,8 @@ struct StanbotEyesView: View {
     var engaged = false
     /// How much of the camera frame the face fills, 0...1. Closer draws the eyes together.
     var closeness = 0.0
+    /// What a click does instead of giggling.
+    var onTap: (() -> Void)? = nil
     /// The mouth's thinnest line in points, so tiny faces keep a visible mouth.
     var mouthMinimumPoints = 0.0
     /// The mouth's Metal glow and inner light; off for tiny faces.
@@ -197,6 +199,7 @@ struct StanbotEyesView: View {
                 }
             }
             .onTapGesture {
+                if let onTap { onTap(); return }
                 guard interactive, !asleep else { return }
                 tapped = EyeReaction(kind: .giggle)
             }
