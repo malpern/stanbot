@@ -64,6 +64,9 @@ class StanbotEyes {
     return false;
   }
 
+  // A face target arrived within the last 900 ms: what the light bar shows.
+  bool attending(uint32_t now) const { return hasTarget_ && now - lastTargetMs_ < 900; }
+
   template <typename Display>
   bool update(Display& display, uint32_t now) {
     if (now - lastFrameMs_ < 33) return false;  // bounded at about 30 fps
@@ -151,7 +154,11 @@ class StanbotEyes {
     const int radius = min(30, height / 2);
     const int pupilX = static_cast<int>(lookX_ * 18);
     const int pupilY = static_cast<int>(lookY_ * 12);
-    const uint16_t iris = attending ? TFT_CYAN : 0xBDF7;
+    // The irises stay grey whether or not a face is attended to. They turned
+    // cyan until 2026-09-17; seeing a face now lights the body's LED bar blue
+    // instead (light_bar.h), which the owner found less distracting.
+    (void)attending;
+    const uint16_t iris = 0xBDF7;
 
     display.fillScreen(TFT_BLACK);
     drawEye(display, 102, kBaseY, width, height, radius, pupilX, pupilY,

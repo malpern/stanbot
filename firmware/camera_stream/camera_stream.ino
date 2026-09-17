@@ -36,6 +36,7 @@
 #include "head_tracker.h"       // follow controller; see runFollowSession
 #include "network_policy.h"     // which commands a Wi-Fi viewer may send
 #include "command_auth.h"       // passphrase-authorized FOLLOW/REBOOT over Wi-Fi
+#include "light_bar.h"          // the body's LED bar, blue while a face is attended to
 #include <mbedtls/md.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
@@ -113,6 +114,9 @@ std::atomic<uint32_t> targetSequence{0};
 // Manual control: H,<sequence>,<x>,<y> from the app's joystick, each in [-1, 1]
 // (+x robot right, +y head up). Consumed only inside a follow session, like T.
 std::atomic<uint32_t> manualSequence{0};
+// When the eyes last attended to a face (main loop), for the light bar (camera task).
+std::atomic<uint32_t> faceAttendedMs{0};
+std::atomic<bool> faceAttendedEver{false};
 std::atomic<int32_t> manualXMilli{0}, manualYMilli{0};
 std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
 // Where the eyes should look, from T, (during a session) or G, (any time).
@@ -1020,6 +1024,65 @@ esp_err_t readBaseRegisters(i2c_master_dev_handle_t device, uint8_t start,
   return ESP_OK;
 }
 
+// The body's LED bar. Only the camera task calls this: outside a session it
+// opens its own short-lived handle to the expander, and inside a follow session
+// it borrows the session's, so it never competes with a power window for the
+// device. What it writes is light_bar.h, tested never to touch motor power.
+stanbot::LightBar lightBar;
+bool lightBarApplied = false;     // the LEDs match lightBar.lit
+bool ledPinReady = false;         // pin 13 set up as the BSP does
+uint32_t nextLightBarCheckMs = 0;
+
+bool applyLightBar(i2c_master_dev_handle_t device, bool lit) {
+  if (!ledPinReady) {
+    uint8_t dirH = 0, pullUpH = 0, pullDownH = 0, driveH = 0;
+    if (readBaseRegisters(device, stanbot::kRegDirH, &dirH, 1) != ESP_OK ||
+        readBaseRegisters(device, stanbot::kRegPullUpH, &pullUpH, 1) != ESP_OK ||
+        readBaseRegisters(device, stanbot::kRegPullDownH, &pullDownH, 1) != ESP_OK ||
+        readBaseRegisters(device, stanbot::kRegDriveH, &driveH, 1) != ESP_OK) return false;
+    stanbot::ExpanderWrite setup[5];
+    const size_t n = stanbot::ledSetupWrites(dirH, pullUpH, pullDownH, driveH, setup);
+    for (size_t i = 0; i < n; ++i)
+      if (!writeBase(device, setup[i].reg, setup[i].value)) return false;
+    ledPinReady = true;
+  }
+  uint8_t config = 0;
+  if (readBaseRegisters(device, stanbot::kRegLedConfig, &config, 1) != ESP_OK) return false;
+  const uint16_t color = lit ? stanbot::rgb565(stanbot::LightBar::kBlueR, stanbot::LightBar::kBlueG,
+                                               stanbot::LightBar::kBlueB) : 0;
+  stanbot::ExpanderWrite writes[25];
+  const size_t n = stanbot::ledColorWrites(color, config, writes);
+  for (size_t i = 0; i < n; ++i)
+    if (!writeBase(device, writes[i].reg, writes[i].value)) return false;
+  return true;
+}
+
+// Checks ten times a second; writes only when the state changes, or to retry a
+// write that failed. The first call turns the bar off, whatever it showed.
+void serviceLightBar(i2c_master_dev_handle_t sessionDevice) {
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - nextLightBarCheckMs) < 0) return;
+  nextLightBarCheckMs = now + 100;
+  const bool attending = faceAttendedEver.load() && now - faceAttendedMs.load() < 200;
+  const bool changed = lightBar.update(attending, now);
+  if (!changed && lightBarApplied) return;
+  i2c_master_dev_handle_t device = sessionDevice;
+  i2c_master_bus_handle_t master = nullptr;
+  if (device == nullptr) {
+    i2c_device_config_t config{};
+    config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    config.device_address = 0x6f;
+    config.scl_speed_hz = 100000;
+    if (i2c_master_get_bus_handle(kSccbPort, &master) != ESP_OK ||
+        i2c_master_bus_add_device(master, &config, &device) != ESP_OK) {
+      lightBarApplied = false;   // try again next check
+      return;
+    }
+  }
+  lightBarApplied = applyLightBar(device, lightBar.lit);
+  if (sessionDevice == nullptr) i2c_master_bus_rm_device(device);
+}
+
 struct EnableSnapshot {
   uint8_t mode = 0, latch = 0, input = 0;
   esp_err_t modeError = ESP_ERR_INVALID_STATE;
@@ -1830,6 +1893,7 @@ void runFollowSession() {
           if (otaActive.load()) { result = "stopped_for_update"; break; }
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
+          serviceLightBar(device);   // the session's handle: no second device on the expander
           ++iterations;
           if (!captureDecoupled) {   // task creation failed: the old, slower path
             pollNetworkCommands();
@@ -2142,6 +2206,7 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
+    serviceLightBar(nullptr);
     {
       const uint32_t request = registerRequest.exchange(0);
       if (request & (1u << 25)) {
@@ -2292,6 +2357,10 @@ void loop() {
   }
   if (gazeBlinkRequested.exchange(false)) {
     eyes.blinkNow(now);
+  }
+  if (eyes.attending(now)) {
+    faceAttendedMs.store(now);
+    faceAttendedEver.store(true);
   }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {

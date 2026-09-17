@@ -44,7 +44,8 @@ struct StanbotEyesView: View {
     var look: CGPoint? = nil
     /// Closed eyes: asleep, not connected.
     var asleep = false
-    /// Cyan when attending to someone, as on the robot; soft grey otherwise.
+    /// Whether attending to someone. The irises stay grey either way: on the
+    /// robot, a face now lights the body's LED bar blue instead.
     var attending = false
     /// Draw the robot's black screen behind the eyes.
     var screen = true
@@ -273,14 +274,14 @@ struct StanbotEyesView: View {
         let base = max(6, min(18, height / 4) * pose.pupilScale)
         // Dilation widens the pupil, never past the edge of the eye.
         let pupil = min(base * dilation, min(pose.width, height) / 2 - 4)
-        let iris: Color = attending ? Color(red: 0, green: 1, blue: 1) : Color(white: 0.74)
+        let iris = Color(white: 0.74)
         let px = gaze.x * 18, py = gaze.y * 12
         return ZStack {
             RoundedRectangle(cornerRadius: radius * scale, style: .continuous)
                 .fill(iris)
                 .frame(width: pose.width * scale, height: height * scale)
                 // Lit pixels bleed a little light, as on the robot's screen.
-                .shadow(color: screenLook ? iris.opacity(attending ? 0.7 : 0.35) : .clear, radius: 14 * scale)
+                .shadow(color: screenLook ? iris.opacity(0.35) : .clear, radius: 14 * scale)
             Circle()
                 .fill(.black)
                 .frame(width: max(pupil, 6) * 2 * scale, height: max(pupil, 6) * 2 * scale)
