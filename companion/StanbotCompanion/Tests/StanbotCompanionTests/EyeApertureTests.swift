@@ -129,6 +129,34 @@ final class EyeApertureTests: XCTestCase {
         XCTAssertEqual(half.left, (midWake.left + later.left) / 2, accuracy: 1e-9)
     }
 
+    /// Light through the lids: there at once on waking, gone when the eyes are
+    /// wide open; there as they close, gone by the end so sleep is black.
+    func testLidLightComesAndGoesWithTheLids() {
+        XCTAssertEqual(EyeMotionSequence.wake(at: 0).lidLight, 0, "black at the very start")
+        XCTAssertGreaterThan(EyeMotionSequence.wake(at: 0.4).lidLight, 0.9, "the room glows through at once")
+        XCTAssertEqual(EyeMotionSequence.State.open.lidLight, 0, "nothing to glow through when wide open")
+        XCTAssertEqual(EyeMotionSequence.wake(at: EyeMotionSequence.wakeDuration).lidLight, 0)
+        let asleep = EyeMotionSequence.sleepDuration
+        XCTAssertGreaterThan(EyeMotionSequence.sleep(at: asleep * 0.5).lidLight, 0.8)
+        XCTAssertEqual(EyeMotionSequence.sleep(at: asleep).lidLight, 0, "sleep ends black, for the z's")
+        XCTAssertEqual(EyeMotionSequence.State.closed.lidLight, 0)
+    }
+
+    /// The Metal eye view and the SwiftUI mask must agree on where the eyes are.
+    func testWindowsMatchThePath() {
+        let state = EyeMotionSequence.wake(at: 1.2)
+        let windows = EyeApertureShape.windows(state: state, pose: pose, in: frame)
+        XCTAssertEqual(windows.count, 2)
+        let path = EyeApertureShape(state: state, pose: pose).path(in: frame)
+        let union = windows.map(\.rect).reduce(CGRect.null) { $0.union($1) }
+        XCTAssertEqual(path.boundingRect.width, union.width, accuracy: 0.5)
+        XCTAssertEqual(path.boundingRect.height, union.height, accuracy: 0.5)
+        // A closed eye is an empty window, not a missing one: the shader needs both.
+        let oneEye = EyeApertureShape.windows(state: .init(left: 0.5, right: 0, growth: 0, focus: 0), pose: pose, in: frame)
+        XCTAssertEqual(oneEye.count, 2)
+        XCTAssertTrue(oneEye[1].rect.isEmpty)
+    }
+
     func testFallingAsleepClosesWithOneFlutter() {
         XCTAssertEqual(EyeMotionSequence.sleep(at: 0).left, 1, accuracy: 0.001)
         XCTAssertEqual(EyeMotionSequence.sleep(at: EyeMotionSequence.sleepDuration), .closed)

@@ -27,6 +27,10 @@ enum EyeMotionSequence {
         var growth: Double
         /// 0 soft and washed out, 1 sharp: focus arrives with the lids.
         var focus: Double
+        /// 0 none ... 1 the room glowing warm through closed lids (Metal only).
+        /// Nothing once the eyes are wide open, and nothing once fully asleep,
+        /// so the sleeping state is black.
+        var lidLight = 0.0
 
         static let open = State(left: 1, right: 1, growth: 1, focus: 1)
         static let closed = State(left: 0, right: 0, growth: 0, focus: 0)
@@ -35,7 +39,8 @@ enum EyeMotionSequence {
         func blended(toward other: State, by t: Double) -> State {
             let t = t.clamped()
             return State(left: left + (other.left - left) * t, right: right + (other.right - right) * t,
-                         growth: growth + (other.growth - growth) * t, focus: focus + (other.focus - focus) * t)
+                         growth: growth + (other.growth - growth) * t, focus: focus + (other.focus - focus) * t,
+                         lidLight: lidLight + (other.lidLight - lidLight) * t)
         }
     }
 
@@ -56,7 +61,10 @@ enum EyeMotionSequence {
         let growth = easeIn(progress(t, from: 0.74, to: 1), power: 2.2)
         // Focus follows the lids, and arrives a little after them.
         let focus = easeInOut(progress(min(left, right + 0.1), from: 0.25, to: 0.95))
-        return State(left: left, right: right, growth: growth, focus: focus)
+        // The room's light reaches the lids at once on waking, and stops
+        // mattering as the eyes open out to the whole picture.
+        let lidLight = easeInOut(progress(t, from: 0, to: 0.10)) * (1 - growth)
+        return State(left: left, right: right, growth: growth, focus: focus, lidLight: lidLight)
     }
 
     /// Falling asleep: the lids come down, catch themselves once, then go.
@@ -71,7 +79,10 @@ enum EyeMotionSequence {
         // The aperture closes in from the frame almost at once.
         let growth = pow(1 - (t / 0.3).clamped(), 2)
         let focus = easeInOut(progress(max(left, right), from: 0.2, to: 0.9))
-        return State(left: left, right: right, growth: growth, focus: focus)
+        // Light through the lids as they come down, dying away into sleep so
+        // the end is black.
+        let lidLight = (1 - growth) * (1 - easeInOut(progress(t, from: 0.62, to: 1)))
+        return State(left: left, right: right, growth: growth, focus: focus, lidLight: lidLight)
     }
 
     /// The lid's own rise: a first crack of light, back down, then a long
@@ -126,8 +137,25 @@ struct EyeApertureShape: Shape {
         }
     }
 
+    /// The two eye windows as rectangles with their corner radius, shared by
+    /// this shape's path and the Metal eye view so they agree exactly. A closed
+    /// eye is an empty rectangle.
+    static func windows(state: EyeMotionSequence.State, pose: EyePose, in rect: CGRect) -> [(rect: CGRect, radius: CGFloat)] {
+        let shape = EyeApertureShape(state: state, pose: pose)
+        return shape.eyeRects(in: rect)
+    }
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
+        for window in eyeRects(in: rect) where !window.rect.isEmpty {
+            path.addRoundedRect(in: window.rect, cornerSize: CGSize(width: window.radius, height: window.radius),
+                                style: .continuous)
+        }
+        return path
+    }
+
+    private func eyeRects(in rect: CGRect) -> [(rect: CGRect, radius: CGFloat)] {
+        var windows: [(rect: CGRect, radius: CGFloat)] = []
         let scale = min(rect.width / 320, rect.height / 240)
         let sx = rect.width / 320, sy = rect.height / 240
         // Fully grown, one window covers the whole frame on its own, whatever
@@ -136,7 +164,7 @@ struct EyeApertureShape: Shape {
         let g = state.growth.clamped()
         for (centre, openness) in [(102.0, state.left), (218.0, state.right)] {
             let open = openness.clamped()
-            guard open > 0.001 else { continue }
+            guard open > 0.001 else { windows.append((.zero, 0)); continue }
             // Lids gather speed at the ends of their travel.
             let eyeHeight = pose.height * scale * pow(open, 1.35)
             let eyeWidth = pose.width * scale
@@ -145,18 +173,19 @@ struct EyeApertureShape: Shape {
             // While the eye is narrow its centre sits low: the upper lid travels.
             let drop = (1 - open) * pose.height * scale * 0.3 * (1 - g)
             let radius = min(min(30, pose.height / 2) * scale * (1 + 3 * g), height / 2)
-            path.addRoundedRect(in: CGRect(x: centre * sx - width / 2,
-                                           y: 120 * sy + drop - height / 2,
-                                           width: width, height: height),
-                                cornerSize: CGSize(width: radius, height: radius),
-                                style: .continuous)
+            windows.append((CGRect(x: centre * sx - width / 2, y: 120 * sy + drop - height / 2,
+                                   width: width, height: height), radius))
         }
-        return path
+        return windows
     }
 }
 
-/// What the aperture does to the picture: masks it to the eye windows, and keeps
-/// it out of focus — soft, dim and drained of colour — until the eyes are open.
+/// What the aperture does to the picture: shows it only through the eye
+/// windows, out of focus until the eyes are open. With the shader library it is
+/// one Metal pass (StanbotEyeView.metal): bokeh defocus inside the windows and
+/// the room's light glowing warm through the lids around them. Without it
+/// (swift test, swift run), SwiftUI's blur and mask: the same choreography,
+/// plainer light.
 struct EyeApertureVeil: ViewModifier {
     var state: EyeMotionSequence.State
     var pose: EyePose
@@ -171,6 +200,20 @@ struct EyeApertureVeil: ViewModifier {
             // the mask while awake made SwiftUI rebuild the subtree, and the
             // animation was lost (2026-09-17).
             let soft = 1 - state.focus
+            if StanbotShaders.library != nil {
+                content.visualEffect { view, proxy in
+                    let windows = EyeApertureShape.windows(state: state, pose: pose,
+                                                           in: CGRect(origin: .zero, size: proxy.size))
+                    let scale = min(proxy.size.width / 320, proxy.size.height / 240)
+                    let shader = StanbotShaders.eyeView(
+                        size: proxy.size, left: windows[0].rect, right: windows[1].rect,
+                        radius: max(windows[0].radius, windows[1].radius),
+                        focus: state.focus, lidLight: state.lidLight, softness: (2 + 4 * soft) * scale)
+                    return view.layerEffect(shader ?? Shader(function: .init(library: .default, name: "missing"), arguments: []),
+                                            maxSampleOffset: StanbotShaders.eyeViewReach,
+                                            isEnabled: shader != nil)
+                }
+            } else {
             content
                 .blur(radius: 18 * soft * soft)
                 .saturation(1 - 0.55 * soft)
@@ -184,6 +227,7 @@ struct EyeApertureVeil: ViewModifier {
                         // Lids are skin, not a stencil; softer while barely open.
                         .blur(radius: 3 + 5 * soft)
                 }
+            }
         }
     }
 }

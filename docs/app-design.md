@@ -31,6 +31,20 @@ the robot's view, with a little of the robot's character in it.
   frame is held while the eyes close, because the robot stops sending as soon as
   it is asked to sleep, and the app stops analysing once they are shut. Reduce
   Motion fades instead.
+  **Metal (2026-09-17):** with the shader library the veil is one `layerEffect`
+  pass (`Shaders/StanbotEyeView.metal`) adding the two things SwiftUI cannot do.
+  *Light through the lids*: outside the eye windows the frame is not black but a
+  dim, warm, heavily diffused version of the scene, brightest toward whatever is
+  bright out there (eighteen wide taps in three rings, the pattern turned by a
+  per-pixel hash so the scene's edges become a fine still grain rather than
+  ghost rectangles); it is there the instant waking begins, gone once the eyes
+  are wide open, and dies away into sleep so the z's sit on black. *Bokeh*: the
+  defocus is a disc of samples weighted toward the bright ones, so a window or a
+  lamp blooms instead of smearing. The mask and the shader take the eye windows
+  from one function (`EyeApertureShape.windows`). Without the library (swift
+  test, swift run) it falls back to SwiftUI's blur and mask: same choreography,
+  plainer light. `STANBOT_WAKE_STRIP=1` with `STANBOT_SHADER_LIBRARY` set renders
+  the filmstrip through the real shader.
   A sequence interrupted by another (Sleep clicked mid-wake, or the reverse)
   carries on from where the eyes are, blended over 0.3 s, rather than snapping
   to the new sequence's start; and the robot's report of its sleep state is
@@ -208,9 +222,11 @@ screen. The grid is a SwiftUI `colorEffect` backed by a Metal function,
 shadow on the lit irises. Both are off with Increase Contrast; the grid only
 appears on eyes at least 120 pt wide and not while scanning.
 
-Metal is used only here, deliberately: video display, eye drawing and vision
-already run on the GPU through SwiftUI, VideoToolbox, Vision and Core ML, and
-none of them was a bottleneck.
+Metal is used for three looks, each something SwiftUI cannot draw: this LCD
+grid, the speaking mouth's glow (`StanbotMouth.metal`), and the view through
+the eyelids (`StanbotEyeView.metal`). Everything else — video display, eye
+drawing, vision — already runs on the GPU through SwiftUI, VideoToolbox, Vision
+and Core ML, and none of it was a bottleneck.
 
 Checking it: the window snapshot cannot capture shader effects, so an opt-in
 test renders the real eyes with and without it and measures the grid:

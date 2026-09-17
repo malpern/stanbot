@@ -17,6 +17,23 @@ enum StanbotShaders {
                                          .float(level), .float(presence), .float(time)]) }
     }
 
+    /// Looking out through Stanbot's eyes (Shaders/StanbotEyeView.metal): bokeh
+    /// defocus inside the two eye windows, and the room's light glowing warm
+    /// through the lids outside them. Eyes are (centre x, centre y, half width,
+    /// half height) in the layer's points.
+    static func eyeView(size: CGSize, left: CGRect, right: CGRect, radius: Double,
+                        focus: Double, lidLight: Double, softness: Double) -> Shader? {
+        func eye(_ rect: CGRect) -> Shader.Argument {
+            .float4(rect.midX, rect.midY, rect.width / 2, rect.height / 2)
+        }
+        return library.map { Shader(function: ShaderFunction(library: $0, name: "stanbotEyeView"),
+                                    arguments: [.float2(size), eye(left), eye(right), .float(radius),
+                                                .float(focus), .float(lidLight), .float(softness)]) }
+    }
+    /// How far the eye view samples from a pixel: the bokeh disc and the wide
+    /// taps for the light through the lids.
+    static let eyeViewReach = CGSize(width: 160, height: 160)
+
     /// The faint pixel grid of the robot's LCD. `cell` is one "pixel" in points.
     static func lcd(cell: Double, strength: Double) -> Shader? {
         library.map { Shader(function: ShaderFunction(library: $0, name: "stanbotLCD"),
