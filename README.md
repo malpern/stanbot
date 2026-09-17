@@ -14,9 +14,13 @@ the attached robot: USB flashing and factory restore, the animated display, live
 640×480 capture streamed as QVGA JPEG, and a full 180° yaw sweep plus a first 5°
 pitch move, both observed physically. The companion app locks onto a face and
 holds it, and supervised head following turns the head toward it (yaw) without
-overshooting. Up-and-down following is built and host-tested in a
-`STANBOT_FOLLOW_PITCH=1` build but has not run on the robot, as have searching
-for a lost face and eased motion. See [head following](docs/head-following.md).
+overshooting. Built and host-tested but not yet run on the robot: up-and-down
+following (`STANBOT_FOLLOW_PITCH=1`), searching for a lost face, eased motion,
+eyes that look at the face, telling several people apart, continuous following
+under a renewable power lease, telemetry integrity checks, staged yaw widening,
+a guided pitch-level finder, and stopping a session before an OTA update. A
+replay tool turns each session log into a chart. See
+[head following](docs/head-following.md).
 
 Not yet verified: pitch following on the robot, pitch travel beyond 5°, yaw
 beyond centre ±48, image quality under varied lighting, and following started
