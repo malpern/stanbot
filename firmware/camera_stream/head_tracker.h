@@ -289,6 +289,9 @@ class HeadTracker {
   }
 
   int commandedYaw() const { return yaw_; }
+  // Where the latest observation asked the head to go.
+  int goalYaw() const { return goalYaw_; }
+  int goalPitch() const { return goalPitch_; }
   int commandedPitch() const { return pitch_; }
   // This session's pitch bounds, for the firmware's feedback envelope.
   int pitchLow() const { return pitchLow_; }

@@ -20,6 +20,7 @@
 #include "power_lease.h"
 #include "telemetry_check.h"
 #include "pitch_level.h"
+#include "head_eye.h"
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
@@ -115,6 +116,11 @@ std::atomic<int32_t> targetXMilli{0}, targetYMilli{0}, targetConfidenceMilli{0};
 std::atomic<int32_t> gazeXMilli{0}, gazeYMilli{0};
 std::atomic<uint32_t> gazeSequence{0};
 std::atomic<bool> gazeEngaged{false};
+// During a follow session the session owns where the eyes aim: the face's
+// position corrected for how far the head has turned since its frame
+// (head_eye.h). G and T lines then update only the engaged flag.
+std::atomic<bool> sessionOwnsGaze{false};
+std::atomic<bool> gazeBlinkRequested{false};
 std::atomic<bool> followRequested{false};
 std::atomic<bool> followStopRequested{false};
 // True while ANY motion routine (follow, sweeps, nudges, pitch level, power
@@ -578,7 +584,8 @@ void handleCommand(const char* line) {
       targetYMilli.store(lroundf(y * 1000.0f));
       targetConfidenceMilli.store(lroundf(confidence * 1000.0f));
       targetSequence.store(static_cast<uint32_t>(sequence));
-      if (confidence >= stanbot::kGazeConfidence && x >= -1.0f && x <= 1.0f && y >= -1.0f && y <= 1.0f) {
+      if (!sessionOwnsGaze.load() && confidence >= stanbot::kGazeConfidence &&
+          x >= -1.0f && x <= 1.0f && y >= -1.0f && y <= 1.0f) {
         gazeXMilli.store(lroundf(x * 1000.0f));
         gazeYMilli.store(lroundf(y * 1000.0f));
         gazeSequence.fetch_add(1);
@@ -590,9 +597,11 @@ void handleCommand(const char* line) {
     bool engaged = false;
     if (stanbot::parseGazeLine(line + 2, x, y, engaged)) {
       gazeEngaged.store(engaged);
-      gazeXMilli.store(lroundf(x * 1000.0f));
-      gazeYMilli.store(lroundf(y * 1000.0f));
-      gazeSequence.fetch_add(1);
+      if (!sessionOwnsGaze.load()) {
+        gazeXMilli.store(lroundf(x * 1000.0f));
+        gazeYMilli.store(lroundf(y * 1000.0f));
+      }
+      gazeSequence.fetch_add(1);   // also refreshes the engaged flag's lapse
     }
   }
   else if (strcmp(line, "Z") == 0) { resetStats.store(true); maxEyeGapMs.store(0); }
@@ -1731,7 +1740,7 @@ void runFollowSession() {
   followConfig.pitchEnabled = stanbot::kFollowPitchEnabled;
   const bool pitchOn = followConfig.pitchEnabled;
   stanbot::HeadTracker tracker(limits, followConfig);
-  struct TracePoint { uint32_t elapsed; int yawGoal, yawPos, pitchGoal, pitchPos; uint8_t mode; };
+  struct TracePoint { uint32_t elapsed; int yawGoal, yawPos, pitchGoal, pitchPos; uint8_t mode; int eyeX; };
   // A session can now run for minutes, far more than 400 samples at 40 ms. When
   // the buffer fills, every other sample is dropped and the stride doubles,
   // so the trace always spans the whole session at an even, coarser spacing.
@@ -1785,6 +1794,10 @@ void runFollowSession() {
         const uint32_t framesBefore = stats.sent;
         captureDecoupled = startSessionCapture(basePriority);
         lastTargetAt = millis();   // the host gets a full idle period to send the first target
+        float eyeFrameX = 0, eyeFrameY = 0;
+        int eyeYawThen = yawPos, eyePitchThen = pitchPos;
+        bool haveEyeFrame = false;
+        sessionOwnsGaze.store(true);
         for (;;) {
           if (powerCutoff.done.load()) { result = "cutoff_before_completion"; break; }
           const uint32_t now = millis();
@@ -1817,7 +1830,35 @@ void runFollowSession() {
               targetXMilli.load() / 1000.0f, targetYMilli.load() / 1000.0f,
               targetConfidenceMilli.load() / 1000.0f, now,
               sentMs != 0 ? sentMs : (now > kFollowAssumedLatencyMs ? now - kFollowAssumedLatencyMs : now));
-            if (taken) { ++observations; lastTargetAt = now; } else ++rejected;
+            if (taken) {
+              ++observations;
+              lastTargetAt = now;
+              eyeFrameX = targetXMilli.load() / 1000.0f;
+              eyeFrameY = targetYMilli.load() / 1000.0f;
+              const uint32_t frameMs = sentMs != 0 ? sentMs : now;
+              eyeYawThen = tracker.yawAt(frameMs);
+              eyePitchThen = tracker.pitchAt(frameMs);
+              haveEyeFrame = true;
+              // A big turn coming: blink with it, as people do.
+              if (stanbot::largeGazeShift(tracker.commandedYaw(), tracker.goalYaw(),
+                                          tracker.commandedPitch(), tracker.goalPitch()))
+                gazeBlinkRequested.store(true);
+            } else ++rejected;
+          }
+          // Only while the face is current: once the tracker gives up on it and
+          // searches, the eyes let go too instead of aiming at a stale position.
+          if (haveEyeFrame && now - lastTargetAt < followConfig.targetTimeoutMs) {
+            // Eyes lead, head follows: aim the eyes where the face is now, not
+            // where it was in the frame, as the head turns toward it.
+            const stanbot::ImageOffset aim = stanbot::compensateForHead(
+              eyeFrameX, eyeFrameY, eyeYawThen, tracker.commandedYaw(), eyePitchThen, tracker.commandedPitch(),
+              limits, followConfig);
+            const int32_t ax = lroundf(aim.x * 1000.0f), ay = lroundf(aim.y * 1000.0f);
+            if (abs(ax - gazeXMilli.load()) >= 5 || abs(ay - gazeYMilli.load()) >= 5) {
+              gazeXMilli.store(ax);
+              gazeYMilli.store(ay);
+              gazeSequence.fetch_add(1);
+            }
           }
           const stanbot::FollowCommand command = tracker.step(now);
           if (command.send) {
@@ -1868,7 +1909,7 @@ void runFollowSession() {
                 traceStride *= 2;
               }
               trace[traceCount++] = {now - started, lastYawSent, yawPos, lastPitchSent, pitchPos,
-                                     static_cast<uint8_t>(command.mode)};
+                                     static_cast<uint8_t>(command.mode), static_cast<int>(gazeXMilli.load())};
             }
           }
           const uint32_t iterationMs = millis() - iterationStart;
@@ -1876,6 +1917,7 @@ void runFollowSession() {
           vTaskDelay(pdMS_TO_TICKS(5));
         }
         sessionEndMs = millis();
+        sessionOwnsGaze.store(false);   // G lines aim the eyes again
         if (captureDecoupled) captureStopMs = stopSessionCapture(basePriority);
         sessionFrames = stats.sent - framesBefore;
       }
@@ -1906,8 +1948,9 @@ void runFollowSession() {
   // were unusable for deciding whether the head had behaved.
   const bool wasStreaming = beginTelemetry();
   for (unsigned i = 0; i < traceCount; ++i)
-    Telemetry.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u}\n",
-                  (unsigned long)trace[i].elapsed, trace[i].yawGoal, trace[i].yawPos, trace[i].pitchGoal, trace[i].pitchPos, trace[i].mode);
+    Telemetry.printf("SBPD {\"phase\":\"follow_trace\",\"elapsed_ms\":%lu,\"yaw_goal\":%d,\"yaw\":%d,\"pitch_goal\":%d,\"pitch\":%d,\"mode\":%u,\"eye_x\":%d}\n",
+                  (unsigned long)trace[i].elapsed, trace[i].yawGoal, trace[i].yawPos, trace[i].pitchGoal, trace[i].pitchPos, trace[i].mode,
+                  trace[i].eyeX);
   printEnable("immediate", immediate);
   printEnable("settled", settled);
   printEnable("after_cutoff", after);
@@ -2218,6 +2261,9 @@ void loop() {
     const stanbot::Gaze look = stanbot::gazeForImage(gazeXMilli.load() / 1000.0f, gazeYMilli.load() / 1000.0f);
     eyes.attend(look.x, look.y, now);
     eyes.engage(gazeEngaged.load(), now);
+  }
+  if (gazeBlinkRequested.exchange(false)) {
+    eyes.blinkNow(now);
   }
   if (eyeFrameReady) {
     if (eyes.update(eyeFrame, now)) {

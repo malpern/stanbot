@@ -34,6 +34,13 @@ class StanbotEyes {
     hasTarget_ = true;
   }
 
+  // Blink now, as people do with a large gaze shift, unless one just happened.
+  void blinkNow(uint32_t now) {
+    if (blinking_ || now - blinkStartedMs_ < 1000) return;
+    blinking_ = true;
+    blinkStartedMs_ = now;
+  }
+
   // The person being looked at faces the robot (from the Mac's head-pose
   // check). Lapses 900 ms after the last report, like attend().
   void engage(bool engaged, uint32_t now) {

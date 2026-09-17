@@ -90,6 +90,18 @@ drawn slightly together when the face is close (vergence, from face size),
 lids that lower when looking down, and two catchlights that lag the pupil
 slightly. Under Reduce Motion the eyes stay still and centred unless locked on.
 
+**Eyes lead, head follows (robot, during follow sessions).** The eyes jump
+in tens of milliseconds and the head eases over hundreds, so the eyes reach a
+person first. While the head turns, the eyes aim where the face is now rather
+than where it was in the ~300 ms old camera frame: the session corrects them
+for the head's motion since that frame (`head_eye.h`), so the gaze holds on the
+person as the eyes return to centre, like the counter-rotation of a person's
+eyes. In a simulated loop that cuts the gaze error while turning from 42 raw
+(worst) to 6. A turn toward a new goal of about 15 degrees or more brings a
+blink with it. The follow trace records `eye_x`, and the replay chart plots
+where the eyes aimed next to the head. The Mac eyes do not mirror this yet:
+the app only learns the head's motion from telemetry after a session.
+
 This is expression, not perception: "engaged" means a face turned toward the
 camera, the caption is "Looking at you" (what Stanbot does), and nothing claims
 eye contact. In the control bar the eyes are 56 pt, too small for dilation and

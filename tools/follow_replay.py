@@ -150,8 +150,13 @@ def render(session, name):
     for a, b in zip(trace, trace[1:]):
         bands.append((a["elapsed_ms"] / 1000, b["elapsed_ms"] / 1000, MODES.get(a.get("mode"), ("", "#000"))[1]))
     series = lambda key: [(p["elapsed_ms"] / 1000, p[key]) for p in trace if p.get(key, -1) >= 0]
-    yaw = chart("Yaw (raw)", [("commanded", series("yaw_goal"), "#1a73e8", "4 3"), ("measured", series("yaw"), "#174ea6", "")],
-                t_end, mode_bands=bands)
+    yaw_series = [("commanded", series("yaw_goal"), "#1a73e8", "4 3"), ("measured", series("yaw"), "#174ea6", "")]
+    # Where the eyes aimed, as a head direction: the head plus the eyes' offset
+    # in the image (eye_x is image units x 1000; 96 raw per image unit, head_tracker.h).
+    eye_aim = [(p["elapsed_ms"] / 1000, p["yaw"] + p["eye_x"] / 1000 * 96) for p in trace if "eye_x" in p and p.get("yaw", -1) >= 0]
+    if eye_aim:
+        yaw_series.append(("eyes aim (head + eyes)", eye_aim, "#e8710a", ""))
+    yaw = chart("Yaw (raw)", yaw_series, t_end, mode_bands=bands)
     pitch = chart("Pitch (raw)", [("commanded", series("pitch_goal"), "#e37400", "4 3"), ("measured", series("pitch"), "#b06000", "")],
                   t_end, mode_bands=bands)
     face_x, face_y, sent = [], [], []

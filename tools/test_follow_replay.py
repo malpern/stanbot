@@ -13,7 +13,7 @@ DESK {"t":100.100,"frame_width":1280,"faces":[[0.500,0.500,0.100,0.130,0.93,-12.
 DESK {"t":100.300,"frame_width":1280,"faces":[[0.500,0.500,0.100,0.130,0.93,48.0,5.0,"away"]],"in_use_by_another_app":true,"center_stage_active":true}
 SBTB {"telemetry":"begin","plan":"follow"}\r
 SBPD {"phase":"follow_trace","elapsed_ms":0,"yaw_goal":460,"yaw":460,"pitch_goal":620,"pitch":620,"mode":0}
-SBPD {"phase":"follow_trace","elapsed_ms":100,"yaw_goal":470,"yaw":466,"pitch_goal":620,"pitch":620,"mode":1}
+SBPD {"phase":"follow_trace","elapsed_ms":100,"yaw_goal":470,"yaw":466,"pitch_goal":620,"pitch":620,"mode":1,"eye_x":250}
 SBPD {"phase":"follow_trace","elapsed_ms":200,"yaw_goal":480,"yaw":478,"pitch_goal":620,"pitch":620,"mode":1}
 SBPD {"phase":"follow_trace","elapsed_ms":300,"yaw_goal":470,"yaw":471,"pitch_goal":620,"pitch":620,"mode":3}
 SBPD {"phase":"follow_trace","elapsed_ms":400,"yaw_goal":460,"yaw":461,"pitch_goal":620,"pitch":620,"mode":2}
@@ -44,6 +44,7 @@ def main():
         assert follow_replay.main([log]) == 0
         page = open(os.path.join(tmp, "follow-test.html")).read()
         assert "<svg" in page and "session_idle" in page and "arrived damaged" in page
+        assert "eyes aim" in page
     print("follow replay: all checks passed")
 
 
