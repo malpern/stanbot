@@ -58,6 +58,11 @@ struct StanbotEyesView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointer: CGPoint?
     @State private var tapped: EyeReaction?
+    /// Idle gaze and blink as state changed a few times a second with SwiftUI
+    /// animations, not a 30 fps clock: measured 2026-09-16, the clock cost
+    /// 9-13% CPU with the eyes on screen and nothing happening.
+    @State private var drift = CGPoint.zero
+    @State private var blinking = false
 
     /// The newest of the reaction handed in and one from a click.
     private var current: EyeReaction? {
@@ -113,69 +118,86 @@ struct StanbotEyesView: View {
     }
 
     private func face(motion: EyeMotion) -> some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: asleep && current == nil)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            GeometryReader { proxy in
-                // The robot's display is 320x240; everything scales from there.
-                let scale = min(proxy.size.width / 320, proxy.size.height / 240)
-                let pose = EyePose.of(asleep ? .sleepy : emotion)
-                let blink = asleep ? 0 : Self.blink(at: t)
-                let openness = max(0, (1 - blink) * motion.openness)
-                ZStack {
-                    if screen {
-                        RoundedRectangle(cornerRadius: 36 * scale, style: .continuous).fill(.black)
-                    }
-                    HStack(spacing: (218 - 102) * scale - pose.width * scale) {
-                        if asleep {
-                            closedEye(width: pose.width, scale: scale)
-                            closedEye(width: pose.width, scale: scale)
-                        } else {
-                            eye(pose: pose, scale: scale, openness: openness, gaze: gaze(at: t))
-                            eye(pose: pose, scale: scale, openness: openness, gaze: gaze(at: t))
-                        }
-                    }
-                    .scaleEffect(motion.scale)
-                    .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)
+        GeometryReader { proxy in
+            // The robot's display is 320x240; everything scales from there.
+            let scale = min(proxy.size.width / 320, proxy.size.height / 240)
+            let pose = EyePose.of(asleep ? .sleepy : emotion)
+            let openness = max(0, (blinking && !asleep ? 0 : 1) * motion.openness)
+            ZStack {
+                if screen {
+                    RoundedRectangle(cornerRadius: 36 * scale, style: .continuous).fill(.black)
                 }
-                .frame(width: 320 * scale, height: 240 * scale)
-                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                .contentShape(Rectangle())
-                .onContinuousHover { phase in
-                    guard interactive, !asleep else { pointer = nil; return }
-                    switch phase {
-                    case .active(let location):
-                        pointer = CGPoint(x: max(-1, min(1, (location.x / proxy.size.width) * 2 - 1)),
-                                          y: max(-1, min(1, (location.y / proxy.size.height) * 2 - 1)))
-                    case .ended:
-                        pointer = nil
+                HStack(spacing: (218 - 102) * scale - pose.width * scale) {
+                    if asleep {
+                        closedEye(width: pose.width, scale: scale)
+                        closedEye(width: pose.width, scale: scale)
+                    } else {
+                        eye(pose: pose, scale: scale, openness: openness, gaze: gaze)
+                        eye(pose: pose, scale: scale, openness: openness, gaze: gaze)
                     }
                 }
-                .onTapGesture {
-                    guard interactive, !asleep else { return }
-                    tapped = EyeReaction(kind: .giggle)
+                .scaleEffect(motion.scale)
+                .offset(x: motion.dx * scale * 2, y: motion.dy * scale * 2)
+            }
+            .frame(width: 320 * scale, height: 240 * scale)
+            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard interactive, !asleep else { pointer = nil; return }
+                switch phase {
+                case .active(let location):
+                    pointer = CGPoint(x: max(-1, min(1, (location.x / proxy.size.width) * 2 - 1)),
+                                      y: max(-1, min(1, (location.y / proxy.size.height) * 2 - 1)))
+                case .ended:
+                    pointer = nil
                 }
+            }
+            .onTapGesture {
+                guard interactive, !asleep else { return }
+                tapped = EyeReaction(kind: .giggle)
+            }
+        }
+        .task(id: asleep) { await blinkLoop() }
+        .task(id: IdleKey(scanning: scanning, asleep: asleep, reduceMotion: reduceMotion)) { await gazeLoop() }
+    }
+
+    private struct IdleKey: Hashable { let scanning: Bool, asleep: Bool, reduceMotion: Bool }
+
+    /// A 180 ms blink every five to eight seconds while awake.
+    private func blinkLoop() async {
+        guard !asleep else { blinking = false; return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 5000...8000)))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.09)) { blinking = true }
+            try? await Task.sleep(for: .milliseconds(90))
+            withAnimation(.easeOut(duration: 0.09)) { blinking = false }
+        }
+    }
+
+    /// Scanning sweeps side to side; otherwise a slow wander. Nothing under
+    /// Reduce Motion, and nothing while asleep.
+    private func gazeLoop() async {
+        guard !asleep, !reduceMotion else { drift = .zero; return }
+        var right = true
+        while !Task.isCancelled {
+            if scanning {
+                // Look, pause, look the other way: reads as searching, and the
+                // pauses keep a loader that may run a while from animating constantly.
+                withAnimation(.easeInOut(duration: 0.6)) { drift = CGPoint(x: right ? 0.85 : -0.85, y: 0) }
+                right.toggle()
+                try? await Task.sleep(for: .milliseconds(1300))
+            } else {
+                withAnimation(.easeInOut(duration: 1.6)) {
+                    drift = CGPoint(x: Double.random(in: -0.2...0.2), y: Double.random(in: -0.08...0.08))
+                }
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 1800...3200)))
             }
         }
     }
 
     /// Pointer first, then the face being looked at, then a scan or an idle drift.
-    private func gaze(at t: TimeInterval) -> CGPoint {
-        if let pointer { return pointer }
-        if let look { return look }
-        if reduceMotion { return .zero }
-        if scanning { return CGPoint(x: sin(t * 2.2) * 0.85, y: 0) }
-        return CGPoint(x: sin(t / 2.4) * 0.18, y: sin(t / 3.1) * 0.08)
-    }
-
-    /// 0 open ... 1 closed. A 180 ms blink roughly every six seconds, livelier
-    /// than the robot's twenty so the Mac face reads as awake at a glance.
-    static func blink(at t: TimeInterval) -> Double {
-        let period = 6.0, length = 0.18
-        let phase = t.truncatingRemainder(dividingBy: period)
-        guard phase < length else { return 0 }
-        let p = phase / length
-        return p < 0.5 ? p * 2 : (1 - p) * 2
-    }
+    private var gaze: CGPoint { pointer ?? look ?? drift }
 
     /// Asleep: two soft downward curves, not a squashed open eye.
     private func closedEye(width: Double, scale: Double) -> some View {

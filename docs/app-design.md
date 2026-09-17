@@ -62,6 +62,26 @@ interruptible, and is skipped or reduced to a fade under Reduce Motion.
 Reactions are tables of six keyframes (`Reactions.swift`), and which one fires
 for a change is a pure rule (`ReactionFacts.reaction`), both tested.
 
+## What it costs
+
+Measured 2026-09-16 on the mini in preview mode (a still preview image, so
+video decoding is not included), 20 one-second `top` samples after 5 s:
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Asleep | 0.1% CPU | 0.1% |
+| Connecting (two sets of scanning eyes) | 13.4% | 6.6% |
+| Seeing someone | 9.0% | 0.6% |
+| Following | 9.8% | 1.3% |
+
+Two causes. The eyes ran on a 30 fps clock even when nothing moved; blinks,
+idle drift and scanning are now state changes a few times a second, animated
+by SwiftUI, so nothing redraws between them. And the "Head powered" dot's
+repeating pulse cost about 9% for the whole session; it now bounces once when
+power comes on and stays steady, with the red label and timer. Energy impact
+tracked CPU in every row. Check any new continuous animation the same way:
+`top -pid <pid> -stats pid,cpu,power`.
+
 ## Rules the personality must not break
 
 - **Safety surfaces stay plain.** Stop, "Head powered", the follow confirmation

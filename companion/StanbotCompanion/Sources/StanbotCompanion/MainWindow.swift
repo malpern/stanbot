@@ -393,7 +393,10 @@ private struct PoweredBadge: View {
             Image(systemName: "circle.fill")
                 .font(.system(size: 7))
                 .foregroundStyle(.red)
-                .symbolEffect(.pulse, options: .repeating)
+                // One bounce when power comes on, then steady. A repeating pulse
+                // cost ~9% CPU for as long as a session ran (measured 2026-09-16);
+                // the red label and running timer already say it is live.
+                .symbolEffect(.bounce, value: since)
             Text("Head powered")
             Text(since, style: .timer).monospacedDigit()
         }

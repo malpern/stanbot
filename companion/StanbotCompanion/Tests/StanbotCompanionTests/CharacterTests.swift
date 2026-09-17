@@ -23,12 +23,6 @@ final class CharacterTests: XCTestCase {
         }
     }
 
-    func testBlinkIsShortAndReturnsOpen() {
-        XCTAssertEqual(StanbotEyesView.blink(at: 1.0), 0)
-        XCTAssertEqual(StanbotEyesView.blink(at: 6.09), 1, accuracy: 0.01)
-        XCTAssertEqual(StanbotEyesView.blink(at: 6.2), 0)
-    }
-
     func testMoodFollowsWhatIsTrue() {
         let face = FaceBox(rect: CGRect(x: 0.6, y: 0.2, width: 0.2, height: 0.2), confidence: 0.9)
         func mood(_ connection: RobotConnection.ConnectionState = .connected("stanbot.local"),
