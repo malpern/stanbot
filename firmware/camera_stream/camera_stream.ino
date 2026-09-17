@@ -17,6 +17,7 @@
 #include <esp_log.h>
 #include <StanbotEyes.h>
 #include "eye_gaze.h"
+#include "power_lease.h"
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
@@ -911,8 +912,13 @@ bool prepareServoBus() {
 
 // One power window per boot. No position goals, torque-on, or EEPROM writes.
 // The independent cutoff task never waits on USB, camera capture, or servo UART.
+// When it fires is power_lease.h: a lease that only head following renews, and
+// a hard maximum set before the task starts that nothing extends.
 struct PowerCutoff {
-  uint32_t deadlineMs = 2000; // Set before task creation; never extended in flight.
+  uint32_t deadlineMs = 2000; // The lease. Set before task creation.
+  uint32_t maxMs = 2000;      // The hard maximum. Set before task creation; never extended.
+  std::atomic<uint32_t> startMs{0};
+  std::atomic<uint32_t> renewedMs{0};
   i2c_master_dev_handle_t device = nullptr;
   uint8_t offValue = 0;
   std::atomic<bool> done{false};
@@ -966,7 +972,16 @@ void printEnable(const char* phase, const EnableSnapshot& state) {
 #include "session_guard.h"
 
 void cutoffTask(void*) {
-  ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(powerCutoff.deadlineMs));
+  // Wakes when notified (the owner ending the window) or when the lease or the
+  // maximum runs out; a renewal just moves the next wake. Without renewals this
+  // is one wait of deadlineMs, as it always was.
+  for (;;) {
+    const stanbot::LeaseTimes times{powerCutoff.startMs.load(), powerCutoff.renewedMs.load(),
+                                    powerCutoff.deadlineMs, powerCutoff.maxMs};
+    const uint32_t remaining = stanbot::leaseRemainingMs(times, millis());
+    if (remaining == 0) break;
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(remaining)) != 0) break;
+  }
   bool written = false;
   for (int attempt = 0; attempt < 3 && !written; ++attempt)
     written = writeBase(powerCutoff.device, 0x05, powerCutoff.offValue);
@@ -984,7 +999,8 @@ bool powerWindowUsed = false;
 // task is armed with `deadlineMs`. Nothing is enabled on failure; the SBPW
 // error line is printed here. On success `device` and `off` are valid and the
 // caller owns enabling, disabling and releasing the window.
-bool openPowerWindow(i2c_master_dev_handle_t& device, uint8_t& off, uint32_t deadlineMs, TaskHandle_t& cutoff) {
+bool openPowerWindow(i2c_master_dev_handle_t& device, uint8_t& off, uint32_t deadlineMs, TaskHandle_t& cutoff,
+                     uint32_t maxMs = 0) {
   i2c_master_bus_handle_t master = nullptr;
   device = nullptr;
   cutoff = nullptr;
@@ -1017,6 +1033,10 @@ bool openPowerWindow(i2c_master_dev_handle_t& device, uint8_t& off, uint32_t dea
   }
   powerCutoff.device = device;
   powerCutoff.deadlineMs = deadlineMs;
+  powerCutoff.maxMs = maxMs != 0 && maxMs > deadlineMs ? maxMs : deadlineMs;
+  const uint32_t openedAt = millis();
+  powerCutoff.startMs.store(openedAt);
+  powerCutoff.renewedMs.store(openedAt);
   powerCutoff.offValue = off;
   powerCutoff.done.store(false);
   powerCutoff.written.store(false);
@@ -1489,9 +1509,11 @@ void serviceFrame(bool onlyWhenDue = false) {
 //  - the stream stays ON. The host cannot produce targets without frames, so
 //    serviceFrame() runs in the loop. Diagnostics are still held until after
 //    the cutoff; frames are the transport, not a diagnostic.
-//  - the window is longer (kFollowSessionMs) but still armed once, never
-//    extended in flight, and the independent cutoff task removes power at
-//    its deadline whatever this loop is doing.
+//  - the window is a lease (kFollowSessionMs) that this loop renews while it
+//    is still accepting targets, under a hard maximum (kFollowMaxMs) armed
+//    once and never extended. If the loop stops renewing for any reason the
+//    independent cutoff task removes power within one lease, whatever this
+//    loop is doing (power_lease.h).
 //  - goals come from HeadTracker, which owns the rate limit and both
 //    deadbands; feedback is read only to guard the envelope and catch a stall.
 // Frames and text share one USB channel and only the frames carry a length, so
@@ -1518,7 +1540,11 @@ void endTelemetry(bool wasStreaming) {
   streamEnabled.store(wasStreaming);
 }
 
-constexpr uint32_t kFollowSessionMs = 20000;
+constexpr uint32_t kFollowSessionMs = 20000;    // the lease: power off within this of the last renewal
+constexpr uint32_t kFollowMaxMs = 180000;       // hard maximum for one window, never extended
+constexpr uint32_t kFollowIdleEndMs = 12000;    // no accepted target this long: end (a search takes ~4.6 s)
+constexpr uint32_t kFollowRenewEveryMs = 1000;
+constexpr uint32_t kFollowEndMarginMs = 500;    // end by the session's own path before the cutoff would
 constexpr uint32_t kFollowCooldownMs = 3000;
 // Used only when a target names a frame the robot no longer remembers sending.
 constexpr uint32_t kFollowAssumedLatencyMs = 250;  // between sessions; see runFollowSession
@@ -1601,7 +1627,7 @@ void runFollowSession() {
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
   TaskHandle_t cutoff = nullptr;
-  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff)) return;
+  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) return;
   servoBus.EnableTorque(0xfe, 0);
   // The sweep's 20 ms bus timeout assumes its own tight loop. This one shares
   // a task with camera capture, so a reply can arrive after a longer pause;
@@ -1627,8 +1653,12 @@ void runFollowSession() {
   const bool pitchOn = followConfig.pitchEnabled;
   stanbot::HeadTracker tracker(limits, followConfig);
   struct TracePoint { uint32_t elapsed; int yawGoal, yawPos, pitchGoal, pitchPos; uint8_t mode; };
+  // A session can now run for minutes, far more than 400 samples at 40 ms. When
+  // the buffer fills, every other sample is dropped and the stride doubles,
+  // so the trace always spans the whole session at an even, coarser spacing.
   static TracePoint trace[400];
-  unsigned traceCount = 0;
+  unsigned traceCount = 0, traceStride = 1, traceTick = 0;
+  uint32_t lastTargetAt = 0, renewals = 0, sessionEndMs = 0;
   const char* result = "preflight_refused";
   int positionCommands = 0, observations = 0, rejected = 0;
   int yawPos = -1, pitchPos = -1;
@@ -1675,10 +1705,20 @@ void runFollowSession() {
         uint32_t lastProgressAt = millis();
         const uint32_t framesBefore = stats.sent;
         captureDecoupled = startSessionCapture(basePriority);
+        lastTargetAt = millis();   // the host gets a full idle period to send the first target
         for (;;) {
           if (powerCutoff.done.load()) { result = "cutoff_before_completion"; break; }
           const uint32_t now = millis();
-          if (now - started >= kFollowSessionMs - 500) { result = "session_deadline"; break; }
+          const stanbot::LeaseTimes lease{powerCutoff.startMs.load(), powerCutoff.renewedMs.load(),
+                                          powerCutoff.deadlineMs, powerCutoff.maxMs};
+          const stanbot::FollowEnd end = stanbot::followShouldEnd(lease, now, lastTargetAt, kFollowIdleEndMs, kFollowEndMarginMs);
+          if (end == stanbot::FollowEnd::Idle) { result = "session_idle"; break; }
+          if (end == stanbot::FollowEnd::MaxDuration) { result = "session_max_duration"; break; }
+          if (end == stanbot::FollowEnd::LeaseLapsing) { result = "session_deadline"; break; }
+          if (stanbot::followShouldRenew(now, lastTargetAt, lease.renewedMs, kFollowIdleEndMs, kFollowRenewEveryMs)) {
+            powerCutoff.renewedMs.store(now);
+            ++renewals;
+          }
           if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
           ++iterations;
@@ -1697,7 +1737,7 @@ void runFollowSession() {
               targetXMilli.load() / 1000.0f, targetYMilli.load() / 1000.0f,
               targetConfidenceMilli.load() / 1000.0f, now,
               sentMs != 0 ? sentMs : (now > kFollowAssumedLatencyMs ? now - kFollowAssumedLatencyMs : now));
-            if (taken) ++observations; else ++rejected;
+            if (taken) { ++observations; lastTargetAt = now; } else ++rejected;
           }
           const stanbot::FollowCommand command = tracker.step(now);
           if (command.send) {
@@ -1741,14 +1781,21 @@ void runFollowSession() {
             const bool farFromGoal = abs(lastYawSent - yawPos) > kFollowStallDistance ||
                                      (pitchOn && abs(lastPitchSent - pitchPos) > kFollowStallDistance);
             if (farFromGoal && now - lastProgressAt > kFollowStallMs) { result = "stall_detected"; break; }
-            if (traceCount < 400)
+            if (traceTick++ % traceStride == 0) {
+              if (traceCount == 400) {
+                for (unsigned i = 0; i < 200; ++i) trace[i] = trace[2 * i];
+                traceCount = 200;
+                traceStride *= 2;
+              }
               trace[traceCount++] = {now - started, lastYawSent, yawPos, lastPitchSent, pitchPos,
                                      static_cast<uint8_t>(command.mode)};
+            }
           }
           const uint32_t iterationMs = millis() - iterationStart;
           if (iterationMs > worstIterationMs) worstIterationMs = iterationMs;
           vTaskDelay(pdMS_TO_TICKS(5));
         }
+        sessionEndMs = millis();
         if (captureDecoupled) captureStopMs = stopSessionCapture(basePriority);
         sessionFrames = stats.sent - framesBefore;
       }
@@ -1788,8 +1835,9 @@ void runFollowSession() {
   Telemetry.printf("SBMV {\"result\":\"%s\",\"plan\":\"follow\",\"pitch_enabled\":%s,\"pitch_home\":%d,\"pitch_low\":%d,\"pitch_high\":%d,\"observations\":%d,\"rejected\":%d,\"yaw_final\":%d,\"pitch_final\":%d,\"yaw_commanded\":%d,\"pitch_commanded\":%d,\"mode\":%u}\n",
                 result, pitchOn ? "true" : "false", tracker.pitchHome(), tracker.pitchLow(), tracker.pitchHigh(), observations, rejected, yawPos, pitchPos, tracker.commandedYaw(), tracker.commandedPitch(),
                 static_cast<unsigned>(tracker.mode()));
-  Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
+  Telemetry.printf("SBFL {\"iterations\":%lu,\"control_ticks\":%lu,\"worst_iteration_ms\":%lu,\"renewals\":%lu,\"trace_stride\":%u,\"session_ms\":%lu,\"capture_decoupled\":%s,\"session_frames\":%lu,\"capture_stop_ms\":%lu,\"fail_servo\":%d,\"fail_ack\":%d,\"fail_state\":%d,\"fail_error\":%d}\n",
                 (unsigned long)iterations, (unsigned long)controlTicks, (unsigned long)worstIterationMs,
+                (unsigned long)renewals, traceStride, (unsigned long)(sessionEndMs != 0 ? sessionEndMs - started : 0),
                 captureDecoupled ? "true" : "false", (unsigned long)sessionFrames, (unsigned long)captureStopMs,
                 failServo, failAck, failState, failError);
   endTelemetry(wasStreaming);

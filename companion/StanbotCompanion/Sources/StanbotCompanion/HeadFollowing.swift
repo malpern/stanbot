@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 /// Where the app is with a head-following session. The robot owns the session:
-/// it enforces the limits, the 20 s cutoff and the one power window per boot.
+/// it enforces the limits and the power cutoff: a 20 s lease it renews while it
+/// keeps receiving targets, under a 3 minute maximum.
 /// The app starts it over USB, feeds it targets, and reports what the robot
 /// says happened.
 enum FollowState: Equatable {
@@ -20,12 +21,15 @@ struct FollowResult: Equatable {
     /// Whether starting again straight away makes sense. Refusals about the
     /// firmware, the passphrase or the servos would only repeat.
     var retryable: Bool {
-        ["session_complete", "session_deadline", "stopped_by_host", "follow_cooldown", "no_result"].contains(code)
+        ["session_complete", "session_deadline", "session_idle", "session_max_duration",
+         "stopped_by_host", "follow_cooldown", "no_result"].contains(code)
     }
 
     var summary: String {
         switch code {
         case "session_complete", "session_deadline": "Session finished. The head is powered off."
+        case "session_idle": "No face for 12 seconds, so the session ended. The head is powered off."
+        case "session_max_duration": "Reached the 3 minute limit for one session. The head is powered off."
         case "stopped_by_host": "Stopped. The head is powered off."
         case "follow_refused_limits_unmeasured": "Refused: this firmware has following disabled."
         case "requires_unused_boot": "Refused: one motion session per boot. Reboot the robot to run another."
@@ -126,7 +130,7 @@ struct HeadFollowingPanel: View {
             Button("Start Following") { robot.startFollowing() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The head will turn toward the selected face for up to 20 seconds (\(axes)), within the calibration limits, and look around briefly if it loses the face. Stay at the robot, and press Stop if anything looks wrong. Over Wi-Fi the robot checks the passphrase first.")
+            Text("The head will turn toward the selected face while it keeps seeing a face, up to 3 minutes (\(axes)), within the calibration limits, and look around briefly if it loses the face. Stay at the robot, and press Stop if anything looks wrong. Over Wi-Fi the robot checks the passphrase first.")
         }
     }
 

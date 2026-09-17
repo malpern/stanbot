@@ -274,12 +274,43 @@ tracker enters `Searching` (telemetry `mode` 3):
 It dwells 400 ms at each waypoint and moves at 3 raw per tick (~11 deg/s),
 slower than attending. Every waypoint is clamped to the limits. Any accepted
 target ends the search immediately. A whole search takes about 4.6 s from the
-last target to resting, well inside the 20 s session. The app's "No stable face
+last target to resting, well inside the 12 s a session waits without a face. The app's "No stable face
 detected" state is still only a label; auto-follow still starts a session only
 once a face is confirmed. Host tests: `searchHoldsThenGlancesTowardTheLostSide`,
 `searchStartsLeftWhenTheFaceLeftLeft`, `searchEndsWhenTheFaceReturns`,
 `searchGlancesUpForAFaceLostOffTheTop`, `searchNeverMovesDisabledPitch`,
 `searchIsClampedAndFinite`.
+
+## Continuous following (built, not yet run on the robot)
+
+Sessions used to end every 20 s, followed by a 3 s cooldown the app waited
+out. Now the motor-power cutoff is a **lease** (`power_lease.h`):
+
+- The cutoff task removes power when the lease (20 s) runs out without
+  renewal, or at a hard maximum (3 minutes) armed when the window opens and
+  never extended, whichever is first. It still never waits on USB, camera or
+  the servo bus.
+- The follow loop renews the lease once a second, but only while it has
+  accepted a target within the last 12 s. A hung, starved or target-less loop
+  stops renewing, and power goes off within one lease: the same bound the fixed
+  20 s deadline gave.
+- The session ends itself 500 ms before either limit, and after 12 s with no
+  accepted target (`session_idle`), so the orderly path, not the watchdog,
+  normally removes power. New results: `session_idle` and
+  `session_max_duration`; `session_deadline` now means the lease was about to
+  lapse. The app restarts after all three.
+- Every other power window (sweeps, nudges, power tests) passes no maximum and
+  is never renewed, so its cutoff is exactly the fixed deadline it was.
+- The trace keeps spanning the whole session: when its 400 samples fill, every
+  other one is dropped and the sampling stride doubles. `SBFL` now reports
+  `renewals`, `trace_stride` and `session_ms`.
+
+`companion/test_power_lease.cpp` covers the unrenewed deadline, renewal, the
+cap, a renewal read racing the cutoff, `millis()` wrap, idle and maximum
+endings, and a simulated loop that renews forever and still ends at 179.5 s
+with the lease never lapsing first. What it cannot show is the servo and
+supply behaviour over three minutes of torque; watch temperature and voltage
+in the first long session.
 
 ## Eyes glance at the face (built, not yet seen on the robot)
 

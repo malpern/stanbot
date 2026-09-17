@@ -268,9 +268,9 @@ final class RobotConnection: ObservableObject {
     private var authorizationSentAt = Date.distantPast
     @Published private(set) var passphraseAvailable = false
     private var followLogUntil = Date.distantPast
-    /// Longer than the robot's 20 s session plus its telemetry, so a missing
+    /// Longer than the robot's 3 minute maximum session plus its telemetry, so a missing
     /// result is reported rather than leaving the Stop button up forever.
-    private static let followResultTimeout: TimeInterval = 30
+    private static let followResultTimeout: TimeInterval = 200
     private var enhancerSession: UUID?
     private var lastDisplayedAt: TimeInterval?
     private var displayToken = UUID()

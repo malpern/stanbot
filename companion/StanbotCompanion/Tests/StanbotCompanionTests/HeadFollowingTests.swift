@@ -175,6 +175,11 @@ final class HeadFollowingTests: XCTestCase {
         XCTAssertFalse(shouldStart(state: ended, lastEnded: now.addingTimeInterval(-1)), "too soon after the last session")
         XCTAssertTrue(shouldStart(state: ended, lastEnded: now.addingTimeInterval(-AutoFollow.restartGap - 0.1)))
         XCTAssertTrue(shouldStart(state: .finished(FollowResult(code: "stopped_by_host")), lastEnded: nil))
+        // Longer sessions end when nobody is there or at the maximum; both restart.
+        for code in ["session_idle", "session_max_duration"] {
+            XCTAssertTrue(shouldStart(state: .finished(FollowResult(code: code)), lastEnded: nil), "did not restart after \(code)")
+            XCTAssertFalse(FollowResult(code: code).summary.hasPrefix("Ended early"), "\(code) has no summary")
+        }
         // Refusals that would only repeat.
         for code in ["auth_bad_mac", "follow_refused_limits_unmeasured", "preflight_refused", "power_latched"] {
             XCTAssertFalse(shouldStart(state: .finished(FollowResult(code: code)), lastEnded: nil), "retried \(code)")
