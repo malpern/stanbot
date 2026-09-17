@@ -42,15 +42,13 @@ struct StanbotCompanionApp: App {
                 Divider()
             }
             CommandMenu("Robot") {
-                if case .following = robot.follow {
-                    Button("Stop Following") { robot.stopFollowing() }
-                        .keyboardShortcut(".", modifiers: [.command])
-                } else {
-                    Button("Follow…") { robot.confirmingFollow = true }
-                        .keyboardShortcut("f", modifiers: [.command, .shift])
-                        .disabled(robot.followUnavailableReason != nil)
-                }
-                Toggle("Follow Automatically", isOn: $robot.followAutomatically)
+                Toggle("Follow", isOn: Binding(get: { robot.followAutomatically },
+                                               set: { robot.setFollowing($0) }))
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .disabled(!robot.followAutomatically && robot.followUnavailableReason != nil)
+                Button("Stop Following") { robot.setFollowing(false) }
+                    .keyboardShortcut(".", modifiers: [.command])
+                    .disabled(!robot.followAutomatically)
                 Divider()
                 Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera") {
                     robot.cameraState == .off ? robot.startCamera() : robot.stopCamera()
@@ -313,9 +311,6 @@ final class RobotConnection: ObservableObject {
     }
     private let enhancer = VideoEnhancer()
     @Published private(set) var follow: FollowState = .idle
-    /// The "Start head following?" confirmation is showing. Lives here so the
-    /// Robot menu and the control bar ask the same way.
-    @Published var confirmingFollow = false
     /// Start a session whenever a face is confirmed, without pressing Follow.
     /// Whether a session starts by itself when a face is confirmed, for this
     /// run of the app. Starts from the Settings preference on every launch, so
@@ -996,6 +991,18 @@ final class RobotConnection: ObservableObject {
         steerSequence &+= 1
         if steerSequence == 0 { steerSequence = 1 }
         _ = send(String(format: "H,%u,%.2f,%.2f\n", steerSequence, steerX, steerY))
+    }
+
+    /// The Follow toggle: on means follow whenever someone is there to follow,
+    /// off means stop now and stay stopped. Sessions still start and end on
+    /// their own underneath it; this is the standing intent, not one session.
+    func setFollowing(_ on: Bool) {
+        guard on else { stopFollowing(); return }
+        guard followUnavailableReason == nil else { return }
+        followAutomatically = true
+        // A face already in view starts a session at once; otherwise the frame
+        // loop starts one as soon as it sees somebody.
+        if faceState == .tracking { startFollowing() }
     }
 
     func stopFollowing() {

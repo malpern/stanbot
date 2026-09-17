@@ -4,6 +4,35 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import StanbotCompanion
 
+final class FollowToggleTests: XCTestCase {
+    /// Follow is one toggle: on means keep following whoever is there, off means
+    /// stop now and stay stopped. There is no separate "automatically" switch.
+    @MainActor
+    func testTheToggleIsTheStandingIntent() {
+        let robot = RobotConnection(port: nil, automaticPolling: false, transport: .usb,
+                                    passphrase: { nil }, connectOnStart: false)
+        robot.setFollowing(false)
+        XCTAssertFalse(robot.followAutomatically)
+
+        // Off, with no robot connected, turning it on is refused: nothing to follow with.
+        XCTAssertNotNil(robot.followUnavailableReason)
+        robot.setFollowing(true)
+        XCTAssertFalse(robot.followAutomatically, "not available, so the toggle stays off")
+
+        // The preference only decides where the toggle starts each launch.
+        let key = RobotConnection.followAutomaticallyKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(original, forKey: key) }
+        UserDefaults.standard.set(true, forKey: key)
+        let fresh = RobotConnection(port: nil, automaticPolling: false, transport: .usb,
+                                    passphrase: { nil }, connectOnStart: false)
+        XCTAssertTrue(fresh.followAutomatically, "on at launch by default")
+        fresh.setFollowing(false)
+        XCTAssertFalse(fresh.followAutomatically)
+        XCTAssertTrue(fresh.followAutomaticallyOnLaunch, "turning it off does not change the preference")
+    }
+}
+
 final class SteeringSenseTests: XCTestCase {
     /// The pad and arrow keys steer as the owner sees the robot, facing it:
     /// their left is the robot's right, so x is reversed; up stays up.

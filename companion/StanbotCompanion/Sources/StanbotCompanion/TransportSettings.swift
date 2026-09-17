@@ -63,9 +63,9 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Follow automatically", isOn: $robot.followAutomaticallyOnLaunch)
+                Toggle("Follow when Stanbot opens", isOn: $robot.followAutomaticallyOnLaunch)
             } footer: {
-                Text("Start following whenever Stanbot sees someone. On at every launch; Stop pauses it until the app is next opened.")
+                Text("Whether the Follow toggle starts on each time the app opens. Turning Follow off in the window lasts until the app is next opened.")
                     .settingsFootnote()
             }
             Section {

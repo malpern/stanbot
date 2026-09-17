@@ -103,7 +103,6 @@ private struct DetailsSheet: View {
                         FollowButton(prominent: true)
                         SleepWakeButton(prominent: true)
                     }
-                    Toggle("Follow automatically", isOn: $robot.followAutomatically)
                     VStack(spacing: 8) {
                         DirectionPad(diameter: 112)
                         Text(robot.followUnavailableReason ?? "Press and drag to point the head. Arrow keys steer too.")

@@ -135,12 +135,6 @@ struct CompanionView: View {
                     openWindow(id: "diagnostics")
                 }
             }
-            .confirmationDialog("Start head following?", isPresented: $robot.confirmingFollow) {
-                Button("Start Following") { robot.startFollowing() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Stanbot will turn toward the selected face while it keeps seeing one, for up to 3 minutes, within its calibration limits, and look around if it loses you. Stay at the robot and press Stop if anything looks wrong.")
-            }
             .tint(.stanbot)
     }
 
@@ -441,32 +435,43 @@ private struct FaceBoxView: View {
 
 // MARK: - Controls
 
-/// One button that becomes Stop while following, so it stays under the
-/// pointer. Safety stays plain: a literal label, red, always one click away.
+/// Following on or off, as one toggle: on, Stanbot follows whoever it sees,
+/// session after session; off, it stops now and stays stopped. Filled in the
+/// accent while on, so the state is the button, not a separate switch.
 struct FollowButton: View {
     @EnvironmentObject private var robot: RobotConnection
     /// Large and full width, for the controls panel.
     var prominent = false
 
-    private var isFollowing: Bool {
+    private var on: Bool { robot.followAutomatically }
+    private var sessionRunning: Bool {
         if case .following = robot.follow { return true }
         return false
     }
 
     var body: some View {
-        Button(role: isFollowing ? .destructive : nil) {
-            isFollowing ? robot.stopFollowing() : (robot.confirmingFollow = true)
-        } label: {
-            Label(isFollowing ? "Stop" : "Follow", systemImage: isFollowing ? "stop.fill" : "scope")
+        Group {
+            if on {
+                button.buttonStyle(.borderedProminent)
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
+        .controlSize(prominent ? .large : .regular)
+        .tint(.stanbot)
+        .disabled(!on && robot.followUnavailableReason != nil)
+        .help(on ? "Stanbot is following whoever it sees. Click to stop."
+                 : (robot.followUnavailableReason ?? "Follow whoever Stanbot sees, until this is turned off"))
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private var button: some View {
+        Button { robot.setFollowing(!on) } label: {
+            Label(on ? "Following" : "Follow", systemImage: "scope")
                 .labelStyle(.titleAndIcon)
-                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.pulse, isActive: sessionRunning)
                 .frame(maxWidth: prominent ? .infinity : nil)
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(prominent ? .large : .regular)
-        .tint(isFollowing ? .red : .stanbot)
-        .disabled(!isFollowing && robot.followUnavailableReason != nil)
-        .help(isFollowing ? "Stop following and power the head off" : (robot.followUnavailableReason ?? "Turn toward the selected face"))
     }
 }
 
