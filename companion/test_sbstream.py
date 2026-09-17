@@ -7,7 +7,7 @@ of newlines, and text arriving in the same read as binary.
 """
 import sys
 
-from sbstream import Demuxer, frame_packet
+from sbstream import Demuxer, frame_packet, telemetry_check
 
 
 def collect(chunks):
@@ -127,6 +127,16 @@ def test_the_exact_corruption_seen_on_hardware():
     assert texts(events) == [] or all("follo\"" not in t for t in texts(events))
     assert frames(events) == [(6, payload)]
     assert demuxer.dropped > 0
+
+
+def test_telemetry_check_matches_firmware_vector():
+    block = ['SBMV {"result":"session_idle"}', 'SBFL {"renewals":3}']
+    end = 'SBTE {"telemetry":"end","lines":2,"crc32":"76f85edc"}'
+    assert telemetry_check(block, end) == "verified"
+    assert telemetry_check([b + "\r" for b in block], end) == "verified"
+    assert telemetry_check(['SBMV {"result":"session_idl"}', block[1]], end) == "corrupted"
+    assert telemetry_check([block[0] + block[1]], end) == "corrupted"
+    assert telemetry_check(block, 'SBTE {"telemetry":"end"}') == "unchecked"
 
 
 def main():

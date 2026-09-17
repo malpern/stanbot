@@ -268,6 +268,7 @@ final class RobotConnection: ObservableObject {
     private var authorizationSentAt = Date.distantPast
     @Published private(set) var passphraseAvailable = false
     private var followLogUntil = Date.distantPast
+    private var telemetryCheck = TelemetryCheck()
     /// Longer than the robot's 3 minute maximum session plus its telemetry, so a missing
     /// result is reported rather than leaving the Stop button up forever.
     private static let followResultTimeout: TimeInterval = 200
@@ -614,6 +615,9 @@ final class RobotConnection: ObservableObject {
         if let followLog, Date() < followLogUntil {
             followLog.write(Data((line + "\n").utf8))
         }
+        if let outcome = telemetryCheck.consume(line) {
+            reportTelemetryCheck(outcome)
+        }
         if let info = FirmwareInfo.parse(line) {
             firmware = .reported(info)
             announceFirmwareChange(info)
@@ -720,6 +724,22 @@ final class RobotConnection: ObservableObject {
         case (_, false):
             follow = .finished(FollowResult(code: "auth_\(reason)"))
             lastAction = "The robot refused authorization: \(reason)."
+        }
+    }
+
+    /// Writes the check into the session log, and says so when a block arrived
+    /// damaged: its numbers are then not evidence of how the head behaved.
+    private func reportTelemetryCheck(_ outcome: TelemetryCheck.Outcome) {
+        let summary: String
+        switch outcome {
+        case .verified(let lines): summary = "\"verified\",\"lines\":\(lines)"
+        case .corrupted(let expected, let received):
+            summary = "\"corrupted\",\"expected_lines\":\(expected),\"received_lines\":\(received)"
+            lastAction = "The robot's session telemetry arrived damaged; don't trust this session's numbers."
+        case .unchecked: summary = "\"unchecked\""
+        }
+        if let followLog, Date() < followLogUntil {
+            followLog.write(Data("APP {\"telemetry_check\":\(summary)}\n".utf8))
         }
     }
 

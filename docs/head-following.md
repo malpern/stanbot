@@ -199,7 +199,7 @@ What the trace shows:
    1-2 are understood.
 4. **One byte was lost on USB in the telemetry**: the result line arrived as
    `yaw_fnal`. The firmware prints `yaw_final`. Rare, but telemetry is not yet
-   trustworthy byte for byte.
+   trustworthy byte for byte. (Now detected: see Telemetry integrity.)
 
 ## Sessions 3-5, 2026-09-16: faster, steadier, then no overshoot
 
@@ -311,6 +311,23 @@ endings, and a simulated loop that renews forever and still ends at 179.5 s
 with the lease never lapsing first. What it cannot show is the servo and
 supply behaviour over three minutes of torque; watch temperature and voltage
 in the first long session.
+
+## Telemetry integrity (built, not yet run on the robot)
+
+Session 2 lost one byte on USB, and the damaged result (`yaw_fnal`) still
+looked like valid JSON. `SBTE` now carries `lines` and `crc32`: the number of
+lines in the block and a CRC-32 (IEEE, the same as `zlib.crc32`) over their
+bytes with line terminators removed (`telemetry_check.h`). The app checks each
+block and writes `APP {"telemetry_check":"verified"|"corrupted"|"unchecked"}`
+to the session log, and says so when a block is damaged, since its numbers are
+then not evidence. `sbstream.telemetry_check()` does the same in Python.
+A line the host's decoder rejects also counts as damage, because the line count
+no longer matches. Firmware older than this sends a bare `SBTE`, reported as
+unchecked. Shared test vector: two lines, `76f85edc`, in
+`test_telemetry_check.cpp`, `TelemetryCheckTests.swift` and `test_sbstream.py`.
+
+This detects damage; it does not repair it. The lost byte itself is still
+unexplained.
 
 ## Eyes glance at the face (built, not yet seen on the robot)
 

@@ -18,6 +18,7 @@
 #include <StanbotEyes.h>
 #include "eye_gaze.h"
 #include "power_lease.h"
+#include "telemetry_check.h"
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
@@ -449,11 +450,19 @@ class TelemetryOut : public Print {
  public:
   size_t write(uint8_t c) override { return write(&c, 1); }
   size_t write(const uint8_t* data, size_t size) override {
+    if (checking) check.add(data, size);
     Serial.write(data, size);
     if (streamClient && streamClient.connected()) transportWrite(data, size);
     return size;
   }
   void flush() override { Serial.flush(); }
+  // Everything written between beginCheck() and endCheck() is counted into
+  // the SBTE line's lines/crc32 (telemetry_check.h).
+  void beginCheck() { check = stanbot::TelemetryCheck(); checking = true; }
+  stanbot::TelemetryCheck endCheck() { checking = false; return check; }
+ private:
+  bool checking = false;
+  stanbot::TelemetryCheck check;
 } Telemetry;
 
 void emitVersion() {
@@ -1529,13 +1538,16 @@ bool beginTelemetry() {
   Telemetry.flush();
   vTaskDelay(pdMS_TO_TICKS(200));
   Telemetry.println("SBTB {\"telemetry\":\"begin\",\"plan\":\"follow\"}");
+  Telemetry.beginCheck();
   return wasStreaming;
 }
 
 // Restores whatever the host had asked for: a session never silently changes
 // the stream state it was given.
 void endTelemetry(bool wasStreaming) {
-  Telemetry.println("SBTE {\"telemetry\":\"end\"}");
+  const stanbot::TelemetryCheck check = Telemetry.endCheck();
+  Telemetry.printf("SBTE {\"telemetry\":\"end\",\"lines\":%lu,\"crc32\":\"%08lx\"}\n",
+                   (unsigned long)check.lines, (unsigned long)check.value());
   Telemetry.flush();
   streamEnabled.store(wasStreaming);
 }

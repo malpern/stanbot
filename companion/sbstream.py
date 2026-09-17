@@ -152,6 +152,27 @@ class Demuxer:
         return best
 
 
+def telemetry_check(lines, end_line):
+    """Verify a telemetry block against its SBTE line.
+
+    `lines` are the text lines between SBTB and SBTE. Returns "verified",
+    "corrupted", or "unchecked" for firmware whose SBTE carries no check.
+    Same rule as firmware/camera_stream/telemetry_check.h: CRC-32 over each
+    line's bytes without terminators, plus the line count.
+    """
+    import json
+    import zlib
+    try:
+        end = json.loads(end_line.split(" ", 1)[1])
+        expected_lines, expected_crc = int(end["lines"]), int(end["crc32"], 16)
+    except (IndexError, KeyError, ValueError, TypeError):
+        return "unchecked"
+    crc = 0
+    for line in lines:
+        crc = zlib.crc32(line.rstrip("\r\n").encode("utf-8"), crc)
+    return "verified" if crc == expected_crc and len(lines) == expected_lines else "corrupted"
+
+
 def frame_packet(sequence, payload, version=1):
     """Build a packet, for tests and for anything that needs to fake a link."""
     return MAGIC + struct.pack("<BII", version, sequence, len(payload)) + payload
