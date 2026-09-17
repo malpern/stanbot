@@ -43,9 +43,8 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
 - **Trouble face** (X eyes, a frown) for 12 s after a session that ends in a
   fault. Never yet seen on the robot.
 - **Light bar:** blue with a face, a gentle orange breath while the camera
-  streams with none, dark otherwise and while asleep. Confirmed by the owner in
-  the morning; **not yet confirmed after a sleep and wake** (it was dark all
-  afternoon because of the I2C fault, now fixed).
+  streams with none, dark otherwise and while asleep. Confirmed by the owner,
+  including coming back after a sleep and wake (2026-09-17, after the I2C fix).
 - **Health:** `SBHL` reports whether the head can reach its base, on connect and
   on change; motor power found on outside a session is turned off and reported.
 - **Wi-Fi security:** only stream/display commands, `C,UNFOLLOW`, `C,SLEEP` and
@@ -77,7 +76,7 @@ firmware plus the sleep work.
 ## Next, in order
 
 1. **See what has never been seen**, with the owner at the robot: the wake scan
-   (sleep, then wake while out of view), the light bar after a wake, the mouth
+   (sleep, then wake while out of view), the mouth
    (Robot menu, Play Mouth Test; then set `robotLead` by eye), the sleep
    animation on the robot's screen, and the trouble face.
 2. **Re-check pitch level** (steer until the face looks straight ahead, read
