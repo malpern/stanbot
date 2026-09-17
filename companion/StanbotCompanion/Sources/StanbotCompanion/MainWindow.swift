@@ -197,7 +197,16 @@ private struct LiveView: View {
                         // Eyes shut: nothing of the picture shows, so it is not
                         // drawn at all (the blurred, masked picture underneath
                         // cost several percent CPU for nothing). Just the z's.
-                        Color.black.overlay { SleepingZs() }
+                        // Laid over where the picture was, so the z's rise from
+                        // between the eyes the lids have just closed.
+                        GeometryReader { proxy in
+                            VStack(spacing: 0) {
+                                SleepingZs(size: fit(image.size, in: proxy.size))
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .background(.black)
                     } else {
                         picture(image, .open)
                     }

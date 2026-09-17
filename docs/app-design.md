@@ -58,7 +58,10 @@ the robot's view, with a little of the robot's character in it.
   made SwiftUI rebuild the subtree on sleep, so the picture cut straight to black
   with no animation at all.
 - **Asleep, the picture is replaced by z's.** Once the eyes have shut, a slow
-  string of z's drifts up where the picture was (`SleepingZs`): one at a time,
+  string of z's drifts up from between where the eyes were — the centre of the
+  picture's rectangle, not of the pane (`SleepingZs`, given the picture's size;
+  each z is an offset from that frame's centre, because `.position` inside the
+  nested containers landed in the wrong place): one at a time,
   born low and small every ~2.8 s, rising over ~5 s while it grows a little and
   leans, faint grey, fading before the next has got far. No bubble. Each z is a
   pure function of its age, drawn from a 6 fps clock. Measured 2026-09-17 in

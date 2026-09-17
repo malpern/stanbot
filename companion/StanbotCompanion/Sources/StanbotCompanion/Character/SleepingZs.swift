@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Stanbot asleep: a slow string of z's drifting up where the picture was,
-/// as from a sleeper in a comic — but no bubble, and nothing quick. One z at a
+/// Stanbot asleep: a slow string of z's drifting up from between where its
+/// eyes were (the centre of the picture, where the lids have just closed), as
+/// from a sleeper in a comic — but no bubble, and nothing quick. One z at a
 /// time is born low and small, rises over several seconds while it grows a
 /// little and leans to one side, and fades before the next has got far. Dim
 /// grey, the eyes' colour. Calm enough to sit in the corner of the eye all
@@ -15,6 +16,9 @@ import SwiftUI
 /// (14% against 6%, 2026-09-17).
 struct SleepingZs: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The picture's size: the z's are placed within it, from its centre, where
+    /// the eyes were.
+    var size: CGSize
     @State private var zs: [FloatingZ] = []
     @State private var born = 0
 
@@ -41,16 +45,17 @@ struct SleepingZs: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let base = min(proxy.size.width, proxy.size.height)
+        let base = min(size.width, size.height)
+        ZStack {
             if reduceMotion {
                 // Still: three z's climbing away, the smallest first.
                 ForEach(0..<3, id: \.self) { index in
                     Text("z")
                         .font(.system(size: base * (0.05 + 0.015 * Double(index)), weight: .semibold, design: .rounded))
                         .foregroundStyle(Color(white: 0.74).opacity(0.35 - 0.08 * Double(index)))
-                        .position(x: proxy.size.width * (0.55 + 0.06 * Double(index)),
-                                  y: proxy.size.height * (0.6 - 0.14 * Double(index)))
+                        // Offsets from the frame's centre: between the eyes.
+                        .offset(x: size.width * 0.05 * Double(index),
+                                y: -size.height * 0.13 * Double(index))
                 }
             } else {
                 TimelineView(.periodic(from: .now, by: 1.0 / 6)) { timeline in
@@ -61,12 +66,19 @@ struct SleepingZs: View {
                             .foregroundStyle(Color(white: 0.74))
                             .opacity(0.42 * Self.opacity(at: rise))
                             .rotationEffect(.degrees(z.lean * 14 * rise))
-                            .position(x: proxy.size.width * (0.56 + z.startX + 0.07 * z.lean * rise),
-                                      y: proxy.size.height * (0.62 - 0.36 * rise))
+                            // From between the eyes (the robot draws them at
+                            // the picture's vertical centre), up and away.
+                            // Offsets from the frame's centre, which is between
+                            // the eyes (the robot draws them at the picture's
+                            // vertical centre): up and away. `.position` inside
+                            // these nested containers landed in the wrong place.
+                            .offset(x: size.width * (z.startX * (0.3 + rise) + 0.07 * z.lean * rise),
+                                    y: -size.height * 0.38 * rise)
                     }
                 }
             }
         }
+        .frame(width: size.width, height: size.height)
         .allowsHitTesting(false)
         .accessibilityLabel("Stanbot is asleep")
         .task {
