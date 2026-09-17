@@ -9,22 +9,49 @@ import Darwin
 struct StanbotCompanionApp: App {
     @NSApplicationDelegateAdaptor(StanbotAppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
-    @StateObject private var robot = RobotConnection()
+    @StateObject private var robot = RobotConnection.fromEnvironment()
+    @AppStorage("StanbotShowInspector") private var showInspector = true
 
     var body: some Scene {
         WindowGroup("Stanbot") {
             CompanionView()
                 .environmentObject(robot)
-                .frame(minWidth: 860, minHeight: 620)
+                .frame(minWidth: 720, minHeight: 520)
         }
-        .defaultSize(width: 1060, height: 720)
+        .defaultSize(width: 1180, height: 780)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Stanbot") { openWindow(id: "about") }
             }
-            CommandGroup(after: .toolbar) {
-                Button("Reconnect to StackChan") { robot.connect() }
+            CommandGroup(after: .sidebar) {
+                Button(showInspector ? "Hide Inspector" : "Show Inspector") { showInspector.toggle() }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+            }
+            CommandMenu("Robot") {
+                if case .following = robot.follow {
+                    Button("Stop Following") { robot.stopFollowing() }
+                        .keyboardShortcut(".", modifiers: [.command])
+                } else {
+                    Button("Follow…") { robot.confirmingFollow = true }
+                        .keyboardShortcut("f", modifiers: [.command, .shift])
+                        .disabled(robot.followUnavailableReason != nil)
+                }
+                Toggle("Follow Automatically", isOn: $robot.followAutomatically)
+                Divider()
+                Button(robot.cameraState == .off ? "Show Camera" : "Hide Camera") {
+                    robot.cameraState == .off ? robot.startCamera() : robot.stopCamera()
+                }
+                .keyboardShortcut("k", modifiers: [.command])
+                Picker("Expression", selection: Binding(get: { robot.selectedEmotion }, set: { robot.select($0) })) {
+                    ForEach(Emotion.allCases) { emotion in
+                        Label(emotion.title, systemImage: emotion.symbol).tag(emotion)
+                    }
+                }
+                Divider()
+                Button("Reconnect") { robot.connect() }
                     .keyboardShortcut("r", modifiers: [.command])
+                Button("Reboot Robot") { robot.rebootRobot() }
+                    .disabled(!(robot.connectedOverUSB || (robot.connectedOverWiFi && robot.passphraseAvailable)))
             }
         }
         Settings {
@@ -230,7 +257,15 @@ final class RobotConnection: ObservableObject {
 
     @Published private(set) var connection: ConnectionState = .disconnected
     @Published private(set) var selectedEmotion = Emotion.normal
-    @Published private(set) var lastAction = "Waiting to connect"
+    @Published private(set) var lastAction = "Waiting to connect" {
+        didSet {
+            guard lastAction != oldValue else { return }
+            activity.insert(ActivityEntry(date: Date(), text: lastAction), at: 0)
+            if activity.count > 100 { activity.removeLast(activity.count - 100) }
+        }
+    }
+    /// Everything `lastAction` has said, newest first, for the inspector.
+    @Published private(set) var activity: [ActivityEntry] = []
     @Published private(set) var cameraState: CameraState = .off
     @Published private(set) var cameraImage: NSImage?
     @Published private(set) var faceBoxes: [FaceBox] = []
@@ -246,6 +281,9 @@ final class RobotConnection: ObservableObject {
     }
     private let enhancer = VideoEnhancer()
     @Published private(set) var follow: FollowState = .idle
+    /// The "Start head following?" confirmation is showing. Lives here so the
+    /// Robot menu and the control bar ask the same way.
+    @Published var confirmingFollow = false
     /// Start a session whenever a face is confirmed, without pressing Follow.
     /// The Studio Display camera as a second view for the session logs. Off by
     /// default; see DeskCamera and docs/desk-camera.md.
@@ -356,7 +394,7 @@ final class RobotConnection: ObservableObject {
          networkHost: String = "stanbot.local", networkPort: UInt16 = 3333,
          transport: TransportPreference? = nil, wifiRetryInterval: TimeInterval = 30,
          followLogDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stanbot"),
-         passphrase: (() -> String?)? = nil) {
+         passphrase: (() -> String?)? = nil, connectOnStart: Bool = true) {
         self.followLogDirectory = followLogDirectory
         // The Keychain item belongs to the signed app. Reading it from the test
         // runner would raise a macOS permission dialog mid-run, so under XCTest
@@ -375,6 +413,7 @@ final class RobotConnection: ObservableObject {
                   case .following = self.follow else { return }
             followLog.write(Data((analysis.logLine + "\n").utf8))
         }
+        guard connectOnStart else { return }
         if deskCameraEnabled { deskCamera.start() }
         connect()
         guard automaticPolling else { return }
@@ -463,7 +502,7 @@ final class RobotConnection: ObservableObject {
         if let reason {
             lastAction = "Wi-Fi unavailable (\(reason)); using USB through \(portName). Will return to Wi-Fi when it is back."
         } else {
-            lastAction = "Connected locally through \(portName). Motion remains locked."
+            lastAction = "Connected locally through \(portName)."
         }
         nextWiFiProbe = Date().addingTimeInterval(wifiRetryInterval)
         requestVersion()
@@ -497,7 +536,7 @@ final class RobotConnection: ObservableObject {
         if up {
             connection = .connected(networkHost)
             refreshPassphrase()
-            lastAction = "Connected to \(networkHost) over Wi-Fi. Motion remains locked."
+            lastAction = "Connected to \(networkHost) over Wi-Fi."
             requestVersion()
             if wantsCamera { startCamera() }
         } else {
@@ -562,7 +601,7 @@ final class RobotConnection: ObservableObject {
         networkReaderID = id
         usingNetwork = true
         networkStateChanged(true, "connected")
-        lastAction = "Wi-Fi is back; switched from USB to \(networkHost). Motion remains locked."
+        lastAction = "Wi-Fi is back; switched from USB to \(networkHost)."
     }
 
     func startCamera() {
@@ -1123,346 +1162,78 @@ enum Emotion: String, CaseIterable, Identifiable {
     }
 }
 
-private struct CompanionView: View {
-    @EnvironmentObject private var robot: RobotConnection
-
-    var body: some View {
-        NavigationSplitView {
-            List {
-                Section("StackChan") {
-                    Label("Control", systemImage: "slider.horizontal.3")
-                    Label("Status", systemImage: "wave.3.right")
-                }
-                Section("Safety") {
-                    Label("Motion locked", systemImage: "lock.fill")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Stanbot")
-            .listStyle(.sidebar)
-        } detail: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    header
-                    HeadFollowingPanel()
-                    cameraPanel
-                    statusGrid
-                    expressionPicker
-                    activity
-                }
-                .padding(28)
-                .frame(maxWidth: 1000, alignment: .leading)
-            }
-            .navigationTitle("Control")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Picker("USB device", selection: $robot.selectedPort) {
-                            if robot.availablePorts.isEmpty {
-                                Text("No compatible USB device").tag(Optional<String>.none)
-                            } else {
-                                ForEach(robot.availablePorts, id: \.self) { port in
-                                    Text(URL(fileURLWithPath: port).lastPathComponent).tag(Optional(port))
-                                }
-                            }
-                        }
-                        Divider()
-                        Button("Reconnect") { robot.connect() }
-                    } label: {
-                        Label("Connection", systemImage: "cable.connector")
-                    }
-                }
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            Image(systemName: "face.smiling.inverse")
-                .font(.system(size: 42, weight: .medium))
-                .foregroundStyle(.tint)
-                .frame(width: 76, height: 76)
-                .background(.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Stanbot")
-                    .font(.largeTitle.weight(.bold))
-                StatusLabel(state: robot.connection)
-            }
-            Spacer()
-            HStack {
-                Button("Reconnect", systemImage: "arrow.clockwise") { robot.connect() }
-                    .buttonStyle(.bordered)
-                Button(robot.cameraState == .off ? "Show Camera" : "Stop Camera",
-                       systemImage: robot.cameraState == .off ? "video" : "stop.fill") {
-                    if robot.cameraState == .off { robot.startCamera() } else { robot.stopCamera() }
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var statusGrid: some View {
-        Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-            GridRow {
-                StatusCard(title: "Connection", value: connectionValue,
-                           detail: robot.portName, symbol: "cable.connector")
-                StatusCard(title: "Camera", value: robot.cameraState == .receiving ? "Live" : "Standby",
-                           detail: robot.cameraState.title, symbol: "camera")
-            }
-            GridRow {
-                StatusCard(title: "Person detection", value: personDetectionValue,
-                           detail: "Visual indication only; it does not claim eye contact", symbol: "person.crop.circle")
-                StatusCard(title: "Head movement", value: headMovementValue,
-                           detail: headMovementDetail, symbol: headMovementEnabled ? "scope" : "lock.fill")
-            }
-            GridRow {
-                StatusCard(title: "Firmware", value: firmwareValue, detail: firmwareDetail,
-                           symbol: firmwareWarnings.isEmpty ? "cpu" : "exclamationmark.triangle.fill",
-                           tint: firmwareWarnings.isEmpty ? nil : .orange)
-                    .gridCellColumns(2)
-            }
-        }
-    }
-
-    private var headMovementEnabled: Bool {
-        if case .reported(let info) = robot.firmware { return info.followLimitsMeasured }
-        return false
-    }
-
-    private var headMovementValue: String {
-        if case .following = robot.follow { return "Following" }
-        return headMovementEnabled ? "Calibration build" : "Locked"
-    }
-
-    private var headMovementDetail: String {
-        headMovementEnabled
-            ? "Following can move the head, yaw only, within narrowed limits"
-            : "Calibration required before motion can be enabled"
-    }
-
-    private var firmwareWarnings: [String] {
-        switch robot.firmware {
-        case .reported(let info): info.warnings
-        case .silent: ["No reply to V; firmware predates the version command"]
-        default: []
-        }
-    }
-
-    private var firmwareValue: String {
-        switch robot.firmware {
-        case .unknown: "Not connected"
-        case .asking: "Asking…"
-        case .reported(let info): "\(info.sketch) · \(info.shortCommit)"
-        case .silent: "Unidentified"
-        }
-    }
-
-    private var firmwareDetail: String {
-        guard case .reported(let info) = robot.firmware else {
-            return firmwareWarnings.first ?? "Reported by the robot on each connect"
-        }
-        let built = "Built \(info.built), protocol \(info.protocolVersion)"
-        return ([built] + firmwareWarnings).joined(separator: " · ")
-    }
-
-    private var cameraPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Camera")
-                        .font(.title2.weight(.semibold))
-                    Text(cameraDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if robot.cameraState == .receiving {
-                    Label("Local only", systemImage: "lock.fill")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.black)
-                if let image = robot.cameraImage {
-                    GeometryReader { proxy in
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .overlay { FaceOverlay(boxes: robot.faceBoxes) }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                } else {
-                    ContentUnavailableView {
-                        Label("Camera not streaming", systemImage: "camera")
-                    } description: {
-                        Text(cameraPlaceholder)
-                    } actions: {
-                        if robot.cameraState == .off {
-                            Button("Show Camera") { robot.startCamera() }
-                                .buttonStyle(.borderedProminent)
-                        }
-                    }
-                    .foregroundStyle(.white)
-                }
-            }
-            .aspectRatio(4 / 3, contentMode: .fit)
-            .accessibilityLabel("StackChan camera feed")
-        }
-        .padding(20)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var cameraDescription: String {
-        switch robot.cameraState {
-        case .receiving:
-            return robot.faceState.rawValue
-        case .waiting: return "Waiting for StackChan’s local USB stream"
-        case .off: return "Camera feed is off"
-        case .unavailable: return "Camera stream unavailable"
-        }
-    }
-
-    private var cameraPlaceholder: String {
-        switch robot.cameraState {
-        case .waiting: "The app is listening for local camera frames over USB."
-        case .unavailable: "Reconnect StackChan, then try again."
-        default: "Start the local USB camera stream to see StackChan’s view."
-        }
-    }
-
-    private var connectionValue: String {
-        if case .connected = robot.connection { return "Connected" }
-        return "Unavailable"
-    }
-
-    private var personDetectionValue: String {
-        robot.cameraState == .receiving ? robot.faceState.rawValue : "Not observing"
-    }
-
-    private var expressionPicker: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Expression")
-                .font(.title2.weight(.semibold))
-            Text("Changes the on-device eyes only. It cannot move the head.")
-                .foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 10)], spacing: 10) {
-                ForEach(Emotion.allCases) { emotion in
-                    Button {
-                        robot.select(emotion)
-                    } label: {
-                        Label(emotion.title, systemImage: emotion.symbol)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(ExpressionButtonStyle(selected: robot.selectedEmotion == emotion))
-                    .accessibilityHint("Sets Stanbot’s display-only expression")
-                }
-            }
-        }
-        .padding(20)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var activity: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "checkmark.circle")
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Activity")
-                    .font(.headline)
-                Text(robot.lastAction)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-    }
+struct ActivityEntry: Identifiable, Equatable {
+    let id = UUID()
+    let date: Date
+    let text: String
 }
 
-private struct FaceOverlay: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let boxes: [FaceBox]
+// MARK: - Preview scenarios
 
-    var body: some View {
-        GeometryReader { proxy in
-            ForEach(boxes) { face in
-                let rect = face.rect
-                let width = rect.width * proxy.size.width
-                let height = rect.height * proxy.size.height
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(.green, lineWidth: 3)
-                    .frame(width: width, height: height)
-                    .overlay(alignment: .topLeading) {
-                        Text("Face selected")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .foregroundStyle(.black)
-                            .background(.green, in: Capsule())
-                            .offset(y: -26)
-                    }
-                    .position(x: rect.midX * proxy.size.width,
-                              y: (1 - rect.midY) * proxy.size.height)
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: rect)
-            }
+extension RobotConnection {
+    /// STANBOT_PREVIEW=asleep|seeing|following|refused launches the app with
+    /// made-up state and no link at all: no USB, no Wi-Fi, no camera, no
+    /// motion. It exists to look at the interface without a robot.
+    static func fromEnvironment() -> RobotConnection {
+        guard let scenario = ProcessInfo.processInfo.environment["STANBOT_PREVIEW"] else { return RobotConnection() }
+        let robot = RobotConnection(automaticPolling: false, transport: .usb, passphrase: { nil }, connectOnStart: false)
+        robot.applyPreview(scenario)
+        return robot
+    }
+
+    /// With STANBOT_SNAPSHOT=/path.png as well, the preview writes its own window
+    /// to that file after it settles: a picture of the interface without screen
+    /// recording permission. Preview only.
+    private func scheduleSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["STANBOT_SNAPSHOT"] else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "Stanbot" }),
+                  let frame = window.contentView?.superview else { return }
+            guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+            frame.cacheDisplay(in: frame.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
-        .allowsHitTesting(false)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(boxes.isEmpty ? "No person detected" : "Person detected")
     }
-}
 
-private struct StatusLabel: View {
-    let state: RobotConnection.ConnectionState
-
-    var body: some View {
-        Label(state.title, systemImage: "circle.fill")
-            .font(.subheadline)
-            .foregroundStyle(state.tint)
-            .symbolRenderingMode(.hierarchical)
-    }
-}
-
-private struct StatusCard: View {
-    let title: String
-    let value: String
-    let detail: String
-    let symbol: String
-    var tint: Color? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.tint))
-            Text(title).font(.subheadline).foregroundStyle(.secondary)
-            Text(value).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private func applyPreview(_ scenario: String) {
+        scheduleSnapshot()
+        // followAutomatically is left alone: it persists, and with no link it does nothing.
+        guard scenario != "asleep" else { lastAction = "Waiting to connect"; return }
+        connection = .connected("stanbot.local")
+        firmware = .reported(FirmwareInfo.parse(#"SBVR {"sketch":"camera_stream","commit":"7cd510631e1d","dirty":false,"built":"2026-09-17T01:00:32Z","protocol":1,"follow_limits_measured":true,"follow_pitch":true,"follow_yaw_range":48}"#)!)
+        lastAction = "Connected to stanbot.local over Wi-Fi."
+        guard scenario != "connected" else { return }
+        cameraState = .receiving
+        cameraImage = Self.previewImage()
+        faceSelection = FaceSelection()
+        let face = FaceBox(rect: CGRect(x: 0.42, y: 0.40, width: 0.22, height: 0.30), confidence: 0.94,
+                           pose: HeadPose(yaw: 8, pitch: 4, roll: 0), frameWidth: 640)
+        faceBoxes = [face]
+        faceState = .tracking
+        lastAction = "Receiving local camera frames from StackChan."
+        switch scenario {
+        case "following":
+            follow = .following(since: Date().addingTimeInterval(-42))
+            lastAction = "Head following started. Stay at the robot."
+        case "refused":
+            follow = .finished(FollowResult(code: "preflight_refused"))
+            lastAction = "Head following: \(FollowResult(code: "preflight_refused").summary)"
+        default: break
         }
-        .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
-        .padding(18)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-}
 
-private struct ExpressionButtonStyle: ButtonStyle {
-    let selected: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .foregroundStyle(selected ? Color.white : Color.primary)
-            .background(selected ? Color.accentColor : Color.primary.opacity(configuration.isPressed ? 0.12 : 0.07),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.smooth(duration: 0.18), value: configuration.isPressed)
-            .animation(.smooth(duration: 0.22), value: selected)
+    private static func previewImage() -> NSImage {
+        let size = NSSize(width: 640, height: 480)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSGradient(starting: NSColor(calibratedRed: 0.32, green: 0.30, blue: 0.27, alpha: 1),
+                   ending: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1))?
+            .draw(in: NSRect(origin: .zero, size: size), angle: -90)
+        NSColor(calibratedRed: 0.55, green: 0.45, blue: 0.38, alpha: 1).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 270, y: 190, width: 140, height: 150)).fill()
+        NSColor(calibratedWhite: 0.22, alpha: 1).setFill()
+        NSBezierPath(roundedRect: NSRect(x: 200, y: -40, width: 280, height: 220), xRadius: 90, yRadius: 90).fill()
+        image.unlockFocus()
+        return image
     }
 }
