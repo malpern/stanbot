@@ -219,7 +219,8 @@ struct DirectionPad: View {
                     if length > reach { dx *= reach / length; dy *= reach / length }
                     knob = CGPoint(x: dx, y: dy)
                     // Screen y grows downward; up on the pad tilts the head up.
-                    robot.steer(x: dx / reach, y: -dy / reach)
+                    // Left and right are the owner's, facing the robot.
+                    robot.steerAsSeen(x: dx / reach, y: -dy / reach)
                 }
                 .onEnded { _ in
                     withAnimation(.spring(duration: 0.25, bounce: 0)) { knob = nil }

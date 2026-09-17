@@ -952,6 +952,18 @@ final class RobotConnection: ObservableObject {
     /// confirmation Follow asks for, since grabbing the stick is the intent.
     /// Face targets are ignored while steering; 1.5 s after release the robot
     /// resumes following from wherever the head was left.
+    /// Steering as the owner sees it, sitting in front of the robot and facing
+    /// it: left on the pad or the left arrow turns the head toward *their* left,
+    /// which is the robot's right. The pad and the arrow keys use this; `steer`
+    /// keeps the robot's own sense for the protocol.
+    func steerAsSeen(x: Double, y: Double) {
+        let robotSense = Self.asSeen(x: x, y: y)
+        steer(x: robotSense.x, y: robotSense.y)
+    }
+
+    /// The owner's left/right to the robot's: reversed. Up and down are shared.
+    nonisolated static func asSeen(x: Double, y: Double) -> (x: Double, y: Double) { (-x, y) }
+
     func steer(x: Double, y: Double) {
         guard followUnavailableReason == nil else { return }
         steerX = min(max(x, -1), 1)

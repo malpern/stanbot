@@ -105,7 +105,7 @@ struct CompanionView: View {
                     // Arrow keys steer at half deflection, for fine positioning.
                     let x = (heldArrows.contains(.rightArrow) ? 0.5 : 0) - (heldArrows.contains(.leftArrow) ? 0.5 : 0)
                     let y = (heldArrows.contains(.upArrow) ? 0.5 : 0) - (heldArrows.contains(.downArrow) ? 0.5 : 0)
-                    robot.steer(x: x, y: y)
+                    robot.steerAsSeen(x: x, y: y)   // the owner's left and right, facing the robot
                 }
                 return .handled
             }

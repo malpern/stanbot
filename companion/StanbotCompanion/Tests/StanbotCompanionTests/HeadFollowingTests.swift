@@ -4,6 +4,20 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import StanbotCompanion
 
+final class SteeringSenseTests: XCTestCase {
+    /// The pad and arrow keys steer as the owner sees the robot, facing it:
+    /// their left is the robot's right, so x is reversed; up stays up.
+    @MainActor
+    func testSteeringAsSeenReversesLeftAndRightOnly() {
+        let robot = RobotConnection(port: nil, automaticPolling: false, transport: .usb,
+                                    passphrase: { nil }, connectOnStart: false)
+        XCTAssertEqual(RobotConnection.asSeen(x: -1, y: 0.5).x, 1, "the owner's left is the robot's right")
+        XCTAssertEqual(RobotConnection.asSeen(x: 0.25, y: 0.5).x, -0.25)
+        XCTAssertEqual(RobotConnection.asSeen(x: -1, y: 0.5).y, 0.5, "up is up from either side")
+        _ = robot
+    }
+}
+
 final class SilentFailureTests: XCTestCase {
     /// A session that never reports back is retried once; twice running is a
     /// fault that stops the retrying and is said out loud.
