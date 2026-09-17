@@ -408,6 +408,23 @@ On session 5's successor (`follow-20260916-165311.log`) it shows yaw holding at
 ~499 against a 506 goal with the face still 0.28 right of centre for 16 s: the
 head was at the calibration build's +48 limit, which is checklist step 4.
 
+## Pitch level found, 2026-09-17
+
+`companion/find_pitch_level.py`, operator at the robot on USB: raw 634 was
+tilted up, 614 level (`calibration-pitch-level.jsonl`). The first attempt that
+morning stopped with DISABLE LATCH NOT VERIFIED: Stanbot was open on Wi-Fi
+with automatic following on and had started a session, so the robot never ran
+the level move or reported power off. The robot was power-cycled by hand, and
+the finder now refuses to run while the app is open.
+
+Limits from 614 (both builds): pitch 598..646 (level -16 to +32), rest 614,
+`pitchRestConfirmed` true, so a lost face returns pitch to level rather than to
+where the session started. The unpowered head droops to 594, below the down
+limit; a session starting there may rise to 646 but never goes below 594.
+Flashed together with yaw widened to +-96 (`STANBOT_FOLLOW_YAW_RANGE=96`),
+checklist step 4. Next: watch for the head meeting the body at both, then
+widen down travel and yaw one step at a time.
+
 ## Manual steering, 2026-09-17
 
 For when the face is not in view yet, or the head should start somewhere

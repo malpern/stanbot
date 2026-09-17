@@ -788,7 +788,39 @@ void lowPitchRestIsAcceptedAndNeverPushedLower() {
   }
 }
 
+// The real limits, from the head's unpowered droop at 594: pitch stays
+// between the droop and level +32, and a lost face returns it to level (614,
+// measured 2026-09-17), not to the droop.
+void measuredPitchLevelFromDroop() {
+  const FollowLimits& limits = stanbot::kFollowLimits;
+  assert(limits.pitchRestConfirmed && limits.pitchRest == 614);
+  assert(HeadTracker::pitchStartAcceptable(limits, 594));
+  FollowConfig config;
+  config.pitchEnabled = true;
+  HeadTracker tracker(limits, config);
+  uint32_t now = 1000;
+  tracker.begin(460, 594, now);
+  assert(tracker.pitchLow() == 594);
+  assert(tracker.pitchHigh() == 646);
+  // A face high in frame: climbs, never past 646.
+  uint32_t sequence = 0;
+  for (int i = 0; i < 120; ++i) {
+    now += config.controlPeriodMs;
+    if (i % 3 == 0) tracker.observe(++sequence, 0.0f, -1.0f, 0.95f, now);
+    const FollowCommand command = tracker.step(now);
+    assert(command.pitch >= 594 && command.pitch <= 646);
+  }
+  assert(tracker.commandedPitch() > 630);
+  // The face goes: after the search, pitch comes back to level.
+  for (int i = 0; i < 200; ++i) {
+    now += config.controlPeriodMs;
+    tracker.step(now);
+  }
+  assert(std::abs(tracker.commandedPitch() - 614) < config.deadbandRaw);
+}
+
 int main() {
+  measuredPitchLevelFromDroop();
   lowPitchRestIsAcceptedAndNeverPushedLower();
   manualControl();
   closedLoopSettlesInsteadOfHunting();
