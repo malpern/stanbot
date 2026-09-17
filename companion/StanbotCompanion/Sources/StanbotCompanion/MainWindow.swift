@@ -159,41 +159,42 @@ private struct LiveView: View {
     /// The last frame before the robot went to sleep, so the lids have something
     /// to close over: the robot stops sending as soon as it is asked to sleep.
     @State private var frozen: NSImage?
-    /// 1 awake, 0 asleep: animated on its own so the mask interpolates.
-    @State private var lids = 1.0
+    /// A sequence in flight: falling asleep or waking, and when it began. While
+    /// one runs the picture is redrawn every frame from EyeMotionSequence; when
+    /// it ends the aperture rests open or closed.
+    @State private var motion: (asleep: Bool, start: Date)?
 
     private var picture: NSImage? { robot.cameraImage ?? frozen }
     private var showingVideo: Bool {
         picture != nil && (robot.cameraState == .receiving || robot.asleep || frozen != nil)
     }
 
+    /// Where the eyes are in the sequence now: a running one is read from the
+    /// clock, otherwise they rest open or closed.
+    private func aperture(at date: Date) -> EyeMotionSequence.State {
+        guard let motion else { return robot.asleep ? .closed : .open }
+        let elapsed = date.timeIntervalSince(motion.start)
+        return motion.asleep ? EyeMotionSequence.sleep(at: elapsed) : EyeMotionSequence.wake(at: elapsed)
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let image = picture, showingVideo {
-                GeometryReader { proxy in
-                    let fitted = fit(image.size, in: proxy.size)
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: fitted.width, height: fitted.height)
-                        .overlay { FaceOverlay(boxes: robot.faceBoxes) }
-                        // Mirrored like a selfie camera, so moving right moves right
-                        // on screen. Picture and face boxes flip together; detection
-                        // and following use the unmirrored frame.
-                        .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
-                        // On the picture itself, not the pane around it: the eyes
-                        // must land where the robot draws them within the frame.
-                        .eyelidVeil(openness: lids, pose: EyePose.of(mood.emotion),
-                                    reduceMotion: reduceMotion)
-                        // Top of the window, not centred: the picture stays put
-                        // as the window grows.
-                        .position(x: proxy.size.width / 2, y: fitted.height / 2)
+                Group {
+                    if motion != nil {
+                        // Every frame while the eyes move: the stages, the
+                        // half-blinks and the focus all come from the clock.
+                        TimelineView(.animation) { timeline in
+                            picture(image, aperture(at: timeline.date))
+                        }
+                    } else {
+                        picture(image, robot.asleep ? .closed : .open)
+                    }
                 }
                 .accessibilityLabel("What Stanbot sees")
-                // Falling asleep and waking are seen through Stanbot's own eyes:
-                // the picture narrows to two eye shapes and the lids close,
-                // losing focus as they go (EyelidVeil).
+                // Falling asleep and waking are seen from behind Stanbot's own
+                // eyes; see EyeAperture.swift.
                 // The picture clears in, like eyes focusing, rather than popping.
                 .transition(reduceMotion ? .opacity : .modifier(active: Focusing(amount: 1), identity: Focusing(amount: 0)))
             } else {
@@ -202,8 +203,13 @@ private struct LiveView: View {
             }
         }
         .animation(.smooth(duration: 0.45), value: showingVideo)
-        .onChange(of: robot.asleep, initial: true) { _, sleeping in
-            withAnimation(Eyelids.animation(asleep: sleeping)) { lids = sleeping ? 0 : 1 }
+        .onChange(of: robot.asleep) { _, sleeping in
+            motion = (sleeping, Date())
+            let duration = sleeping ? EyeMotionSequence.sleepDuration : EyeMotionSequence.wakeDuration
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(duration))
+                if motion?.asleep == sleeping { motion = nil }
+            }
             if sleeping {
                 frozen = robot.cameraImage       // hold the last frame while the lids close
             } else {
@@ -213,6 +219,28 @@ private struct LiveView: View {
                     if !robot.asleep, robot.cameraImage != nil { frozen = nil }
                 }
             }
+        }
+    }
+
+    /// The camera picture, masked by the eye aperture.
+    private func picture(_ image: NSImage, _ state: EyeMotionSequence.State) -> some View {
+        GeometryReader { proxy in
+            let fitted = fit(image.size, in: proxy.size)
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: fitted.width, height: fitted.height)
+                .overlay { FaceOverlay(boxes: robot.faceBoxes) }
+                // Mirrored like a selfie camera, so moving right moves right on
+                // screen. Picture and face boxes flip together; detection and
+                // following use the unmirrored frame.
+                .scaleEffect(x: mirrorVideo ? -1 : 1, y: 1)
+                // On the picture itself, not the pane around it: the eyes must
+                // land where the robot draws them within the frame.
+                .eyeAperture(state, pose: EyePose.of(mood.emotion), reduceMotion: reduceMotion)
+                // Top of the window, not centred: the picture stays put as the
+                // window grows.
+                .position(x: proxy.size.width / 2, y: fitted.height / 2)
         }
     }
 

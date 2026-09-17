@@ -5,22 +5,28 @@ the robot's view, with a little of the robot's character in it.
 
 ## Structure
 
-- **Falling asleep is seen through Stanbot's eyes.** For most of the animation
-  the picture is visible *only* through two windows the shape of the robot's own
-  eyes, where the robot draws them, and it is out of focus until they are open:
-  a first-person point of view, not a widening rectangle. The lids fall (the
-  upper lid travelling, gathering speed at the end); only in the last fifth does
-  the darkness around the eyes dissolve into the whole picture, while the eye
-  windows swell slightly, as if leaning into the view. Waking reverses it, a
-  touch faster and with the smallest overshoot. Both take exactly as long as the robot's own eyes
-  (`EyelidVeil.swift` against `SleepCurtain.h`; `EyelidTests` checks the
-  timings and the geometry). The last frame is held while the lids close,
-  because the robot stops sending as soon as it is asked to sleep, and the app
-  stops analysing once they are shut. Reduce Motion fades instead.
+- **Waking is a shot from behind Stanbot's eyes.** The owner's brief: a
+  first-person view of someone slowly opening their eyes in the morning. So it is
+  a *sequence*, not an eased mask (`EyeAperture.swift`, `EyeMotionSequence`):
+  2.4 s long; the lids come up in stages with two half-blinks on the way; the
+  right lid lags the left, so they are never in step; the picture is soft,
+  washed out and drained of colour until the lids are well open, and focus
+  arrives a beat after them; the aperture stays the shape of the robot's two
+  eyes, where it draws them, for the first three quarters, then grows past the
+  frame so the picture is simply there. Falling asleep is the same machinery in
+  1.1 s with one flutter on the way down. Every value is a pure function of
+  time, so `EyeApertureTests` checks the blinks, the lag, the focus and the
+  shape frame by frame, and can write a filmstrip (`STANBOT_WAKE_STRIP=1`). It
+  is deliberately slower than the robot's own 0.7/0.4 s lids: the app is a
+  cinema screen, the robot a face. While a sequence runs the picture is
+  redrawn every frame from a `TimelineView`; at rest nothing animates. The last
+  frame is held while the eyes close, because the robot stops sending as soon as
+  it is asked to sleep, and the app stops analysing once they are shut. Reduce
+  Motion fades instead.
   Two things this depends on, both learned by breaking them (2026-09-17): the
   veil is applied to the **picture**, not the pane around it (on the pane the
   eyes centre on the window and sit below the letterboxed video), and it keeps
-  **one view tree at every openness** — an `if` that skipped the mask while awake
+  **one view tree at every state** — an `if` that skipped the mask while awake
   made SwiftUI rebuild the subtree on sleep, so the picture cut straight to black
   with no animation at all.
 - **The robot's view is the window.** The camera fills the width at the top of
@@ -231,9 +237,10 @@ writes every expression icon to one image.
 A snapshot run quits as soon as the picture is written, so it leaves nothing on
 screen; add `-g` to `open` to keep it in the background as well.
 
-`STANBOT_PREVIEW=sleeping` is "seeing" and then falls asleep after a second, so
-`STANBOT_SNAPSHOT_DELAY=1.3` photographs the eyelids part way through closing —
-which is how those two bugs were found.
+`STANBOT_PREVIEW=sleeping` is "seeing" and then falls asleep after a second, and
+`waking` the reverse, so `STANBOT_SNAPSHOT_DELAY=1.3` photographs the eyes part
+way through — which is how the two bugs above were found, and how the wake
+sequence was checked end to end.
 `STANBOT_SNAPSHOT_WINDOW=Diagnostics` opens and captures that window instead,
 `=sheet` captures an open sheet, and `STANBOT_WINDOW_SIZE=1800x1100` checks a
 layout at another size.

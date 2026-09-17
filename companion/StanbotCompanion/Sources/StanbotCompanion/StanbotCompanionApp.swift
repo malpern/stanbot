@@ -955,7 +955,7 @@ final class RobotConnection: ObservableObject {
         // eyelids have finished closing, so the animation has frames to use.
         let wanted = wantsCamera
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(Eyelids.closeDuration + 0.1))
+            try? await Task.sleep(for: .seconds(EyeMotionSequence.sleepDuration + 0.1))
             guard let self, self.asleep else { return }
             self.stopCamera()
             self.wantsCamera = wanted   // wake brings the picture back
@@ -1378,6 +1378,14 @@ extension RobotConnection {
         if scenario == "sleeping" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.asleep = true }
             applyPreview("seeing")
+            return
+        }
+        // STANBOT_PREVIEW=waking starts asleep with a picture held, and wakes
+        // after a second: the eyes-opening sequence, photographed at any delay.
+        if scenario == "waking" {
+            applyPreview("seeing")
+            asleep = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.asleep = false }
             return
         }
         // followAutomatically is left alone: it persists, and with no link it does nothing.
