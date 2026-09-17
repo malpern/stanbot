@@ -75,23 +75,30 @@ firmware plus the sleep work.
 
 ## Next, in order
 
-1. **See what has never been seen**, with the owner at the robot: the wake scan
+1. **Measure the yaw centre**, with the owner at the robot. 460 is the BSP's
+   `defaultZeroPos`, assumed and never measured, and it is wrong: the head sits
+   left of the feet at rest and the wake scan reaches further left than right.
+   Follow on, steer until the screen is square over the feet, let go, then
+   `python3 tools/read_steered_yaw.py`; put the number in `kFollowLimits` (the
+   limits are written around the centre) and flash. See the calibration
+   checklist, step 1, in `docs/head-following.md`.
+2. **See what has never been seen**, with the owner at the robot: the wake scan
    (sleep, then wake while out of view), the mouth
    (Robot menu, Play Mouth Test; then set `robotLead` by eye), the sleep
    animation on the robot's screen, and the trouble face.
-2. **Re-check pitch level** (steer until the face looks straight ahead, read
+3. **Re-check pitch level** (steer until the face looks straight ahead, read
    pitch from the follow log), then decide the down limit.
-3. **Widen yaw** one supervised session per step:
+4. **Widen yaw** one supervised session per step:
    `STANBOT_FOLLOW_YAW_RANGE=144`, then 192, 240, 288 (the most ever swept). The
    owner asked for 144 on 2026-09-17 and then dismissed the supervised prompt:
    ask again when they are at the robot.
-4. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
+5. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
    Mac, then a command-line `gpt-live-1` client. The Talk button is phase 4.
-5. **When calibration is done**, decide whether `measured` can be true in the
+6. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-6. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
+7. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
    was removed 2026-09-17; `92ab70b` is the last commit with it.
-7. **Worth doing:** the 5% CPU the panel's large face costs at rest
+8. **Worth doing:** the 5% CPU the panel's large face costs at rest
    (`docs/app-design.md`, "What it costs") is the app's biggest standing cost.
 
 ## How to work here
@@ -110,7 +117,9 @@ firmware plus the sleep work.
 - **Native firmware tests:** compile and run every `companion/test_*.cpp` with
   `c++ -std=c++17 -include initializer_list`. Python: `companion/test_*.py`.
 - **Session logs:** `~/Library/Logs/Stanbot/follow-*.log` (APP lines per frame,
-  SBPD trace, SBMV result, SBPW power). `tools/follow_replay.py` renders one.
+  SBPD trace, SBMV result, SBPW power). `tools/follow_replay.py` renders one;
+  `tools/read_steered_yaw.py` reads the position the owner steered to out of
+  the newest one, for calibrating by eye.
 - **The camera task owns the internal I2C bus. Nothing in M5Unified may touch
   it after setup.** On 2026-09-17 sleep called `M5.Display.setBrightness`; M5's
   driver took the bus back and every transaction to the base failed from the

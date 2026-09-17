@@ -520,7 +520,21 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
 1. **Yaw direction.** With `yawMin/yawMax` narrowed to centre +-48, hold a face
    left of frame and confirm the head turns robot-left. If it turns away,
    the image is mirrored relative to the assumption in `observe()` and the
-   sign of `rawPerUnitX` must flip.
+   sign of `rawPerUnitX` must flip. Direction is done.
+
+   **Centre** is not, and 460 is not a measurement: it is the BSP's
+   `defaultZeroPos` for servo 1, taken on trust. On 2026-09-17 the owner saw
+   the head sitting left of the feet at rest, and the wake scan reaching
+   further left than right, which is what an assumed centre looks like. Measure
+   it the way pitch level was measured, by eye: turn Follow on, steer with the
+   direction pad or the arrow keys until the screen is square over the feet,
+   let go and hold still, then
+   `python3 tools/read_steered_yaw.py` reads the position out of the session
+   log. It takes the last run of manual-mode samples and, within it, only the
+   trailing ones that stopped moving, because the head resumes following 1.5 s
+   after the last input and a reading taken mid-turn is a wrong answer that
+   looks like a right one. Put the number in `kFollowLimits` as the centre; the
+   limits are written around it, so they move with it.
 2. **Pitch direction.** Same session, face high in frame, `pitchMax` at rest
    +32. Observe nod up or down; record `pitchUpSign`. If +raw nods *down*,
    the safe range is on the other side of rest and both pitch limits change.
