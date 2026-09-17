@@ -64,8 +64,9 @@ need the side (head) port.
 4. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
 5. **Voice conversation: planned** in `docs/voice.md` (OpenAI `gpt-live-1`,
-   Studio Display audio, a mouth on the robot). Nothing built; phase 0 spikes
-   first, after the owner answers its open questions.
+   Studio Display audio, a male expressive voice, transcripts kept, a mouth on
+   the robot over its own UDP path). Nothing built; phase 1 is the mouth with a
+   recorded voice.
 6. **Gaze: paused.** Nothing has been measured. If gaze matters for a feature,
    first build a 2-minute prompted test (look at robot / screen / away) that logs
    the robot-only engaged flag against the prompt. See `docs/gaze.md`. The Studio
