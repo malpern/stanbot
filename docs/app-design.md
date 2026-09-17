@@ -43,6 +43,13 @@ the robot's view, with a little of the robot's character in it.
   **one view tree at every state** — an `if` that skipped the mask while awake
   made SwiftUI rebuild the subtree on sleep, so the picture cut straight to black
   with no animation at all.
+- **Asleep, the picture is replaced by z's.** Once the eyes have shut, a slow
+  string of z's drifts up where the picture was (`SleepingZs`): one at a time,
+  born low and small every ~2.8 s, rising over ~5 s while it grows a little and
+  leans, faint grey, fading before the next has got far. No bubble. Each z is a
+  pure function of its age, drawn from a 12 fps clock (`withAnimation` from
+  `onAppear` inside the overlay jumped straight to the end state and nothing
+  showed). Reduce Motion: three still z's.
 - **The robot's view is the window.** The camera fills the width at the top of
   the window (not centred, so it stays put as the window grows), with the
   selected face outlined. No sidebar: there is one robot and no

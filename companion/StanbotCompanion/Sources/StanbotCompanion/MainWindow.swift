@@ -195,6 +195,9 @@ private struct LiveView: View {
                         }
                     } else {
                         picture(image, robot.asleep ? .closed : .open)
+                            // Asleep with the eyes shut: a slow drift of z's
+                            // where the picture was (SleepingZs).
+                            .overlay { if robot.asleep { SleepingZs().transition(.opacity) } }
                     }
                 }
                 .accessibilityLabel("What Stanbot sees")
