@@ -978,6 +978,15 @@ final class RobotConnection: ObservableObject {
         // An explicit stop also turns automatic following off: otherwise it
         // would start again a few seconds later, which is not what Stop means.
         followAutomatically = false
+        endSession()
+    }
+
+    /// Ends the running session and nothing more. Going to sleep uses this, not
+    /// `stopFollowing`: the owner asked the robot to sleep, not to stop following
+    /// for good. With Stop's side effect, every sleep switched automatic
+    /// following off, so waking had nothing to start the look-around with
+    /// (2026-09-17: "it's looking for me but the head didn't move").
+    private func endSession() {
         guard case .following = follow else { return }
         // Allowed on either link without authorization: stopping only makes the
         // robot safer. The robot also ends the session by itself.
@@ -990,7 +999,7 @@ final class RobotConnection: ObservableObject {
     /// camera commands any viewer may already send.
     func sleep() {
         guard connectedOverUSB || connectedOverWiFi, !asleep else { return }
-        if case .following = follow { stopFollowing() }
+        endSession()
         guard send("C,SLEEP\n") else { return }
         sleepCommandedAt = Date()
         asleep = true   // confirmed by the robot's SBSL

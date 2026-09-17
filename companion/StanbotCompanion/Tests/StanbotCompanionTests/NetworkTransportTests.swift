@@ -241,6 +241,29 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(robot.robotFault).contains("Hold its button"))
     }
 
+    /// Sleeping ends the session but must not switch automatic following off,
+    /// as the Stop button does: waking needs it to start the look-around.
+    @MainActor
+    func testSleepingWhileFollowingKeepsAutomaticFollowingOn() throws {
+        let fake = try FakeRobot()
+        defer { fake.stop() }
+        let robot = calibratedWiFiRobot(fake, passphrase: "test-passphrase")
+        wait(upTo: 5, tick: robot) { robot.cameraState == .receiving }
+        robot.followAutomatically = true
+        robot.startFollowing()
+        wait(upTo: 3) { if case .following = robot.follow { return true }; return false }
+        guard case .following = robot.follow else { return XCTFail("not following: \(robot.follow)") }
+
+        robot.sleep()
+        wait(upTo: 2) { fake.commands.contains("C,SLEEP") }
+        XCTAssertTrue(fake.commands.contains("C,UNFOLLOW"), "the session is ended first")
+        XCTAssertTrue(robot.followAutomatically, "sleep is not Stop: following resumes on waking")
+
+        // The Stop button still means stop.
+        robot.stopFollowing()
+        XCTAssertFalse(robot.followAutomatically)
+    }
+
     @MainActor
     func testTurningTheRobotOffOverWiFiIsAuthorized() throws {
         let fake = try FakeRobot()
