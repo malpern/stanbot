@@ -37,7 +37,10 @@ struct FollowLimits {
   // resting below 620 is never pushed further down, and one resting tilted up
   // may still come down to 620.
   int pitchUpTravel = 32;             // raw above the session start, never more
-  int pitchStartSlack = 24;           // a start this far past the down-side limit is still accepted
+  // A start this far past the down-side limit is still accepted. 24 refused
+  // every session on 2026-09-17: unpowered, the head rested at 594, 26 below.
+  // Safe to allow, because a session never pushes pitch below where it started.
+  int pitchStartSlack = 32;
   bool pitchRestConfirmed = false;    // true: a lost target returns pitch to pitchRest, not the session start
 };
 
@@ -80,14 +83,14 @@ constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
   620, 640 + 32, 620,
   +1, true,
-  16, 24, false};
+  16, 32, false};
 #else
 constexpr int kFollowYawRange = 144;
 constexpr FollowLimits kFollowLimits = {
   460 - kFollowYawRange, 460 + kFollowYawRange, 460,
   620, 640 + 32, 620,
   +1, false,
-  32, 24, false};
+  32, 32, false};
 #endif
 // 288 is what the 2026-09-15 sweep traversed; nothing wider has been observed.
 static_assert(kFollowYawRange >= 48 && kFollowYawRange <= 288 && kFollowYawRange % 48 == 0,
@@ -178,8 +181,8 @@ class HeadTracker {
   int pitchAt(uint32_t whenMs) const { return sampleAt(whenMs, pitch_).pitch; }
 
   // Whether pitch may start a session at this raw position: inside the limits,
-  // or resting at most pitchStartSlack past the down-side one. A rest of 601
-  // has been observed, below the BSP's 0 degrees at 620.
+  // or resting at most pitchStartSlack past the down-side one. Rests of 601
+  // and 594 have been observed, below the BSP's 0 degrees at 620.
   static bool pitchStartAcceptable(const FollowLimits& limits, int position) {
     if (limits.pitchUpSign > 0)
       return position >= limits.pitchMin - limits.pitchStartSlack && position <= limits.pitchMax;

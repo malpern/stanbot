@@ -457,8 +457,9 @@ void lostTargetReturnsPitchToSessionStart() {
 void pitchStartAcceptance() {
   assert(HeadTracker::pitchStartAcceptable(kLimits, 620));
   assert(HeadTracker::pitchStartAcceptable(kLimits, 601));
-  assert(HeadTracker::pitchStartAcceptable(kLimits, 620 - 24));
-  assert(!HeadTracker::pitchStartAcceptable(kLimits, 620 - 25));
+  assert(HeadTracker::pitchStartAcceptable(kLimits, 594));       // the rest that was refused on 2026-09-17
+  assert(HeadTracker::pitchStartAcceptable(kLimits, 620 - 32));
+  assert(!HeadTracker::pitchStartAcceptable(kLimits, 620 - 33));
   assert(HeadTracker::pitchStartAcceptable(kLimits, kLimits.pitchMax));
   assert(!HeadTracker::pitchStartAcceptable(kLimits, kLimits.pitchMax + 1));
   assert(!HeadTracker::pitchStartAcceptable(kLimits, -1));   // unpowered servo reads -1
@@ -758,7 +759,37 @@ void manualControl() {
   assert(!still.step(now).send);
 }
 
+// 2026-09-17: every session was refused because the unpowered head rested at
+// pitch 594, 26 below the limit, past the old 24 of slack. That start is now
+// accepted, and the session still never tilts the head below it.
+void lowPitchRestIsAcceptedAndNeverPushedLower() {
+  FollowLimits limits = kLimits;
+  limits.pitchStartSlack = 32;
+  assert(HeadTracker::pitchStartAcceptable(limits, 594));
+  assert(!HeadTracker::pitchStartAcceptable(limits, limits.pitchMin - 33));
+  FollowConfig config;
+  config.pitchEnabled = true;
+  HeadTracker tracker(limits, config);
+  uint32_t now = 1000;
+  tracker.begin(460, 594, now);
+  assert(tracker.pitchLow() == 594 && tracker.commandedPitch() == 594);
+  // A face far below centre asks for down: refused by the bounds.
+  for (uint32_t sequence = 1; sequence < 40; ++sequence) {
+    now += config.controlPeriodMs;
+    tracker.observe(sequence, 0.0f, 0.95f, 0.95f, now);
+    const FollowCommand command = tracker.step(now);
+    assert(command.pitch >= 594);
+  }
+  // Steering down is refused the same way.
+  for (int i = 0; i < 40; ++i) {
+    now += config.controlPeriodMs;
+    tracker.manual(0.0f, -1.0f, now);
+    assert(tracker.step(now).pitch >= 594);
+  }
+}
+
 int main() {
+  lowPitchRestIsAcceptedAndNeverPushedLower();
   manualControl();
   closedLoopSettlesInsteadOfHunting();
   pitchDisabledNeverMovesPitch();
