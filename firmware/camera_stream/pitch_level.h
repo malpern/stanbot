@@ -15,6 +15,11 @@ namespace stanbot {
 constexpr int kPitchLevelLow = 596;
 constexpr int kPitchLevelHigh = 672;
 constexpr unsigned kPitchLevelHoldMs = 4000;
+// Largest move from the measured start a single request may make (15 degrees).
+// Unpowered rests seen so far span 601..640, so every candidate the finder
+// bisects to near a typical rest is within reach; a request far outside that
+// is refused before torque rather than swinging the head.
+constexpr int kPitchLevelMaxTravel = 48;
 
 inline bool parsePitchLevel(const char* payload, int& raw) {
   if (payload == nullptr) return false;

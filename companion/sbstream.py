@@ -168,6 +168,8 @@ def telemetry_check(lines, end_line):
     except (IndexError, KeyError, ValueError, TypeError):
         return "unchecked"
     crc = 0
+    # Only the block's own tags; other replies can land between the markers.
+    lines = [line for line in lines if line.startswith(("SBPD ", "SBMV ", "SBFL ", "SBPW "))]
     for line in lines:
         crc = zlib.crc32(line.rstrip("\r\n").encode("utf-8"), crc)
     return "verified" if crc == expected_crc and len(lines) == expected_lines else "corrupted"

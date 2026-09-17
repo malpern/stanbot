@@ -26,6 +26,11 @@ final class TelemetryCheckTests: XCTestCase {
         XCTAssertEqual(run([block[0]]), .corrupted(expectedLines: 2, receivedLines: 1))
     }
 
+    /// A reply from another firmware task landing inside the block is not damage.
+    func testUnrelatedRepliesInsideTheBlockAreNotCounted() {
+        XCTAssertEqual(run([block[0], #"SBWF {"stored":"ssid","profile":0}"#, #"SBNR {"x":1}"#, block[1]]), .verified(lines: 2))
+    }
+
     func testOlderFirmwareIsUncheckedNotCorrupt() {
         XCTAssertEqual(run(block, end: #"SBTE {"telemetry":"end"}"#), .unchecked)
     }

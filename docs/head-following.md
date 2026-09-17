@@ -322,7 +322,9 @@ block and writes `APP {"telemetry_check":"verified"|"corrupted"|"unchecked"}`
 to the session log, and says so when a block is damaged, since its numbers are
 then not evidence. `sbstream.telemetry_check()` does the same in Python.
 A line the host's decoder rejects also counts as damage, because the line count
-no longer matches. Firmware older than this sends a bare `SBTE`, reported as
+no longer matches. Hosts count only `SBPD`, `SBMV`, `SBFL` and `SBPW` lines, since
+replies from another firmware task (`SBWF`, `SBNR`) can land between the markers
+and are not part of the checksum. Firmware older than this sends a bare `SBTE`, reported as
 unchecked. Shared test vector: two lines, `76f85edc`, in
 `test_telemetry_check.cpp`, `TelemetryCheckTests.swift` and `test_sbstream.py`.
 
@@ -362,11 +364,18 @@ configuration (`kLinear`), and `easingRampsUpAndSlowsDown` pins the new shape.
 Everything needed to follow with the USB cable in the power-only back port is
 built; none of it has run that way on the robot. Before the first such session:
 
-1. **Update safety (new).** An OTA update that starts during a session now
-   asks it to stop and waits up to 3 s for motor power to be verified off
-   before writing flash (`stopped_for_update`); a session refuses to start
-   while an update is in progress (`update_in_progress`). Previously the
-   update proceeded with the head powered and still following.
+1. **Update safety (new, revised after review).** Every motion routine
+   (following, sweeps, nudges, pitch level, power tests) holds a
+   `MotionGuard` from before its power window opens until its telemetry is
+   written. An OTA update asks motion to stop (`stopped_for_update`), waits up
+   to 25 s for the guard to clear, and only then has the camera task, which
+   owns the viewer socket, close it. No routine starts while an update is in
+   progress (`update_in_progress`). The first version waited only on follow
+   sessions, for 3 s, cleared its flag before the telemetry dump, and closed
+   the socket from the loop task while the camera task was still writing to
+   it. Known gaps: if the wait runs out, or power-off was not verified, the
+   update still proceeds (the routine's own cutoff bounds power); nothing
+   drives the motor enable low at boot after a software restart.
 2. **Link loss.** If Wi-Fi drops mid-session no targets arrive, the lease
    stops being renewed, the head searches and returns, and the session ends
    after 12 s (`session_idle`), power off. Nothing depends on the app
@@ -415,7 +424,9 @@ the head port, and the stream on. Record the numbers in `head_tracker.h`.
    following needs: `python3 companion/find_pitch_level.py <port>` bisects
    596..672 with `C,PITCHLEVEL,<raw>` (move pitch there and hold 4 s, one
    power window per boot, USB only), rebooting between steps and asking you
-   up, down or level. At most seven steps; it logs each answer to
+   up, down or level. A single request may not move more than 48 raw from
+   where the head rests (`goal_too_far_from_start`, refused before torque),
+   so a typo cannot swing the head. At most seven steps; it logs each answer to
    `calibration-pitch-level.jsonl` and prints the edit (set `pitchRest`,
    lower `pitchMin` if level is below 620, set `pitchRestConfirmed`). It never
    edits the header itself. Tests: `test_pitch_level.cpp` (parsing, and that

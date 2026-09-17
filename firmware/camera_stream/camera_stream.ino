@@ -116,9 +116,29 @@ std::atomic<int32_t> gazeXMilli{0}, gazeYMilli{0};
 std::atomic<uint32_t> gazeSequence{0};
 std::atomic<bool> followRequested{false};
 std::atomic<bool> followStopRequested{false};
-// True from just before a follow session opens its power window until power
-// off is verified. An OTA update waits on it (see ArduinoOTA.onStart).
-std::atomic<bool> followRunning{false};
+// True while ANY motion routine (follow, sweeps, nudges, pitch level, power
+// tests) is inside its power window or still writing its telemetry. An OTA
+// update waits for it to clear before touching the network client or flash
+// (see ArduinoOTA.onStart). Set and cleared by MotionGuard.
+std::atomic<bool> motionRunning{false};
+std::atomic<bool> otaActive{false};
+// Set by onStart once motion has ended; the camera task, which owns the viewer
+// socket, closes it and clears this. onStart never touches the socket itself.
+std::atomic<bool> otaCloseClientRequested{false};
+
+// Scope guard for a motion routine. Construct it before opening a power
+// window: active() is false when an update is in progress, and motionRunning
+// is cleared on every return path, after the routine's telemetry.
+struct MotionGuard {
+  bool ok;
+  MotionGuard() {
+    motionRunning.store(true);
+    ok = !otaActive.load();   // checked after setting, so onStart cannot miss us
+    if (!ok) motionRunning.store(false);
+  }
+  ~MotionGuard() { if (ok) motionRunning.store(false); }
+  bool active() const { return ok; }
+};
 std::atomic<bool> powerTestRequested{false};
 std::atomic<bool> powerOffRequested{false};
 std::atomic<bool> yawTestRequested{false};
@@ -128,7 +148,7 @@ std::atomic<bool> yawRampRequested{false};
 std::atomic<bool> yawSweepRequested{false};
 std::atomic<bool> yawCenterRequested{false};
 std::atomic<bool> pitchNudgeRequested{false};
-std::atomic<int> pitchLevelRequested{0};   // raw goal, 0 when none
+std::atomic<int> pitchLevelRequested{0};   // raw goal; 0 none; -1 malformed or out of range
 std::atomic<bool> rebootRequested{false};
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
 std::atomic<uint32_t> maxEyeGapMs{0};
@@ -192,7 +212,6 @@ std::atomic<bool> wifiScanRequested{false};
 // Read on the camera task, drawn on the main task: one bool, so a stale frame
 // costs nothing worse than the badge lingering for a fraction of a second.
 std::atomic<bool> wifiLinkUp{false};
-std::atomic<bool> otaActive{false};
 std::atomic<bool> otaEnabled{false};
 // The OTA passphrase doubles as the key for authorizing FOLLOW and REBOOT over
 // Wi-Fi (command_auth.h). Loaded with it; empty means nothing can be authorized.
@@ -387,15 +406,22 @@ void startNetworkServices() {
     ArduinoOTA.setPassword(otaPass.c_str());
     ArduinoOTA.onStart([]() {
       // Free the link and the CPU for the update, and stop driving anything.
-      // A follow session is asked to stop first, and the update waits (up to
-      // 3 s) for its motor power to be verified off: an update over Wi-Fi
-      // must never write flash and reboot with the head powered and moving.
+      // Runs on the loop task. Every motion routine (on the camera task) is
+      // asked to stop, and this waits, up to 25 s, until it has removed motor
+      // power AND finished its telemetry: an update must never write flash
+      // and reboot with the head powered, and must not close the viewer
+      // socket while the camera task is still writing to it. The socket is
+      // closed by the camera task itself. If the wait runs out the update goes
+      // ahead anyway (the routine's own cutoff still bounds power); a slow
+      // update client may also give up first, which fails the update safely.
       followStopRequested.store(true);
       otaActive.store(true);
-      const uint32_t waitStarted = millis();
-      while (followRunning.load() && millis() - waitStarted < 3000) vTaskDelay(pdMS_TO_TICKS(10));
       streamEnabled.store(false);
-      if (streamClient) streamClient.stop();
+      const uint32_t waitStarted = millis();
+      while (motionRunning.load() && millis() - waitStarted < 25000) vTaskDelay(pdMS_TO_TICKS(10));
+      otaCloseClientRequested.store(true);
+      const uint32_t closeStarted = millis();
+      while (otaCloseClientRequested.load() && millis() - closeStarted < 1000) vTaskDelay(pdMS_TO_TICKS(10));
     });
     ArduinoOTA.onEnd([]() { otaActive.store(false); });
     ArduinoOTA.onError([](ota_error_t) { otaActive.store(false); });
@@ -534,8 +560,9 @@ void handleCommand(const char* line) {
   else if (strcmp(line, "C,PITCHNUDGE") == 0) pitchNudgeRequested.store(true);
   else if (strncmp(line, "C,PITCHLEVEL,", 13) == 0) {
     int raw = 0;
-    if (stanbot::parsePitchLevel(line + 13, raw)) pitchLevelRequested.store(raw);
-    else Serial.println("SBPW {\"error\":\"pitch_level_out_of_range\"}");
+    // Reported from the camera task, like every other motion reply, so it can
+    // never land inside that task's telemetry block.
+    pitchLevelRequested.store(stanbot::parsePitchLevel(line + 13, raw) ? raw : -1);
   }
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
@@ -1136,6 +1163,8 @@ void testServoPower(bool yawTest = false, int yawDelta = 8, bool session = false
     Serial.println("SBPW {\"error\":\"requires_stopped_stream_and_unused_boot\"}");
     return;
   }
+  const MotionGuard guard;
+  if (!guard.active()) { Serial.println("SBPW {\"error\":\"update_in_progress\"}"); return; }
   powerWindowUsed = true;
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
@@ -1339,6 +1368,7 @@ struct MotionPlan {
   int otherLow, otherHigh;     // sanity range for the idle servo
   uint32_t cutoffMs;
   uint32_t pauseMs = kSweepPauseMs;   // hold at each goal before the next leg
+  int maxTravel = 0;                  // refuse any goal further than this from the measured start; 0: no limit
 };
 
 // Center, 90 degrees robot-left (-raw), 90 degrees robot-right (+raw), center.
@@ -1359,6 +1389,8 @@ void runBoundedMotion(const MotionPlan& plan) {
     Serial.println("SBPW {\"error\":\"requires_stopped_stream_and_unused_boot\"}");
     return;
   }
+  const MotionGuard guard;
+  if (!guard.active()) { Serial.println("SBPW {\"error\":\"update_in_progress\"}"); return; }
   powerWindowUsed = true;
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
@@ -1405,6 +1437,12 @@ void runBoundedMotion(const MotionPlan& plan) {
     }
     envelopeLow -= kSweepEnvelopeMargin;
     envelopeHigh += kSweepEnvelopeMargin;
+  }
+  bool withinTravel = true;
+  for (int leg = 0; safe && plan.maxTravel > 0 && leg < plan.legCount; ++leg)
+    withinTravel = withinTravel && abs(goals[leg] - posStart) <= plan.maxTravel;
+  if (safe && !withinTravel) result = "goal_too_far_from_start";
+  if (safe && withinTravel) {
     ++positionCommands;
     const bool held = servoBus.WritePos(id, posStart, kSweepWaypointMs, 0) == 1 && servoBus.getState() == 0 &&
       servoBus.readWord(id, SCSCL_GOAL_POSITION_L) == posStart && servoBus.getState() == 0;
@@ -1429,6 +1467,7 @@ void runBoundedMotion(const MotionPlan& plan) {
           uint32_t arrivedAt = 0;
           for (;;) {
             if (powerCutoff.done.load()) { result = "cutoff_before_completion"; break; }
+            if (otaActive.load()) { result = "stopped_for_update"; break; }
             const uint32_t now = millis();
             // Waypoints advance on schedule; a late loop sends one, not a burst.
             if (!finalSent && now >= nextWaypointAt) {
@@ -1662,9 +1701,9 @@ void runFollowSession() {
   i2c_master_dev_handle_t device = nullptr;
   uint8_t off = 0;
   TaskHandle_t cutoff = nullptr;
-  followRunning.store(true);
-  if (otaActive.load()) { followRunning.store(false); return; }   // an update began in between
-  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) { followRunning.store(false); return; }
+  const MotionGuard guard;   // clears motionRunning when this returns, after the telemetry
+  if (!guard.active()) return;   // an update began in between
+  if (!openPowerWindow(device, off, kFollowSessionMs, cutoff, kFollowMaxMs)) return;
   servoBus.EnableTorque(0xfe, 0);
   // The sweep's 20 ms bus timeout assumes its own tight loop. This one shares
   // a task with camera capture, so a reply can arrive after a longer pause;
@@ -1845,7 +1884,6 @@ void runFollowSession() {
   servoBus.EnableTorque(0xfe, 0);
   servoBus.IOTimeOut = 20;         // restore the tight-loop timeout
   const EnableSnapshot after = readEnable(device);
-  followRunning.store(false);   // power off has been commanded and read back
   const bool offVerified = powerCutoff.written.load() && after.modeError == ESP_OK &&
     (after.mode & 1) && after.latchError == ESP_OK && !(after.latch & 1);
   i2c_master_bus_rm_device(device);
@@ -1986,6 +2024,10 @@ void cameraTask(void*) {
     // The camera task owns frame output, so it also owns accepting the viewer,
     // reading its commands and writing to it: one task, no cross-task socket use.
     wifiLinkUp.store(WiFi.status() == WL_CONNECTED);
+    if (otaCloseClientRequested.load()) {   // an update is starting; this task owns the socket
+      if (streamClient) streamClient.stop();
+      otaCloseClientRequested.store(false);
+    }
     serviceNetwork();
     pollNetworkCommands();
     if (wifiJoinRequested.exchange(false)) beginWifi();
@@ -2001,11 +2043,15 @@ void cameraTask(void*) {
     if (yawSweepRequested.exchange(false)) runBoundedMotion(kYawSweepPlan);
     if (yawCenterRequested.exchange(false)) runBoundedMotion(kYawCenterPlan);
     if (pitchNudgeRequested.exchange(false)) runBoundedMotion(kPitchNudgePlan);
-    if (const int level = pitchLevelRequested.exchange(0)) {
-      // One absolute pitch goal, held so a person can judge level by eye.
+    if (const int level = pitchLevelRequested.exchange(0); level < 0) {
+      Serial.println("SBPW {\"error\":\"pitch_level_out_of_range\"}");
+    } else if (level > 0) {
+      // One absolute pitch goal, held so a person can judge level by eye. A
+      // goal more than kPitchLevelMaxTravel from where the head rests is
+      // refused before torque, so a typo cannot swing the head.
       const MotionPlan plan = {"pitch_level", 2, 1, {level, 0, 0, 0}, {"pitch_level", "", "", ""}, false,
         stanbot::kPitchLevelLow - 6, stanbot::kPitchLevelHigh, 300, 620,
-        kSweepSettleMs + stanbot::kPitchLevelHoldMs + 4000, stanbot::kPitchLevelHoldMs};
+        kSweepSettleMs + stanbot::kPitchLevelHoldMs + 4000, stanbot::kPitchLevelHoldMs, stanbot::kPitchLevelMaxTravel};
       runBoundedMotion(plan);
     }
     if (followRequested.exchange(false)) runFollowSession();

@@ -9,6 +9,11 @@
 // bytes of every line in the block with line terminators removed ('\r' and
 // '\n' are not hashed; each '\n' counts a line). A lost, changed or added byte
 // changes the CRC; a lost newline changes the count.
+//
+// Only SBPD, SBMV, SBFL and SBPW lines are written through TelemetryOut inside
+// a block. Other replies (SBWF, SBNR from the loop task) can still reach USB
+// between SBTB and SBTE, so hosts count only those four tags, and new
+// telemetry inside a block must use one of them (or update every host).
 #include <cstddef>
 #include <cstdint>
 

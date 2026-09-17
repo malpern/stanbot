@@ -41,6 +41,10 @@ built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "${STANBOT_FOLLOW_CALIBRATION:-0}" == 1 ]]; then calibration=1; else calibration=0; fi
 if [[ "${STANBOT_FOLLOW_PITCH:-0}" == 1 ]]; then pitch=1; else pitch=0; fi
 yaw_range=${STANBOT_FOLLOW_YAW_RANGE:-0}
+if [[ ! $yaw_range =~ '^(0|48|96|144|192|240|288)$' ]]; then
+  echo "STANBOT_FOLLOW_YAW_RANGE must be 48, 96, 144, 192, 240 or 288 (got '$yaw_range')" >&2
+  exit 1
+fi
 if [[ $yaw_range != 0 && $calibration != 1 ]]; then
   echo "STANBOT_FOLLOW_YAW_RANGE only applies to a calibration build (STANBOT_FOLLOW_CALIBRATION=1)" >&2
   exit 1

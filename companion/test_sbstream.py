@@ -137,6 +137,7 @@ def test_telemetry_check_matches_firmware_vector():
     assert telemetry_check(['SBMV {"result":"session_idl"}', block[1]], end) == "corrupted"
     assert telemetry_check([block[0] + block[1]], end) == "corrupted"
     assert telemetry_check(block, 'SBTE {"telemetry":"end"}') == "unchecked"
+    assert telemetry_check([block[0], 'SBWF {"stored":"ssid"}', block[1]], end) == "verified"
 
 
 def main():

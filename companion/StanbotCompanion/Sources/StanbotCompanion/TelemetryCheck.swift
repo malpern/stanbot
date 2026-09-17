@@ -36,12 +36,17 @@ struct TelemetryCheck {
                 ? .verified(lines: lines)
                 : .corrupted(expectedLines: expectedLines, receivedLines: lines)
         }
+        // Other replies can arrive between the markers from another firmware
+        // task; only the block's own tags are counted (telemetry_check.h).
+        guard Self.blockTags.contains(where: { line.hasPrefix($0) }) else { return nil }
         for byte in line.utf8 where byte != 0x0d && byte != 0x0a {
             crc = Self.update(crc, byte)
         }
         lines += 1
         return nil
     }
+
+    static let blockTags = ["SBPD ", "SBMV ", "SBFL ", "SBPW "]
 
     static func update(_ crc: UInt32, _ byte: UInt8) -> UInt32 {
         var crc = crc ^ UInt32(byte)
