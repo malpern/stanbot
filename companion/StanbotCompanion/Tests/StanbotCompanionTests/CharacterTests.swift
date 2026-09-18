@@ -62,10 +62,10 @@ final class CharacterTests: XCTestCase {
                                                      range: NSRange(header.startIndex..., in: header)))
         let firmwareY = try XCTUnwrap(Int(String(header[Range(match.range(at: 1), in: header)!])))
 
-        let swiftSource = try String(contentsOf: root.appendingPathComponent(
-            "companion/StanbotCompanion/Sources/StanbotCompanion/Character/StanbotEyes.swift"), encoding: .utf8)
-        XCTAssertTrue(swiftSource.contains(".offset(y: (\(firmwareY) - 120) * scale)"),
-                      "the Mac's frown is not at the firmware's kFrownY (\(firmwareY))")
+        // The value, not the source text: the view used to carry the number as
+        // a literal and now takes it from FaceGeometry, which is the point.
+        XCTAssertEqual(FaceGeometry.frownY, firmwareY,
+                       "the Mac's frown is not at the firmware's kFrownY")
         // And it must leave the screen: the whole point of the move.
         XCTAssertLessThanOrEqual(firmwareY + 30, 240, "the frown would run off the bottom")
     }

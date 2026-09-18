@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include "GazeBrain.h"
 #include "MouthModel.h"
+#include "FaceGeometry.h"
 #include "SleepCurtain.h"
 
 enum class StanbotEmotion : uint8_t {
@@ -114,11 +115,10 @@ class StanbotEyes {
     gaze_.update(now, attending, targetX_, targetY_, engaged);
     lookX_ = gaze_.lookX;
     lookY_ = gaze_.lookY;
-    currentPose_.width += (targetPose_.width - currentPose_.width) * 0.10f;
-    currentPose_.height += (targetPose_.height - currentPose_.height) * 0.10f;
-    currentPose_.tilt += (targetPose_.tilt - currentPose_.tilt) * 0.10f;
-    currentPose_.pupilScale +=
-        (targetPose_.pupilScale - currentPose_.pupilScale) * 0.10f;
+    approach(currentPose_.width, targetPose_.width);
+    approach(currentPose_.height, targetPose_.height);
+    approach(currentPose_.tilt, targetPose_.tilt);
+    approach(currentPose_.pupilScale, targetPose_.pupilScale);
 
     if (!blinking_ && now >= nextBlinkMs_) {
       blinking_ = true;
@@ -186,17 +186,61 @@ class StanbotEyes {
     return {86,112,0,1};
   }
 
+  // Public: the geometry is the contract the Mac agrees with, so it has to be
+  // readable from outside. Everything below it stays private.
+ public:
+  /// What the face is right now: positions, sizes and kinds, with nothing
+  /// about how any of it is painted. `draw()` paints exactly this, so the
+  /// robot cannot show something its geometry does not describe, and the Mac
+  /// has one thing to agree with. See FaceGeometry.h.
+  stanbot::FaceGeometry geometry(float blink = 0.0f) const {
+    stanbot::FaceGeometry face;
+    const float lids = (1.0f - blink) * curtain_.openness(lastFrameMs_);
+    face.shut = static_cast<int>((1.0f - lids) * 100.0f + 0.5f);
+    face.pupilX = static_cast<int>(lookX_ * 18);
+    face.pupilY = static_cast<int>(lookY_ * 12);
+
+    if (emotion_ == StanbotEmotion::Trouble && lids > kClosedLidsFrom) {
+      face.eyeKind = stanbot::EyeKind::Crossed;
+      face.eyeWidth = 2 * (kTroubleArm + kTroubleStroke);
+      face.eyeHeight = 2 * (kTroubleArm + kTroubleStroke);
+      face.pupilX = face.pupilY = 0;          // an X has no pupil to aim
+    } else if (lids <= kClosedLidsFrom) {
+      face.eyeKind = stanbot::EyeKind::Closed;
+      face.eyeWidth = kClosedWidth;
+      face.eyeHeight = kClosedSag + kClosedStroke;
+      face.pupilX = face.pupilY = 0;          // nor does a shut lid
+    } else {
+      face.eyeKind = stanbot::EyeKind::Open;
+      face.eyeWidth = static_cast<int>(currentPose_.width);
+      face.eyeHeight = max(2, static_cast<int>(currentPose_.height * lids));
+    }
+    if (emotion_ == StanbotEmotion::Trouble) {
+      face.frownVisible = true;
+      face.frownY = kFrownY;
+      face.frownRadius = (kFrownInner + kFrownOuter) / 2;
+    } else {
+      // The speaking mouth and the frown never appear together: drawTrouble
+      // draws the frown and returns before the mouth.
+      const stanbot::MouthShape m = mouth_.shape();
+      face.mouthVisible = m.visible;
+      if (m.visible) {
+        face.mouthX = m.centerX;
+        face.mouthY = m.centerY;
+        face.mouthWidth = m.width;
+        face.mouthHeight = m.height;
+      }
+    }
+    return face;
+  }
+
+ private:
   template <typename Display>
   void draw(Display& display, bool attending, float blink) {
-    constexpr int kBaseY = 120;
-    const int width = static_cast<int>(currentPose_.width);
-    // The sleep curtain closes the lids the same way a blink does, but slowly
-    // and all the way (SleepCurtain.h).
+    constexpr int kBaseY = stanbot::FaceGeometry::kEyeY;
+    const stanbot::FaceGeometry face = geometry(blink);
     const float lids = (1.0f - blink) * curtain_.openness(lastFrameMs_);
-    const int height = max(2, static_cast<int>(currentPose_.height * lids));
-    const int radius = min(30, height / 2);
-    const int pupilX = static_cast<int>(lookX_ * 18);
-    const int pupilY = static_cast<int>(lookY_ * 12);
+    const int radius = min(30, face.eyeHeight / 2);
     // The irises stay grey whether or not a face is attended to. They turned
     // cyan until 2026-09-17; seeing a face now lights the body's LED bar blue
     // instead (light_bar.h), which the owner found less distracting.
@@ -212,19 +256,19 @@ class StanbotEyes {
     // as a sagging arc (StanbotEyes.swift, ClosedEye) and the robot flattened
     // to a 2 px bar instead, so falling asleep read as the picture collapsing
     // rather than as eyes closing. Asked for 2026-09-18: make them match.
-    if (lids <= kClosedLidsFrom) {
+    if (face.eyeKind == stanbot::EyeKind::Closed) {
       // Sag grows in as the last of the opening goes, so the rounded eye melts
       // into the curve instead of popping into it.
       const float shut = 1.0f - lids / kClosedLidsFrom;
-      drawClosedEye(display, 102, kBaseY, shut, iris);
-      drawClosedEye(display, 218, kBaseY, shut, iris);
+      drawClosedEye(display, stanbot::FaceGeometry::kEyeLeftX, kBaseY, shut, iris);
+      drawClosedEye(display, stanbot::FaceGeometry::kEyeRightX, kBaseY, shut, iris);
       drawMouth(display);
       return;
     }
-    drawEye(display, 102, kBaseY, width, height, radius, pupilX, pupilY,
-            iris);
-    drawEye(display, 218, kBaseY, width, height, radius, pupilX, pupilY,
-            iris);
+    drawEye(display, stanbot::FaceGeometry::kEyeLeftX, kBaseY, face.eyeWidth, face.eyeHeight,
+            radius, face.pupilX, face.pupilY, iris);
+    drawEye(display, stanbot::FaceGeometry::kEyeRightX, kBaseY, face.eyeWidth, face.eyeHeight,
+            radius, face.pupilX, face.pupilY, iris);
     drawMouth(display);
   }
 
@@ -236,11 +280,29 @@ class StanbotEyes {
   // ignored the curtain entirely, so a robot that slept while faulted held its
   // X's open until the screen went black. The lids now come down over the X's
   // and finish as the same closed curve every other expression uses.
+  /// Slide a pose value 10% of the way to its target, and LAND on it.
+  ///
+  /// Without the snap the approach is asymptotic: it never arrives, and the
+  /// cast to int then leaves the robot permanently one pixel under its own
+  /// pose. That is a spec the robot never actually honours -- the eye is 91
+  /// wide where the table says 92 -- and it showed up the first time the two
+  /// faces were compared against each other (2026-09-18), as six states out by
+  /// one in the same direction.
+  static void approach(float& value, float target) {
+    value += (target - value) * 0.10f;
+    if (value - target < 0.5f && target - value < 0.5f) value = target;
+  }
+
+  static constexpr int kTroubleArm = 30;     // half the width of each X
+  static constexpr int kTroubleStroke = 6;  // half the line width
+  static constexpr int kFrownInner = 22;
+  static constexpr int kFrownOuter = 30;
+
   template <typename Display>
   void drawTrouble(Display& display, uint16_t iris, float lids = 1.0f) {
-    constexpr int kBaseY = 120;
-    constexpr int kArm = 30;     // half the width of each X
-    constexpr int kStroke = 6;   // half the line width
+    constexpr int kBaseY = stanbot::FaceGeometry::kEyeY;
+    constexpr int kArm = kTroubleArm;
+    constexpr int kStroke = kTroubleStroke;
     if (lids <= kClosedLidsFrom) {
       const float shut = 1.0f - lids / kClosedLidsFrom;
       drawClosedEye(display, 102, kBaseY, shut, iris);
@@ -271,7 +333,7 @@ class StanbotEyes {
     // below it, while every other expression sits evenly (the normal face
     // measures 64 above, 65 below). It read as a face sliding off the bottom
     // of the screen. The Mac's TroubleFace carries the same number.
-    display.fillArc(160, kFrownY, 22, 30, 190, 350, iris);
+    display.fillArc(160, kFrownY, kFrownInner, kFrownOuter, 190, 350, iris);
   }
 
   /// Where the frown's ring is centred. Shared with the Mac (TroubleFace).

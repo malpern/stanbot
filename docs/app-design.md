@@ -136,6 +136,52 @@ the robot's view, with a little of the robot's character in it.
   selected face in the window, and close into two soft curves when Stanbot is
   asleep. Expression changes slide with a critically damped spring; Reduce
   Motion stops the drift and the springs.
+## One character, two fidelities
+
+Stanbot has two faces -- the robot's 320x240 panel and the Mac's -- and they are
+one character shown at two resolutions, not two designs that resemble each
+other. The rule, written down 2026-09-18 after the owner asked how to unify
+them:
+
+> **State and shape may not differ. Fidelity may.**
+
+Three layers, and only the last is allowed to diverge:
+
+| Layer | Example | May differ? |
+| --- | --- | --- |
+| **State** | asleep, following, faulted, speaking | **Never** |
+| **Shape** | which eye kind, how big, where the frown sits | **Never** |
+| **Fidelity** | glow, bokeh, shadows, springs, anti-aliasing, how many segments an arc is drawn in | **Yes -- that is the point** |
+
+**The contract is `FaceGeometry`**, in both languages
+(`firmware/lib/StanbotEyes/src/FaceGeometry.h`, `Character/FaceGeometry.swift`).
+It says where each thing is, how big, and what kind, and deliberately says
+nothing about how any of it is painted. The robot's `StanbotEyes::geometry()`
+computes it and `draw()` paints exactly that, so the robot cannot show something
+its geometry does not describe; the Mac's view switches on
+`FaceGeometry.of(emotion:openness:)` for the same reason.
+
+**`companion/face-geometry.json` is the robot's answer** for thirteen named
+states, generated from its own `geometry()` and committed --
+`companion/test_face_geometry.py` regenerates it and fails if the committed copy
+is stale, and `FaceGeometryTests` checks the Mac against the same file. Generated
+and committed rather than produced at build time, so neither toolchain grows a
+code-generation step and a design change arrives as a readable diff.
+
+**Two things are deliberately NOT in the contract**, because requiring them to
+match would report a difference nobody experiences: the **pupil offset**, since
+each side's idle gaze wanders on its own clock, and the **mouth's size**, since
+each runs its own spring from its own audio. That a pupil or a mouth *exists*,
+and where the mouth sits, are both in the contract.
+
+**What this caught the first time it ran** (all real, all invisible until then):
+six states where the robot's eye was a pixel under its own pose table, because
+the pose spring approached asymptotically and never arrived -- a spec the robot
+never actually honoured. It now lands on the target. And the Mac's view was
+still branching on `asleep` and `emotion` directly, so a robot that fell asleep
+while faulted showed closed lids and a frown while the Mac showed a plain sleepy
+face.
+
 - **Mood from facts.** `Mood.of` turns connection, camera, face selection and
   follow state into an expression and a short caption: "Asleep", "Waking up…",
   "Looking around", "Is someone there?", "I see someone", "Following you",

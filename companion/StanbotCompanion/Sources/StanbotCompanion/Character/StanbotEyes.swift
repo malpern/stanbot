@@ -155,8 +155,16 @@ struct StanbotEyesView: View {
             // The robot's display is 320x240; everything scales from there.
             let scale = min(proxy.size.width / 320, proxy.size.height / 240)
             let pose = EyePose.of(asleep ? .sleepy : emotion)
-            let openness = max(0, (blinking && !asleep ? 0 : 1) * motion.openness)
+            // How far open the lids are: the wake aperture, shut by a blink.
+            // Sleeping drives it to nothing, rather than being a separate case
+            // -- the robot has no "asleep" branch either, only lids.
+            let lids = asleep ? 0 : max(0, (blinking ? 0 : 1) * motion.openness)
             let gaze = currentGaze
+            // WHAT to draw comes from the shared contract, so this view cannot
+            // show something the robot would not (FaceGeometry.swift). HOW it
+            // is drawn -- glow, springs, the pixel grid -- stays here, and is
+            // the half that is meant to differ.
+            let face = FaceGeometry.of(emotion: emotion, openness: lids)
             // Close faces draw the eyes together a little (vergence).
             let converge = reduceMotion ? 0 : min(max(closeness, 0), 0.4) / 0.4 * 0.16
             ZStack {
@@ -165,21 +173,28 @@ struct StanbotEyesView: View {
                 }
                 ZStack {
                     HStack(spacing: (218 - 102) * scale - pose.width * scale) {
-                        if asleep {
+                        switch face.eyeKind {
+                        case .closed:
                             closedEye(width: pose.width, scale: scale)
                             closedEye(width: pose.width, scale: scale)
-                        } else if emotion == .trouble {
-                            TroubleFace(scale: scale, glow: screenLook)
-                        } else {
-                            eye(pose: pose, scale: scale, openness: openness,
+                        case .crossed:
+                            TroubleEyes(scale: scale, glow: screenLook)
+                        case .open:
+                            eye(pose: pose, scale: scale, openness: lids,
                                 gaze: CGPoint(x: gaze.x + converge, y: gaze.y))
-                            eye(pose: pose, scale: scale, openness: openness,
+                            eye(pose: pose, scale: scale, openness: lids,
                                 gaze: CGPoint(x: gaze.x - converge, y: gaze.y))
                         }
                     }
-                    // The mouth, where the robot draws it (MouthModel): a resting
-                    // line, shaping while Stanbot speaks. The trouble face has its own.
-                    if emotion != .trouble {
+                    // The frown is the trouble face's mouth, and it stays while
+                    // Stanbot sleeps: it is still in trouble, so closed lids
+                    // over a frown is the honest face for that.
+                    if face.frownVisible {
+                        TroubleFrown(scale: scale, glow: screenLook)
+                            .offset(y: (Double(face.frownY) - 120) * scale)
+                    } else {
+                        // The mouth, where the robot draws it (MouthModel): a
+                        // resting line, shaping while Stanbot speaks.
                         StanbotMouthView(scale: scale, glow: mouthGlow, minimumPoints: mouthMinimumPoints)
                             .offset(y: (MouthModel.centerY - 120) * scale)
                     }
@@ -328,36 +343,63 @@ struct StanbotEyesView: View {
 /// Something went wrong: two crossed-out eyes where the eyes were and a frown
 /// below, after the Sad Mac, in the same grey and the same places the robot
 /// draws its own (StanbotEyes::drawTrouble). Still, so it reads as a state.
-struct TroubleFace: View {
+/// The crossed-out eyes alone. Separate from the frown because the two do not
+/// always appear together: Stanbot can fall asleep while faulted, and then the
+/// lids come down over the X's while the frown stays.
+struct TroubleEyes: View {
     var scale: Double
     var glow = false
 
     var body: some View {
         let grey = Color(white: 0.74)
-        let arm = 30 * scale, stroke = 12 * scale
-        // Laid out in the robot's 320x240 frame: eyes at x 102 and 218, y 120,
-        // the frown's arc centred at (160, 210) -- StanbotEyes.h kFrownY, and
-        // the two must stay equal. It was 232 until 2026-09-18, which put the
-        // curve 12 px off the bottom of a 240-tall screen against 84 px of
-        // space above it; every other expression sits evenly.
-        ZStack {
-            ForEach([102.0, 218.0], id: \.self) { centre in
-                Path { path in
-                    path.move(to: CGPoint(x: -arm, y: -arm)); path.addLine(to: CGPoint(x: arm, y: arm))
-                    path.move(to: CGPoint(x: -arm, y: arm)); path.addLine(to: CGPoint(x: arm, y: -arm))
-                }
-                .stroke(grey, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-                .frame(width: 1, height: 1)
-                .offset(x: (centre - 160) * scale)
-            }
+        let arm = Double(FaceGeometry.troubleArm) * scale
+        let stroke = Double(FaceGeometry.troubleStroke) * 2 * scale
+        // Laid out in the robot's 320x240 frame: eyes at x 102 and 218, y 120.
+        ForEach([FaceGeometry.eyeLeftX, FaceGeometry.eyeRightX], id: \.self) { centre in
             Path { path in
-                path.addArc(center: .zero, radius: 26 * scale, startAngle: .degrees(190), endAngle: .degrees(350), clockwise: false)
+                path.move(to: CGPoint(x: -arm, y: -arm)); path.addLine(to: CGPoint(x: arm, y: arm))
+                path.move(to: CGPoint(x: -arm, y: arm)); path.addLine(to: CGPoint(x: arm, y: -arm))
             }
-            .stroke(grey, style: StrokeStyle(lineWidth: 8 * scale, lineCap: .round))
+            .stroke(grey, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
             .frame(width: 1, height: 1)
-            .offset(y: (210 - 120) * scale)
+            .offset(x: (centre - 160) * scale)
         }
         .shadow(color: glow ? grey.opacity(0.35) : .clear, radius: 14 * scale)
+    }
+}
+
+/// The frown: the trouble face's mouth. Its height is `FaceGeometry.frownY`,
+/// which is `kFrownY` in the firmware and kept equal by a test. It was 232
+/// until 2026-09-18, which put the curve 12 px off the bottom of a 240-tall
+/// screen against 84 px of space above it; every other expression sits evenly.
+struct TroubleFrown: View {
+    var scale: Double
+    var glow = false
+
+    var body: some View {
+        let grey = Color(white: 0.74)
+        Path { path in
+            path.addArc(center: .zero, radius: Double(FaceGeometry.frownRadius) * scale,
+                        startAngle: .degrees(190), endAngle: .degrees(350), clockwise: false)
+        }
+        .stroke(grey, style: StrokeStyle(lineWidth: 8 * scale, lineCap: .round))
+        .frame(width: 1, height: 1)
+        .shadow(color: glow ? grey.opacity(0.35) : .clear, radius: 14 * scale)
+    }
+}
+
+/// Both together, for the places that want the whole face at once (the icon
+/// sheet, the small preview).
+struct TroubleFace: View {
+    var scale: Double
+    var glow = false
+
+    var body: some View {
+        ZStack {
+            TroubleEyes(scale: scale, glow: glow)
+            TroubleFrown(scale: scale, glow: glow)
+                .offset(y: (Double(FaceGeometry.frownY) - 120) * scale)
+        }
         .frame(width: 320 * scale, height: 240 * scale)
     }
 }
