@@ -172,10 +172,12 @@ firmware plus the sleep work.
    makes the 200 ms playout buffer the mechanism rather than a nicety. $0.06 of
    a $5 cap. Phase 4's pure half is built and tested (`Live`, `PlayoutBuffer`,
    `VoiceSession`, `VoicePolicy`, `VoiceControl`; 23 tests, no network or sound
-   card), and a disabled Talk control is in the toolbar saying what it waits
-   for. **What is left all touches hardware:** the WebSocket transport,
-   `AVAudioEngine` capture and playback with voice processing, wiring Talk,
-   Settings and the inspector, the voice log, and the mouth from phase 1.
+   card), including `VoiceTransport` -- the socket, tested against a real local
+   WebSocket server and, behind `STANBOT_LIVE_TEST=1`, against OpenAI itself. A
+   disabled Talk control is in the toolbar saying what it waits for. **What is
+   left is what needs sound:** `AVAudioEngine` capture and playback with voice
+   processing, wiring Talk to a real session, Settings and the inspector, the
+   voice log, and the mouth from phase 1.
    **Phase 2 was not attempted** and needs the owner: it plays sound and makes
    judgements by ear (no echo into the capture, no ducking of a Meet call).
 7. **When calibration is done**, decide whether `measured` can be true in the

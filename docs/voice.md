@@ -271,12 +271,14 @@ Pieces:
    `Live` (the verified protocol), `PlayoutBuffer` (the interruption
    mechanism), `VoiceSession` and `VoicePolicy` (states, endings, idle stop,
    daily limit, refusals in the words the subtitle uses) and `VoiceControl`
-   (the Talk control's words and appearance), with 23 tests that need no
-   network, no sound card and no robot. **What is left is the parts that touch
-   hardware:** the WebSocket transport itself, `AVAudioEngine` capture and
-   playback with voice processing, the Talk control in the toolbar and Robot
-   menu, Settings and inspector, the voice log, and the wiring to the mouth
-   from phase 1.
+   (the Talk control's words and appearance), plus `VoiceTransport` -- the
+   socket itself, driven in tests against a real local WebSocket server and,
+   behind `STANBOT_LIVE_TEST=1`, against OpenAI, where it opened a session, took
+   the voice it asked for and reported 119 minutes allowed. A disabled Talk
+   control sits in the toolbar saying what it waits for. 29 tests, none needing
+   sound or a robot. **What is left is what needs sound:** `AVAudioEngine`
+   capture and playback with voice processing, wiring Talk to a real session,
+   Settings and inspector, the voice log, and the mouth from phase 1.
 5. **Robot audio** (see below), only if still wanted after using phase 4.
 
 ## Robot audio: a separate project
