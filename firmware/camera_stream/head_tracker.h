@@ -159,6 +159,10 @@ struct FollowConfig {
   int deadbandRaw = 8;               // never chase less than this: above the standing error
   int maxStepRaw = 6;                // per tick while attending (~23 deg/s at 80 ms)
   int restStepRaw = 4;               // per tick while returning (~16 deg/s)
+  // Coming home for a sleep or a reset is deliberate and waited on, and it may
+  // have the whole range to cross: at restStepRaw that is nearly six seconds of
+  // drifting before the eyes close. Brisker, but still under attending speed.
+  int homeStepRaw = 6;               // ~23 deg/s: 288 raw in 3.8 s
   bool pitchEnabled = true;          // false: yaw only, pitch never commanded (kFollowPitchEnabled)
 
   // Easing. Fixed steps start and stop abruptly, which reads as mechanical.
@@ -384,7 +388,7 @@ class HeadTracker {
       else beginReturn();
     }
     int stepLimit = config_.maxStepRaw;
-    if (mode_ == FollowMode::Returning) stepLimit = config_.restStepRaw;
+    if (mode_ == FollowMode::Returning) stepLimit = goingHome_ ? config_.homeStepRaw : config_.restStepRaw;
     if (mode_ == FollowMode::Searching) {
       stepLimit = config_.scanStepRaw;
       if (!advanceSearch(nowMs)) return {false, yaw_, pitch_, mode_};
@@ -523,17 +527,26 @@ class HeadTracker {
   void beginReturn() {
     mode_ = FollowMode::Returning;
     goalYaw_ = limits_.yawRest;
-    goalPitch_ = !config_.pitchEnabled ? pitch_
-               : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
-               : pitchHome_;
+    goalPitch_ = homePitch();
     haveGoal_ = true;
+  }
+
+  // Where "home" is for pitch in this session: the confirmed rest if there is
+  // one, clamped into the session's own window, else where the head was found.
+  int homePitch() const {
+    if (!config_.pitchEnabled) return pitch_;
+    return limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_) : pitchHome_;
   }
   bool atRest() const {
     const int dy = yaw_ - limits_.yawRest;
     if (dy > config_.deadbandRaw || dy < -config_.deadbandRaw) return false;
     if (!config_.pitchEnabled) return true;
-    const int rest = limits_.pitchRestConfirmed ? limits_.pitchRest : pitchHome_;
-    const int dp = pitch_ - rest;
+    // The SAME target beginReturn aims at, clamped into this session's pitch
+    // window. Comparing against the unclamped pitchRest while the goal is
+    // clamped means that whenever the two differ by more than the deadband --
+    // a session whose floor sits above pitchRest -- the head arrives and
+    // `atRest` still says no, for ever, so every park runs to its time bound.
+    const int dp = pitch_ - homePitch();
     return dp <= config_.deadbandRaw && dp >= -config_.deadbandRaw;
   }
 

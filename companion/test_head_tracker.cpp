@@ -925,6 +925,31 @@ void comingHomeIsNotDivertedByAnything() {
   std::printf("  came home to yaw %d pitch %d (rest %d, %d), undiverted\n",
               tracker.commandedYaw(), tracker.commandedPitch(), limits.yawRest, limits.pitchRest);
 
+  // THE WORST CASE, which is what the sketch's bound has to cover: the head at
+  // one yaw limit and fully up, asked home. kRebootCentreMs is 6000; if this
+  // ever exceeds it the park gives up part way and reports success anyway,
+  // which is what happened on 2026-09-17 when the bound was 2500.
+  {
+    FollowLimits wide = limits;
+    wide.yawMin = 431 - 288;
+    wide.yawMax = 431 + 288;
+    wide.yawRest = 431;
+    wide.pitchMin = 594;   // as the robot is: the floor is below rest, not above
+    wide.pitchRest = 614;
+    HeadTracker far(wide, kConfig);
+    uint32_t t = 1000;
+    far.begin(wide.yawMax, 870, t);
+    far.comeHome();
+    int ticks = 0;
+    while (!far.atRest() && ticks < 1000) { t += kConfig.controlPeriodMs; far.step(t); ++ticks; }
+    const int ms = ticks * static_cast<int>(kConfig.controlPeriodMs);
+    std::printf("  worst-case park: %d raw of yaw home in %d ms (yaw %d pitch %d, want %d/%d)\n",
+                wide.yawMax - wide.yawRest, ms, far.commandedYaw(), far.commandedPitch(),
+                wide.yawRest, wide.pitchRest);
+    assert(far.atRest());
+    assert(ms < 6000);
+  }
+
   // A new session starts clean: the latch does not outlive it.
   tracker.begin(limits.yawRest, 650, now);
   assert(!tracker.goingHome());

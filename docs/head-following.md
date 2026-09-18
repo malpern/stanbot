@@ -446,6 +446,21 @@ sleep**, so the robot does not nod off mid-turn and stay that way all night:
 Every step is bounded, in both directions: a head that cannot get home and lids
 that never report closed must not be able to prevent a reboot.
 
+**The park is bounded at `kRebootCentreMs` (6 s), and the bound has to cover the
+whole range.** Homing runs at `homeStepRaw` (6 raw per tick, ~23 deg/s: brisker
+than the calm return, still under attending speed), so the worst case -- one yaw
+limit to centre, fully up to level -- is 3.84 s in the native test. It was 2500,
+sized for a reboot from near centre and never re-checked against +-288: on
+2026-09-17 a sleep from yaw 634 gave up at 527, 30 degrees short of home, and
+reported success. The test now measures the worst case explicitly so the two
+cannot drift apart again.
+
+**`atRest()` must aim at the same place `beginReturn()` does.** It compared
+against the raw `pitchRest` while the goal was clamped into the session's pitch
+window, so for any session whose floor sits above rest the head would arrive and
+`atRest` would stay false for ever -- every park running to its time bound.
+Both now use `homePitch()`.
+
 **Coming home latches** (`HeadTracker::comeHome`): while it runs, an accepted
 face is refused and the search's waypoints are ignored, and the head is driven
 to rest every tick until it arrives. A single `beginReturn()` is only a

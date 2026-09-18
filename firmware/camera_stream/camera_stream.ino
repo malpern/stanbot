@@ -168,7 +168,11 @@ std::atomic<int> pitchLevelRequested{0};   // raw goal; 0 none; -1 malformed or 
 // A reset returns the head to centre first, then closes the eyes, then
 // restarts. Both steps are bounded: a head that cannot get home, or lids that
 // never report closed, must not be able to prevent a reboot.
-constexpr uint32_t kRebootCentreMs = 2500;
+// Long enough to cross the WHOLE yaw range at homeStepRaw and arrive: 288 raw
+// at ~75 raw/s is 3.8 s, and easing adds to that. 2500 was sized for a reboot
+// from near centre and never re-checked against +-288; on 2026-09-17 a sleep
+// from 634 gave up at 527, 30 degrees short of home, and reported success.
+constexpr uint32_t kRebootCentreMs = 6000;
 constexpr uint32_t kRebootEyesMs = 1200;
 std::atomic<bool> rebootRequested{false};
 uint32_t rebootClosingSince = 0;   // the eyes are closing for a pending reset (0: not yet)
