@@ -508,7 +508,10 @@ void startNetworkServices() {
       eyes.beginSleep(millis());
       const uint32_t lidsStarted = millis();
       while (!eyes.closedForSleep(millis()) && millis() - lidsStarted < kRebootEyesMs) {
-        if (eyeFrameReady) { eyes.update(eyeFrame, millis()); eyeFrame.pushSprite(0, 0); }
+        // Only when update() says it drew: it paces itself and returns false
+        // without touching the sprite, and pushing anyway puts a stale buffer
+        // on the screen (2026-09-17).
+        if (eyeFrameReady && eyes.update(eyeFrame, millis())) eyeFrame.pushSprite(0, 0);
         vTaskDelay(pdMS_TO_TICKS(16));
       }
     });
