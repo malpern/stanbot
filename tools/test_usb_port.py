@@ -47,6 +47,51 @@ def test_open_port_raises_dtr():
     assert bits & usb_port.TIOCM_RTS, "RTS not set"
 
 
+def test_drain_waits_for_real_silence():
+    """One quiet read is not silence: a packet still arriving would be left
+    behind, and the next request would return it as a fresh answer."""
+    # Chatter, a gap shorter than quiet_for, more chatter, then real silence.
+    reads = [b"xx", b"", b"yy"] + [b""] * 20
+    got = []
+    clock = [0.0]
+    real_time = usb_port.time.time
+    usb_port.time.time = lambda: clock[0]
+    usb_port.time.sleep = lambda s: None
+
+    def stepping_read(fd, n):
+        clock[0] += 0.05          # each read costs a little time
+        chunk = reads.pop(0) if reads else b""
+        if chunk:
+            got.append(chunk)
+        return chunk
+
+    usb_port.os.read = stepping_read
+    try:
+        assert usb_port.drain(77) is True, "drain gave up while the line was quiet"
+        # The point: it did not stop at the first empty read and miss "yy".
+        assert got == [b"xx", b"yy"], got
+    finally:
+        usb_port.time.time = real_time
+
+
+def test_drain_gives_up_on_a_line_that_never_stops():
+    """A robot streaming flat out must not hang the tool forever."""
+    clock = [0.0]
+    real_time = usb_port.time.time
+    usb_port.time.time = lambda: clock[0]
+    usb_port.time.sleep = lambda s: None
+
+    def noisy(fd, n):
+        clock[0] += 0.05
+        return b"frame data"
+
+    usb_port.os.read = noisy
+    try:
+        assert usb_port.drain(77) is False, "drain should report it never went quiet"
+    finally:
+        usb_port.time.time = real_time
+
+
 def test_holders_parses_lsof():
     class Done:
         stdout = "p4242\ncStanbot\nn/dev/cu.usbmodem31201\np%d\ncpython3\n" % os.getpid()
@@ -81,6 +126,8 @@ def test_no_holders_and_no_lsof_are_both_quiet():
 def main():
     test_find_port()
     test_open_port_raises_dtr()
+    test_drain_waits_for_real_silence()
+    test_drain_gives_up_on_a_line_that_never_stops()
     test_holders_parses_lsof()
     test_no_holders_and_no_lsof_are_both_quiet()
     print("tools/test_usb_port.py: all checks passed")

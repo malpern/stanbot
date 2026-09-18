@@ -64,12 +64,36 @@ def open_port(path):
     # The line settles after DTR comes up; anything already queued belongs to
     # whatever ran before us, and reading it as our own reply is a wrong answer.
     time.sleep(0.2)
-    try:
-        while os.read(fd, 65536):
-            pass
-    except (BlockingIOError, OSError):
-        pass
+    drain(fd)
     return fd
+
+
+def drain(fd, quiet_for=0.25, limit=3.0):
+    """Read until the robot has been silent for `quiet_for`, or `limit` passes.
+
+    A single pass is not enough and the difference is not cosmetic: one pass
+    left half of a previous screenshot in the buffer, and the next request
+    found that packet and returned it as though it were fresh -- so a change
+    that had worked looked as though it had not. A stale answer delivered
+    confidently is worse than no answer. Found 2026-09-18.
+    """
+    give_up = time.time() + limit
+    silent_since = None
+    while time.time() < give_up:
+        try:
+            chunk = os.read(fd, 65536)
+        except (BlockingIOError, OSError):
+            chunk = b""
+        if chunk:
+            silent_since = None
+            continue
+        now = time.time()
+        if silent_since is None:
+            silent_since = now
+        elif now - silent_since >= quiet_for:
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def holders(path):

@@ -3012,6 +3012,11 @@ void loop() {
         brightnessRequest.store(0);   // the camera task owns the backlight
         screenDarkened = true;
       }
+      // Answer C,SCREEN while asleep too. The sprite is black by now, which is
+      // the honest answer to "what is on your screen" -- but silence is not:
+      // the first version returned nothing at all here, and the tool then
+      // handed back a stale packet as though it were fresh (2026-09-18).
+      if (screenshotRequested.load() && !screenshotReady.load()) captureScreenshot();
       delay(20);
       return;
     }

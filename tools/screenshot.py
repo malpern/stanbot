@@ -105,6 +105,11 @@ def main(argv=None):
         if args.expression:
             os.write(fd, ("E," + args.expression + "\n").encode())
             time.sleep(1.2)          # let the pose spring settle before looking
+        # Everything above answers back, and a previous screenshot may still be
+        # draining. Anything left here would be found by the scan below and
+        # returned as if it were this request's answer -- which is how a working
+        # change came back looking broken (2026-09-18).
+        usb_port.drain(fd)
         jpeg, why = grab(port, args.seconds, fd=fd)
     finally:
         os.close(fd)
