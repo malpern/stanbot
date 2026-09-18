@@ -51,8 +51,28 @@ for source in companion/test_*.py tools/test_*.py; do
 done
 
 if [[ $quick -eq 0 ]]; then
-  echo "swift tests"
-  run "swift test" env -C companion/StanbotCompanion swift test
+  # Compile the Metal shaders so the tests that need them actually RUN. They
+  # skip themselves without a library, and a skipped test is not a passing one:
+  # the eye veil shipped an opaque-black frame that covered the face during the
+  # opening sequence, and the check for it would have sat skipped forever.
+  shader_lib=""
+  if command -v xcrun >/dev/null && [[ -d companion/StanbotCompanion/Shaders ]]; then
+    air=$(mktemp -d)
+    ok=1
+    for shader in companion/StanbotCompanion/Shaders/*.metal; do
+      name=$(basename "$shader" .metal)
+      xcrun -sdk macosx metal -c "$shader" -o "$air/$name.air" 2>/dev/null || ok=0
+    done
+    if [[ $ok -eq 1 ]] && xcrun -sdk macosx metallib "$air"/*.air -o "$air/StanbotShaders.metallib" 2>/dev/null; then
+      shader_lib="$air/StanbotShaders.metallib"
+      echo "swift tests (with shaders)"
+    else
+      echo "swift tests (shaders did not build; those tests will skip)"
+    fi
+  else
+    echo "swift tests"
+  fi
+  run "swift test" env -C companion/StanbotCompanion STANBOT_SHADER_LIBRARY="$shader_lib" swift test
 else
   echo "swift tests skipped (--quick)"
 fi

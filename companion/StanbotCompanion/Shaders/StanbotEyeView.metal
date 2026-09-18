@@ -38,7 +38,8 @@ half4 stanbotEyeView(float2 position, SwiftUI::Layer layer, float2 size, float4 
     float d = min(eyeDistance(position, leftEye, radius), eyeDistance(position, rightEye, radius));
     float inside = 1.0 - smoothstep(-softness, softness, d);
 
-    // Wide open and sharp: the picture, untouched.
+    // Wide open and sharp: the picture, untouched -- alpha included, which is
+    // why a fully open eye never showed the black frame described below.
     float soft = 1.0 - clamp(focus, 0.0, 1.0);
     if (inside >= 0.999 && soft <= 0.001) return layer.sample(position);
 
@@ -91,5 +92,19 @@ half4 stanbotEyeView(float2 position, SwiftUI::Layer layer, float2 size, float4 
     }
 
     float3 rgb = mix(lid, view, inside);
-    return half4(half3(rgb), 1.0h);
+    // Keep the picture's own alpha instead of forcing every pixel opaque.
+    //
+    // `layerEffect(maxSampleOffset:)` GROWS the layer so the wide taps above
+    // have somewhere to read from -- 160 points on every side here -- and this
+    // shader runs across all of it. Returning alpha 1 unconditionally therefore
+    // painted an opaque black frame far outside the picture, which landed on
+    // top of the face behind it: during the opening sequence a black box
+    // appeared over the eyes and vanished a second later, as the lids opened
+    // and the picture took over. Reported 2026-09-18.
+    //
+    // Outside the picture the layer samples transparent, so alpha is 0 there
+    // and nothing is drawn; inside it the picture is opaque and the lid glow
+    // reads exactly as before. Premultiplied, as SwiftUI layers are.
+    float alpha = float(layer.sample(position).a);
+    return half4(half3(rgb * alpha), half(alpha));
 }
