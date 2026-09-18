@@ -278,9 +278,20 @@ out of frame and back is found in the first couple of seconds and the head
 barely moves; the whole-range look is what happens when that fails. Steps 4-6
 are `layOutLookAround`, shared with the wake scan, which skips the glances
 because nobody has been lost. The two still differ only in the reaction on
-finding someone, which stays the wake scan's. It dwells 400 ms at each waypoint
-and moves at `scanStepRaw` 10 raw per tick (~39 deg/s, well under the 58 the
-2026-09-15 sweep ran smoothly at). Every waypoint is clamped to the limits.
+finding someone, which stays the wake scan's. It moves at `scanStepRaw` 10 raw
+per tick (~39 deg/s, well under the 58 the 2026-09-15 sweep ran smoothly at).
+Every waypoint is clamped to the limits.
+
+**It stops every 40 degrees, and that is the point.** The whole-range look used
+to run to one limit and then the other -- two stops, with continuous motion
+between them -- so a person standing anywhere else appeared only in moving,
+blurred frames. On 2026-09-17 a whole look around returned 114 frames with **no
+face found in any of them**, while the owner was in the room: "it looked around
+but didn't seem to find me". The head was aiming correctly; detection had
+nothing usable to work with. It now pauses `searchDwellMs` at stops
+`scanSpacingRaw` (128 raw, 40 deg) apart -- inside the camera's ~60 deg field of
+view, so the stops overlap and nobody can stand in a gap. Six stops across the
+current 180 deg range; a whole look around costs 15.5 s instead of 12.9.
 
 **The shape came in two steps on 2026-09-17.** It was a glance and nothing
 more: 32 raw each way, which at the old +-96 limits was most of the range, and
@@ -436,6 +447,23 @@ reboot reports its result to an app that is no longer following -- and the
 learned the owner was at yaw 518 and the app threw it away. The remembered
 place is now read before that guard: it is worth keeping whatever the session
 state was.
+
+## "I couldn't find you", and looking again
+
+A look around that finds nobody is not a fault and not idleness: the robot went
+and looked everywhere it can see, and the person was not there. It says so.
+Stanbot's face turns **sad**, the caption reads *I couldn't find you*, and a
+**Look again...** link appears under it. Asked for 2026-09-17, watching a scan
+end and settle silently into the purple "nobody found" light.
+
+- **The state is the robot's own answer**, not the app's inference: `SBMV`
+  reports `observations`, and zero of them after a normal ending is what sets
+  it. It clears the moment a face is seen or another session starts.
+- **Look again** sends `C,LOOK`, which starts a session that begins with a full
+  look around -- from where it last saw them, then across the whole range. It
+  moves the head, so over Wi-Fi it is authorized exactly as `C,FOLLOW` is
+  (`command_auth.h`); `C,UNFOLLOW` still needs nothing, since stopping only ever
+  makes the robot safer.
 
 ## The light bar (running on the robot; `light_bar.h`)
 

@@ -46,6 +46,13 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   during its 2.4 s waking). Built, NOT yet seen.
 - **A reboot asked for mid-session** now ends the session (`stopped_for_reboot`)
   instead of waiting out the 3-minute cap in silence. Built, NOT yet seen.
+- **A look around stops every 40 deg** rather than sweeping between the two
+  limits: on 2026-09-17 a whole look returned 114 frames with no face in any of
+  them while the owner was in the room. Six stops across 180 deg, 15.5 s.
+  Built, NOT yet seen.
+- **"I couldn't find you"** with a sad face and a **Look again...** link, when a
+  look around found nobody (`C,LOOK`, authorized like `C,FOLLOW`). Built, NOT
+  yet seen.
 - **The light bar** now separates looking from not finding: blue with a face,
   orange pulsing every 900 ms while the head hunts, dim purple when the camera
   is on and nobody has been found, dark otherwise. Built, NOT yet seen.
