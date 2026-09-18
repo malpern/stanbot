@@ -373,9 +373,6 @@ final class RobotConnection: ObservableObject {
     /// there. It says so, sadly, and offers to look again. Cleared the moment a
     /// face is seen or another session starts.
     @Published private(set) var couldNotFind = false
-    /// This connection told the robot where the owner usually is, so a look
-    /// that found nobody counts against that guess rather than against nothing.
-    private var sentUsualPlace = false
     private var lastReportedUptimeMs: Int?
     /// While the app's own eyes are opening (MainWindow's waking sequence), no
     /// session starts: the head must not move before Stanbot has opened its
@@ -845,14 +842,7 @@ final class RobotConnection: ObservableObject {
         if line.hasPrefix("SBMV "),
            let result = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
            result["plan"] as? String == "follow", let seen = result["observations"] as? Int {
-            let normalEnding = FollowResult(code: (result["result"] as? String) ?? "").retryable
-            couldNotFind = seen == 0 && normalEnding
-            // A look that led with the usual place and found nobody is evidence
-            // against it: the robot may have been nudged round on the desk, or
-            // the owner may be somewhere else today. Enough of these and it
-            // stops being led with (RobotState.missesBeforeDoubt).
-            if couldNotFind, sentUsualPlace { RobotState.priorMissed() }
-            sentUsualPlace = false
+            couldNotFind = seen == 0 && FollowResult(code: (result["result"] as? String) ?? "").retryable
         }
         guard let code else { return }
         sessionsWithoutResult = 0   // the robot answered
@@ -945,8 +935,8 @@ final class RobotConnection: ObservableObject {
     /// answers `SBRS` with what it took, so the session log shows the value
     /// rather than this side's belief having to be taken on trust.
     func restoreRobotState() {
-        guard let line = RobotState.restoreLine(RobotState.usualPlace()) else { return }
-        sentUsualPlace = send(line)
+        guard let line = RobotState.restoreLine(RobotState.lastSeen) else { return }
+        _ = send(line)
     }
 
     /// Why a session cannot start now, or nil when it can.
