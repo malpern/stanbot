@@ -68,10 +68,16 @@ int main() {
   auth.issue(random, 7000);
   assert(auth.verify("FOLLOW", macFor("FOLLOW", nonce.c_str(), "").c_str(), "", 7001) == CommandAuth::Result::NoKey);
 
-  // FOLLOW, REBOOT and OFF; anything else, and malformed MACs, are refused.
+  // FOLLOW, REBOOT, LOOK and OFF; anything else, and malformed MACs, are refused.
   auth.issue(random, 7000);
   const std::string offNonce = nonce;
   assert(auth.verify("OFF", macFor("OFF", offNonce.c_str(), key).c_str(), key, 7001) == CommandAuth::Result::Ok);
+  // LOOK moves the head, so it is authorized exactly as FOLLOW is.
+  auth.issue(random, 7100);
+  const std::string lookNonce = nonce;
+  assert(auth.verify("LOOK", macFor("LOOK", lookNonce.c_str(), key).c_str(), key, 7101) == CommandAuth::Result::Ok);
+  auth.issue(random, 7200);
+  assert(auth.verify("LOOK", "deadbeef", key, 7201) == CommandAuth::Result::Malformed);
   auth.issue(random, 8000);
   assert(auth.verify("YAWSWEEP", macFor("YAWSWEEP", nonce.c_str(), key).c_str(), key, 8001) == CommandAuth::Result::UnknownCommand);
   auth.issue(random, 9000);

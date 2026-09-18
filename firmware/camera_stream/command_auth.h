@@ -72,9 +72,11 @@ class CommandAuth {
   }
 
   // Only these may be authorized. Stopping needs no authorization at all.
+  // LOOK is the owner asking the robot to go and look for them again; it starts
+  // a session and moves the head, so it is authorized exactly as FOLLOW is.
   static bool allowed(const char* command) {
     return command != nullptr && (std::strcmp(command, "FOLLOW") == 0 || std::strcmp(command, "REBOOT") == 0 ||
-                                 std::strcmp(command, "OFF") == 0);
+                                 std::strcmp(command, "LOOK") == 0 || std::strcmp(command, "OFF") == 0);
   }
 
  private:

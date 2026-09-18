@@ -34,7 +34,8 @@ struct CompanionView: View {
     private func mood(at now: Date) -> Mood {
         var mood = Mood.of(connection: robot.connection, camera: robot.cameraState, face: robot.faceState,
                            box: robot.faceBoxes.first, follow: robot.follow, noFaceFor: now.timeIntervalSince(lastFaceAt),
-                           engaged: robot.engaged, sleeping: robot.asleep)
+                           engaged: robot.engaged, sleeping: robot.asleep,
+                           couldNotFind: robot.couldNotFind)
         // The robot says it is broken: the trouble face, whatever else is going on.
         if robot.robotFault != nil, !mood.asleep { mood = Mood(emotion: .trouble, caption: "Something’s wrong") }
         // Found someone on waking: surprised, then glee, then back to the mood

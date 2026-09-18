@@ -255,6 +255,10 @@ constexpr uint32_t kWakeScanWindowMs = 20000;
 // The first session after a boot looks around too: the robot has just come
 // back from a flash or a power cycle and has never seen anyone. Consumed once.
 std::atomic<bool> scanOnFirstSession{true};
+// The owner asked the robot to look for them again ("Look again..." in the
+// app, C,LOOK). The next session begins with a full look around, starting where
+// it last saw them, whatever else it would have done.
+std::atomic<bool> lookRequested{false};
 // Where a face was last seen, so a look around can start there instead of at a
 // limit. Carried from one session to the next in RAM, and across reboots by the
 // MAC, which hands it back on connecting (the K command below). It lived in NVS
@@ -747,6 +751,7 @@ void handleCommand(const char* line) {
     sleepStateChanged.store(true);
   }
   else if (strcmp(line, "C,OFF") == 0) powerDownRequested.store(true);
+  else if (strcmp(line, "C,LOOK") == 0) { lookRequested.store(true); followRequested.store(true); }
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
@@ -850,6 +855,7 @@ void handleAuthCommand(const char* line) {
                    stanbot::CommandAuth::name(result));
   if (!ok) return;
   if (strcmp(command, "FOLLOW") == 0) followRequested.store(true);
+  else if (strcmp(command, "LOOK") == 0) { lookRequested.store(true); followRequested.store(true); }
   else if (strcmp(command, "REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(command, "OFF") == 0) powerDownRequested.store(true);
 }
@@ -2169,7 +2175,8 @@ void runFollowSession() {
     const uint32_t woke = wokeAtMs.exchange(0);
     const bool justWoke = woke != 0 && millis() - woke < kWakeScanWindowMs;
     const bool firstSinceBoot = scanOnFirstSession.exchange(false);
-    if (justWoke || firstSinceBoot) tracker.beginScan(millis());
+    const bool askedToLook = lookRequested.exchange(false);
+    if (justWoke || firstSinceBoot || askedToLook) tracker.beginScan(millis());
     // Hold each powered servo exactly where it is before torque, so enabling
     // cannot move anything; then verify torque. Yaw only while pitch is off.
     positionCommands += pitchOn ? 2 : 1;

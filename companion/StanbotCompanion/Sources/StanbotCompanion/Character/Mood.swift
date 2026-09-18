@@ -38,9 +38,16 @@ struct Mood: Equatable {
         }
     }
 
+    /// What Stanbot says when a whole look around found nobody. Not a fault and
+    /// not idleness: it went and looked, everywhere it can see, and the person
+    /// was not there. The owner asked for it to say so, and to look sad about
+    /// it, on 2026-09-17.
+    static let couldNotFindCaption = "I couldn’t find you"
+
     static func of(connection: RobotConnection.ConnectionState, camera: RobotConnection.CameraState,
                    face: FaceSelection.State, box: FaceBox?, follow: FollowState,
-                   noFaceFor: TimeInterval = 0, engaged: Bool = false, sleeping: Bool = false) -> Mood {
+                   noFaceFor: TimeInterval = 0, engaged: Bool = false, sleeping: Bool = false,
+                   couldNotFind: Bool = false) -> Mood {
         if sleeping, case .connected = connection {
             return Mood(emotion: .sleepy, caption: "Asleep", asleep: true)
         }
@@ -72,6 +79,9 @@ struct Mood: Equatable {
         }
         switch face {
         case .searching:
+            // Having looked everywhere and found nobody outranks both of these:
+            // it is a report of something done, not a description of waiting.
+            if couldNotFind { return Mood(emotion: .sad, caption: couldNotFindCaption) }
             return noFaceFor >= drowsyAfter
                 ? Mood(emotion: .sleepy, caption: "Getting sleepy…")
                 : Mood(emotion: .normal, caption: "Looking around")

@@ -132,6 +132,10 @@ constexpr bool kFollowPitchEnabled = true;
 constexpr bool kFollowPitchEnabled = false;
 #endif
 
+// Room for the longest look around: the glances, a stop every scanSpacingRaw
+// across the full range, and the two pitch legs.
+constexpr unsigned kMaxWaypoints = 16;
+
 struct FollowConfig {
   float confidenceToAttend = 0.70f;  // face-detection.md's starting threshold
   uint32_t targetTimeoutMs = 900;    // ignore a target after this, then return to rest
@@ -178,6 +182,10 @@ struct FollowConfig {
   int searchGlancePitchRaw = 12;     // and up or down, if they left off the top or bottom
   // The look around itself, shared by a search and the wake scan (beginScan).
   int scanStepRaw = 10;              // ~39 deg/s: brisk, well under the 58 the sweep ran at
+  // How far apart the look around stops to look. Under the camera's field of
+  // view (rawPerUnitX 96 is the image edge, ~30 deg, so ~60 deg across), so the
+  // stops overlap and nobody can stand in a gap between two of them.
+  int scanSpacingRaw = 128;          // 40 degrees
   int scanPitchUpRaw = 90;           // how far above level the upward look goes
   uint32_t scanHoldMs = 300;         // a beat before the first turn
 
@@ -429,17 +437,33 @@ class HeadTracker {
     haveGoal_ = false;
   }
 
-  // One look around the whole allowed range, written from slot `n`: the far
-  // side `first` names, then the other, then up and down at rest. Returns the
-  // new waypoint count. Shared by the wake scan and by the second stage of a
-  // search.
+  // One look around the whole allowed range, written from slot `n`: across in
+  // steps, starting on the side `first` names, then up and down at rest.
+  // Returns the new waypoint count. Shared by the wake scan and by the second
+  // stage of a search.
+  //
+  // **It stops every `scanSpacingRaw`, and that is the point.** It used to run
+  // to one limit and then the other -- two stops, and continuous motion in
+  // between -- so a person standing anywhere else only ever appeared in moving,
+  // blurred frames. On 2026-09-17 a whole look around returned 114 frames with
+  // no face found in any of them, while the owner was in the room: "it looked
+  // around but didn't seem to find me". Detection needs the head still, so the
+  // head is still, briefly, everywhere it looks. The spacing is under the
+  // camera's ~60 degree field of view, so the stops overlap and nothing between
+  // two of them is missed.
   unsigned layOutLookAround(int first, unsigned n) {
     const int level = !config_.pitchEnabled ? pitch_
                     : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_) : pitchHome_;
     const int up = clamp(level + limits_.pitchUpSign * config_.scanPitchUpRaw, pitchLow_, pitchHigh_);
     const int down = limits_.pitchUpSign > 0 ? pitchLow_ : pitchHigh_;
-    waypoints_[n++] = {first < 0 ? limits_.yawMin : limits_.yawMax, level};
-    waypoints_[n++] = {first < 0 ? limits_.yawMax : limits_.yawMin, level};
+    const int from = first < 0 ? limits_.yawMin : limits_.yawMax;
+    const int to = first < 0 ? limits_.yawMax : limits_.yawMin;
+    const int step = from < to ? config_.scanSpacingRaw : -config_.scanSpacingRaw;
+    for (int yaw = from; n < kMaxWaypoints - 2; yaw += step) {
+      const bool last = (step > 0 && yaw >= to) || (step < 0 && yaw <= to);
+      waypoints_[n++] = {last ? to : yaw, level};
+      if (last) break;
+    }
     waypoints_[n++] = {limits_.yawRest, up};
     waypoints_[n++] = {limits_.yawRest, down};
     return n;
@@ -591,9 +615,10 @@ class HeadTracker {
   int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
   float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
   struct Waypoint { int yaw, pitch; };
-  // A search: two glances then a look around. A scan: the remembered place,
-  // then a look around. Six either way.
-  Waypoint waypoints_[6] = {};
+  // Two glances or a remembered place, then a stop every scanSpacingRaw across
+  // the range, then up and down. At the widest limits and the closest spacing
+  // this is sixteen; the layout stops adding rather than overrun.
+  Waypoint waypoints_[kMaxWaypoints] = {};
   bool scanning_ = false;
   bool haveLastSeen_ = false;
   int lastSeenYaw_ = 0, lastSeenPitch_ = 0;

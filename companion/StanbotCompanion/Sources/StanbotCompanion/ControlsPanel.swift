@@ -81,6 +81,15 @@ struct ControlsPanel: View {
                     .contentTransition(.opacity)
                     .animation(.smooth(duration: 0.25), value: mood.caption)
             }
+            // It looked everywhere and found nobody. Offer the one thing worth
+            // offering: go and look again. A link, not a button -- it is an
+            // invitation under a sentence, not a control on a board.
+            if robot.couldNotFind, robot.followUnavailableReason == nil {
+                Button("Look again…") { robot.lookAgain() }
+                    .buttonStyle(.link)
+                    .font(.callout)
+                    .help("Look from where you were last seen, then across the whole range")
+            }
 
         }
         .padding(20)

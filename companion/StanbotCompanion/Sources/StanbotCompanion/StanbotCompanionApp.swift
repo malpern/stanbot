@@ -343,7 +343,7 @@ final class RobotConnection: ObservableObject {
     /// The robot passphrase, for authorizing FOLLOW and REBOOT over Wi-Fi.
     private let passphrase: () -> String?
     /// A Wi-Fi command waiting on the robot's challenge or its verdict.
-    private enum PendingAuthorization { case follow, reboot, turnOff }
+    private enum PendingAuthorization { case follow, look, reboot, turnOff }
     private var pendingAuthorization: PendingAuthorization?
     private var authorizationSentAt = Date.distantPast
     @Published private(set) var passphraseAvailable = false
@@ -368,6 +368,11 @@ final class RobotConnection: ObservableObject {
     /// until it is used, because the camera can take longer to come up than any
     /// window, which is what stopped this working on 2026-09-17.
     private var robotOwesLookAround = false
+    /// The last session looked around and found nobody at all. Not a fault:
+    /// Stanbot went and looked everywhere it can see, and the person was not
+    /// there. It says so, sadly, and offers to look again. Cleared the moment a
+    /// face is seen or another session starts.
+    @Published private(set) var couldNotFind = false
     private var lastReportedUptimeMs: Int?
     /// While the app's own eyes are opening (MainWindow's waking sequence), no
     /// session starts: the head must not move before Stanbot has opened its
@@ -831,6 +836,14 @@ final class RobotConnection: ObservableObject {
         let code = line.hasPrefix("SBMV ") && object["plan"] as? String == "follow"
             ? object["result"] as? String
             : object["error"] as? String
+        // A session that looked and saw nobody. `observations` is the robot's
+        // own count of accepted targets, so this is its answer, not an
+        // inference from the app's face detection.
+        if line.hasPrefix("SBMV "),
+           let result = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
+           result["plan"] as? String == "follow", let seen = result["observations"] as? Int {
+            couldNotFind = seen == 0 && FollowResult(code: (result["result"] as? String) ?? "").retryable
+        }
         guard let code else { return }
         sessionsWithoutResult = 0   // the robot answered
         if code == "follow_cooldown", wokeAt != nil {
@@ -952,6 +965,7 @@ final class RobotConnection: ObservableObject {
     }
 
     private func beginFollowing() {
+        couldNotFind = false   // it is looking again; the last answer is spent
         targetSequence = 0   // frame sequences only have to increase within a session
         openFollowLog()
         follow = .following(since: Date())
@@ -972,6 +986,7 @@ final class RobotConnection: ObservableObject {
         else { return }
         let command = switch purpose {
         case .follow: "FOLLOW"
+        case .look: "LOOK"
         case .reboot: "REBOOT"
         case .turnOff: "OFF"
         }
@@ -991,6 +1006,7 @@ final class RobotConnection: ObservableObject {
         let reason = object["reason"] as? String ?? "unknown"
         switch (purpose, ok) {
         case (.follow, true): beginFollowing()
+        case (.look, true): lastAction = "Looking for you."; beginFollowing()
         case (.reboot, true): follow = .idle; lastAction = "Rebooting the robot for a fresh motion session."
         case (.turnOff, true):
             follow = .idle
@@ -1188,6 +1204,20 @@ final class RobotConnection: ObservableObject {
         guard connectedOverUSB else { return }
         _ = send("C,OFF\n")
         lastAction = "Turning the robot off. Press its button to turn it back on."
+    }
+
+    /// "Look again…": start a session that begins with a full look around, from
+    /// where it last saw them and then across the whole range. Authorized like
+    /// following, because it moves the head.
+    func lookAgain() {
+        guard followUnavailableReason == nil, pendingAuthorization == nil else { return }
+        couldNotFind = false
+        if connectedOverWiFi {
+            requestAuthorization(.look)
+            return
+        }
+        guard send("C,LOOK\n") else { return }
+        beginFollowing()
     }
 
     func rebootRobot() {
