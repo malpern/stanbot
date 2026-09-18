@@ -177,6 +177,12 @@ constexpr uint32_t kBootEyesOpenAnywayMs = 4000;
 constexpr uint32_t kRebootCentreMs = 6000;
 constexpr uint32_t kRebootEyesMs = 1200;
 std::atomic<bool> rebootRequested{false};
+// C,SCREEN: send back a picture of what is actually on the robot's screen.
+// Until this existed, every change to the face could only be checked by a
+// person standing in front of the robot, which is why docs/head-following.md
+// and docs/voice.md carry a list of things "built, not yet seen". Added
+// 2026-09-18.
+std::atomic<bool> screenshotRequested{false};
 uint32_t rebootClosingSince = 0;   // the eyes are closing for a pending reset (0: not yet)
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
 std::atomic<uint32_t> maxEyeGapMs{0};
@@ -772,6 +778,7 @@ void handleCommand(const char* line) {
   // robot, which is the only way to settle which one is better.
   else if (strcmp(line, "C,MOUTH,CAPSULE") == 0) mouthStyleRequested.store(0);
   else if (strcmp(line, "C,MOUTH,GRILLE") == 0) mouthStyleRequested.store(1);
+  else if (strcmp(line, "C,SCREEN") == 0) screenshotRequested.store(true);
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
@@ -1117,6 +1124,79 @@ uint32_t frameSentMs(uint32_t sequence) {
   for (const SentFrame& entry : sentFrames)
     if (entry.sequence == sequence && entry.ms != 0) return entry.ms;
   return 0;
+}
+
+// A picture of the robot's own screen, encoded from the sprite the face is
+// already composed into (eyeFrame). Its own encoder handle and output buffer,
+// deliberately NOT the camera's: that one is configured for YCbYCr and is on
+// the hot path, and reopening it per screenshot would cost a camera frame
+// every time. Both are allocated on first use, since a robot that is never
+// asked for a screenshot should not pay for one.
+//
+// Sent as SBSS rather than SBFR so nothing that reads camera frames mistakes a
+// screenshot for one; a decoder scanning for SBFR treats these bytes as noise
+// and resynchronises, which is what it already does for a damaged packet.
+struct ScreenJpeg {
+  jpeg_enc_handle_t handle = nullptr;
+  uint8_t* output = nullptr;
+  int width = 0, height = 0;
+
+  bool encode(const uint8_t* rgb565, int w, int h, bool bigEndian, uint8_t quality,
+              const uint8_t** out, size_t* length) {
+    if (!output) output = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!output) return false;
+    if (handle && (w != width || h != height)) { jpeg_enc_close(handle); handle = nullptr; }
+    if (!handle) {
+      jpeg_enc_config_t config = DEFAULT_JPEG_ENC_CONFIG();
+      config.width = w;
+      config.height = h;
+      // M5GFX keeps sprite pixels in the panel's byte order, which is not the
+      // same on every build, so the caller says which it is.
+      config.src_type = bigEndian ? JPEG_PIXEL_FORMAT_RGB565_BE : JPEG_PIXEL_FORMAT_RGB565_LE;
+      config.subsampling = JPEG_SUBSAMPLE_420;
+      config.quality = quality;
+      if (jpeg_enc_open(&config, &handle) != JPEG_ERR_OK) { handle = nullptr; return false; }
+      width = w; height = h;
+    }
+    int produced = 0;
+    if (jpeg_enc_process(handle, rgb565, w * h * 2, output, static_cast<int>(kMaxJpegBytes),
+                         &produced) != JPEG_ERR_OK || produced <= 0) {
+      return false;
+    }
+    *out = output;
+    *length = static_cast<size_t>(produced);
+    return true;
+  }
+} screenJpeg;
+
+// Answer C,SCREEN. Reports why on failure rather than going quiet: a
+// screenshot that silently never arrives is the same debugging problem this
+// exists to remove.
+void sendScreenshot() {
+  if (!eyeFrameReady) {
+    Telemetry.println("SBSH {\"ok\":false,\"why\":\"no sprite\"}");
+    return;
+  }
+  const uint8_t* pixels = static_cast<const uint8_t*>(eyeFrame.getBuffer());
+  const int w = eyeFrame.width(), h = eyeFrame.height();
+  if (pixels == nullptr || w <= 0 || h <= 0) {
+    Telemetry.println("SBSH {\"ok\":false,\"why\":\"no buffer\"}");
+    return;
+  }
+  const uint8_t* jpeg = nullptr;
+  size_t length = 0;
+  const bool swapped = eyeFrame.getSwapBytes();
+  if (!screenJpeg.encode(pixels, w, h, !swapped, 85, &jpeg, &length)) {
+    Telemetry.println("SBSH {\"ok\":false,\"why\":\"encode failed\"}");
+    return;
+  }
+  uint8_t header[13] = {'S', 'B', 'S', 'S', 1};
+  putUInt32LE(header + 5, ++sequence);
+  putUInt32LE(header + 9, static_cast<uint32_t>(length));
+  const bool sent = writeFully(header, sizeof(header)) && writeFully(jpeg, length);
+  Serial.printf("SBSH {\"ok\":%s,\"bytes\":%u,\"width\":%d,\"height\":%d,\"swapped\":%s}\n",
+                sent ? "true" : "false", static_cast<unsigned>(length), w, h,
+                swapped ? "true" : "false");
 }
 
 void sendFrame(const ESPVideoBufferClass& frame) {
@@ -2665,6 +2745,7 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
+    if (screenshotRequested.exchange(false)) sendScreenshot();
     serviceLightBar(nullptr);
     {
       const uint32_t request = registerRequest.exchange(0);

@@ -21,8 +21,13 @@ inline bool networkCommandAllowed(const char* line) {
   // because only its button can undo that (command_auth.h).
   // C,MOUTH,... only chooses how the mouth is drawn: a display change, like E,
   // and G,, and it exists to be switched while watching the robot.
+  // C,SCREEN only reads back the picture the robot is already drawing -- the
+  // same face the viewer can see -- so it moves nothing and reveals nothing the
+  // viewer does not already have. It is allowed over Wi-Fi deliberately:
+  // checking a face change without standing in front of the robot is the whole
+  // point of it (2026-09-18).
   static const char* const exact[] = {"S", "X", "V", "P", "Z", "C,UNFOLLOW", "C,SLEEP", "C,WAKE",
-                                      "C,MOUTH,CAPSULE", "C,MOUTH,GRILLE"};
+                                      "C,MOUTH,CAPSULE", "C,MOUTH,GRILLE", "C,SCREEN"};
   for (const char* command : exact) {
     if (strcmp(line, command) == 0) return true;
   }
