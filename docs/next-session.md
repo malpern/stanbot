@@ -1,18 +1,26 @@
 # Next session
 
-Handoff rewritten at the end of 2026-09-17, a long day that added voice phase 1,
-sleep and wake, a redesigned app, and found and fixed a fault that had silently
-killed head following for hours (read "The day following died silently" in
-`docs/head-following.md` first: its lessons shape how to work here). Everything
-below is committed and pushed.
+Handoff rewritten late on 2026-09-17, after a long day and a longer evening.
+The day added voice phase 1, sleep and wake, a redesigned app, and found a fault
+that had silently killed head following for hours. The evening measured the yaw
+centre, widened travel to the full +-90 deg, rebuilt what the robot does when it
+loses you, and taught it to say so when it cannot find you.
+
+Read two things before touching anything: "The day following died silently" in
+`docs/head-following.md`, and the screen entry at the top of `docs/recovery.md`
+-- **if the display looks wrong, power cycle before diagnosing, because a
+software reboot does not reset the panel.** Everything below is committed and
+pushed.
 
 ## State right now
 
-**On the robot:** firmware `f907097`, a calibration build made with
-`STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 STANBOT_FOLLOW_YAW_RANGE=96`,
-flashed over Wi-Fi and verified; a centre-431, yaw +-288 build is ready but
-unflashed. `tools/check_sleep_wake.py` passes on it, and a
-full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
+**On the robot:** firmware `380c983`, a calibration build made with
+`STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1 STANBOT_FOLLOW_YAW_RANGE=288`,
+flashed over Wi-Fi and verified. `tools/check_sleep_wake.py` passes on it.
+The app in `companion/StanbotCompanion/build/Stanbot.app` matches it.
+
+Everything in this section is **on the robot and seen working** unless it says
+otherwise.
 
 - **Yaw** centre MEASURED 2026-09-17 at raw **431** (`kFollowYawCentre`), not
   the assumed 460: two steered readings agreed at 431 and 432. Travel widened
@@ -29,66 +37,80 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   head looked "nearly straight down" there was a misreading and has been
   removed; level is the bottom of the range, and nothing about it needs
   re-checking.
-- **Losing someone** is a two-stage hunt (2026-09-17, at the owner's request):
-  a 32-raw glance each side of where they went, then, if that finds nobody, the
-  wake scan's whole-range look -- out to one yaw limit, out to the other, up,
-  down -- and only then back to rest. At yaw 143..719 the whole thing is 14.3 s,
-  so the session holds its idle clock while it runs. Built, NOT yet seen.
-- **A reboot now gets a look around too**, like a wake: the robot scans on its
-  first session after a boot, and the app asks for that session on seeing a
-  small `uptime_ms` in `V`. Reconnecting to a robot that was already up does
-  nothing. Built, NOT yet seen.
-- **A look around starts where someone was last seen**. The Mac keeps the
-  place (`RobotState`) and hands it back on connecting with `K,lsy=..,lsp=..`;
-  the robot reports it in `SBMV` and answers `SBRS`. See "State that survives a
-  reset" in `docs/head-following.md` before adding another carried value.
-  Built, NOT yet seen.
-- **Eyes open before the head moves**, on the robot (the session waits for the
+- **Losing someone** is a two-stage hunt: a 32-raw glance each side of where
+  they went, then, if that finds nobody, a whole-range look around -- and only
+  then home. Seen working. 14.3 s end to end if nobody is ever found, so the
+  session holds its idle clock while it runs.
+- **A look around stops every 40 deg** rather than sweeping between the limits.
+  It has to: on 2026-09-17 a whole sweep returned 114 frames with no face in any
+  of them while the owner was in the room, because he was only ever in moving,
+  blurred frames. Six stops across 180 deg, 400 ms each.
+- **It checks the usual place first**: where the robot last saw someone, held
+  1.2 s (`chairHoldMs`), then 20 deg either side, and only then the room. About
+  1 s to be looking at someone in their chair; the 19 s room sweep happens only
+  when they are not there. The owner's desk is the standing case: "I'll likely
+  be at the same location... only if I'm not there should it sweep around the
+  room."
+- **The place survives a reset.** The robot reports it in `SBMV`
+  (`last_seen_yaw/pitch`), the Mac keeps it (`RobotState`, UserDefaults) and
+  hands it back on connecting with `K,lsy=..,lsp=..`; the robot answers `SBRS`
+  with what it took. Seen surviving flashes. A cleverer memory -- clustering the
+  last eight sightings -- was built and **deliberately reverted**: it lost in
+  exactly the two cases it was for (the robot nudged round, the owner sitting
+  elsewhere), where the single last place is wrong once and self-corrects. See
+  "State that survives a reset" in `docs/head-following.md` before adding
+  another carried value.
+- **A reboot gets a look around too**, like a wake. The robot scans on its first
+  session after a boot and says so in `V` as `scan_pending`; the app asks for
+  that session on the robot's own answer rather than a stopwatch. Seen working:
+  the trace swept 154..604 and found the owner at 8.4 s. **Do not gate this on a
+  clock** -- two versions did, and both lapsed during the 60-90 s a flash and its
+  checks take, so the robot came back and sat still.
+- **"I couldn't find you"** with a sad face and a **Look again...** link when a
+  look around finds nobody -- the robot's own `observations: 0`, not the app's
+  guess. The link sends `C,LOOK` (authorized like `C,FOLLOW`). Built, NOT yet
+  seen.
+- **Eyes open before the head moves**, on the robot (a session waits for the
   boot screen to hand over and the lids to rise) and in the app (nothing starts
-  during its 2.4 s waking). Built, NOT yet seen.
-- **A reboot asked for mid-session** now ends the session (`stopped_for_reboot`)
-  instead of waiting out the 3-minute cap in silence. Built, NOT yet seen.
-- **A look around checks the chair first**: where they were last seen, held
-  1.2 s, then 20 deg either side, and only then the room. 1.0 s to be looking
-  at someone in their usual place; 19.1 s for the whole room when they are not.
-  Built, NOT yet seen.
-- **A look around stops every 40 deg** rather than sweeping between the two
-  limits: on 2026-09-17 a whole look returned 114 frames with no face in any of
-  them while the owner was in the room. Six stops across 180 deg, 15.5 s.
-  Built, NOT yet seen.
-- **"I couldn't find you"** with a sad face and a **Look again...** link, when a
-  look around found nobody (`C,LOOK`, authorized like `C,FOLLOW`). Built, NOT
-  yet seen.
-- **The light bar** now separates looking from not finding: blue with a face,
-  orange pulsing every 900 ms while the head hunts, dim purple when the camera
-  is on and nobody has been found, dark otherwise. Built, NOT yet seen.
+  during its 2.4 s waking).
+- **Coming down is a sequence**, for a reboot, a firmware update and a sleep:
+  the head comes home and level while it still has power, then the eyes close,
+  then it restarts or darkens. `comeHome()` **latches** -- a face or a search
+  must not divert it, and one that did left the head 50 deg off centre while
+  reporting success. Bounded at 6 s, which the worst case (3.84 s) fits inside.
+- **A reboot asked for mid-session** ends the session (`stopped_for_reboot`)
+  rather than waiting out the 3-minute cap in silence, and `SBRB` goes through
+  `Telemetry` so Wi-Fi hears it.
+- **The light bar** separates looking from not finding: blue with a face, orange
+  pulsing every 900 ms while the head hunts, dim steady purple when the camera
+  is on and nobody has been found, dark otherwise. The owner saw the purple.
 - **Following** is continuous: sessions repeat without reboots (3 s cooldown),
   each on a renewable power lease with a 3-minute hard maximum, and end after
   12 s with no face. Corrections use the head position when the frame was taken,
   60% gain, which stopped the hunting.
 - **Manual steering:** `H,<seq>,<x>,<y>` from the app's direction pad or arrow
   keys; steering wins over faces and hands back to following 1.5 s after release.
-- **Sleep and wake** (`C,SLEEP`, `C,WAKE`, no passphrase needed): the eyes close
+- **Sleep and wake** (`C,SLEEP`, `C,WAKE`, no passphrase needed): the head comes
+  home and level first (the app does NOT stop the session -- that would take away
+  the power it parks with), the session ends `stopped_for_sleep`, the eyes close
   over 0.7 s, then the screen and backlight go dark, the light bar goes off and
   the stream stops; Wi-Fi stays up. Waking opens the eyes and ramps the light
   bar up over 0.6 s. `C,OFF` powers the robot down (passphrase over Wi-Fi); only
   its button brings it back. The backlight and power-off go through the camera
   task's own I2C driver (`backlight.h`), never M5Unified.
-- **Wake scan:** a session starting within 20 s of a wake first looks around
-  (left, right, up, down, home, ~10 s); a face ends it and the face reacts
-  surprised, glee, focused. **Built and flashed; never yet seen working**, because
-  until 14:30 no session could power the head.
+- **Wake scan:** a session starting within 20 s of a wake looks around before it
+  settles, in the shape described above (usual place, beside it, then the room);
+  a face ends it at once and the face reacts surprised, glee, focused. Seen
+  working after a reboot; the reaction itself has not been watched closely.
 - **Mouth:** opens and shapes with speech the Mac plays, from UDP port 3334,
   shown only while speaking. **Never yet seen on the robot.**
 - **Trouble face** (X eyes, a frown) for 12 s after a session that ends in a
   fault. Never yet seen on the robot.
-- **Light bar:** blue with a face, a gentle orange breath while the camera
-  streams with none, dark otherwise and while asleep. Confirmed by the owner,
-  including coming back after a sleep and wake (2026-09-17, after the I2C fix).
 - **Health:** `SBHL` reports whether the head can reach its base, on connect and
   on change; motor power found on outside a session is turned off and reported.
-- **Wi-Fi security:** only stream/display commands, `C,UNFOLLOW`, `C,SLEEP` and
-  `C,WAKE` are accepted over Wi-Fi unauthenticated; `C,FOLLOW`, `C,REBOOT` and
+- **Wi-Fi security:** only stream/display commands, `C,UNFOLLOW`, `C,SLEEP`,
+  `C,WAKE` and `K,` (kept state: clamped on arrival, moves nothing by itself)
+  are accepted over Wi-Fi unauthenticated; `C,FOLLOW`, `C,LOOK`, `C,REBOOT` and
   `C,OFF` need an HMAC challenge keyed by the OTA passphrase, which the app reads
   from `~/dotfiles/secrets.env` with sops.
 
@@ -115,43 +137,74 @@ firmware plus the sleep work.
 
 ## Next, in order
 
-1. **Confirm the new centre and the wider travel on the robot.** Measured and
-   built but NOT yet flashed as of this writing: centre 431 and yaw +-288. At
-   rest the head should now sit square over the feet, and the wake scan should
-   reach equally to either side. Watch the first excursion to the robot's left:
-   143 raw is past anything the sweep commanded.
-2. **See what has never been seen**, with the owner at the robot: the wake scan
-   (sleep, then wake while out of view), the mouth
-   (Robot menu, Play Mouth Test; then set `robotLead` by eye), the sleep
-   animation on the robot's screen, and the trouble face.
-3. **Re-check pitch level** (steer until the face looks straight ahead, read
-   pitch from the follow log), then decide the down limit.
-4. **Widen yaw beyond 288** only after a supervised sweep out there. M5Stack
+1. **See what has never been seen**, with the owner at the robot: the mouth
+   (Robot menu, Play Mouth Test; then set `robotLead` by eye), the trouble face,
+   and the sad "I couldn't find you" face with its **Look again...** link.
+2. **The sleep sequence the owner actually asked for.** Today's sleep parks the
+   head home and level, ends the session, THEN closes the eyes and darkens --
+   three beats. He wants one: lids closing as it sets off, the closed eyes
+   visible all the way home, dark on arrival. **The naive way is known to be
+   wrong**: drawing the face from inside `runFollowSession()` tore the panel and
+   left the LCD's controller in a state that survived a reboot AND a reflash
+   (only a battery power cycle cleared it; see `docs/recovery.md`). Doing it
+   properly means the session yielding to `loop()` for rendering, not a second
+   renderer inside the session.
+3. **Watch the wider travel.** +-288 around 431 reaches 143 on the robot's left,
+   about 11 deg past anything the 2026-09-15 sweep ever commanded. It has run
+   many sessions there without complaint, but nothing has been inspected.
+4. **Session telemetry arrives damaged occasionally.** Twice on 2026-09-17. One
+   was the reboot racing its own report (fixed with a 700 ms drain); the other
+   ended `session_idle` with no reboot involved, so something else drops lines
+   over Wi-Fi now and then. The check reports it rather than handing over bad
+   numbers, which is right, but the cause is unknown.
+5. **Widen yaw beyond 288** only after a supervised sweep out there. M5Stack
    document the X axis as +-128 deg, so the servo has room past the +-90 deg
    built here; the compile-time assert caps at 288, and the cable and the body,
    not the motor, are the real limit.
-5. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
+6. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
    Mac, then a command-line `gpt-live-1` client. The Talk button is phase 4.
-6. **When calibration is done**, decide whether `measured` can be true in the
+7. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
-7. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
+8. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
    was removed 2026-09-17; `92ab70b` is the last commit with it.
-8. **Worth doing:** the 5% CPU the panel's large face costs at rest
+9. **Worth doing:** the 5% CPU the panel's large face costs at rest
    (`docs/app-design.md`, "What it costs") is the app's biggest standing cost.
 
 ## How to work here
 
-- **Build and flash firmware:** commit first (dirty builds report `dirty:true`),
-  then `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1
-  STANBOT_FOLLOW_YAW_RANGE=96 firmware/build.sh`. Quit Stanbot (it holds the
-  robot's one Wi-Fi viewer slot), then from an agent shell on the mini run
+- **A change is finished when it is ON THE ROBOT, not when it is committed.**
+  The owner said so on 2026-09-17 after answering "flash it" a dozen times: do
+  not stop to ask. Commit (dirty builds report `dirty:true`), then
+  `STANBOT_FOLLOW_CALIBRATION=1 STANBOT_FOLLOW_PITCH=1
+  STANBOT_FOLLOW_YAW_RANGE=288 firmware/build.sh`, **and
+  `companion/StanbotCompanion/build-app.sh` if any Swift changed** -- `swift
+  build` and `swift test` do NOT produce the app, and shipping a stale bundle
+  next to new firmware makes a working feature look broken. Quit Stanbot (it
+  holds the robot's one Wi-Fi viewer slot), then from an agent shell on the mini
+  run
   `ssh malpern@openclaw.local 'cd ~/local-code/stanbot && git pull -q; python3 firmware/ota.py'`.
-  It must print `"verified": true`. Reopen the app afterwards.
+  **Read the result before reporting it**: it must print `"verified": true`, and
+  a flash can fail with "no V reply" when the robot has not released its viewer
+  slot (wait a few seconds and retry). Reopen the app, then `tools/stanbot
+  status` to confirm what actually landed. Still ask before anything that moves
+  the head past its proven limits, or that needs the owner watching.
 - **Agent shells on the mini cannot reach LAN hosts** (macOS Local Network
   privacy, no fix available). Route anything that talks to the robot over the
   network through `ssh malpern@openclaw.local`.
 - **App:** `cd companion/StanbotCompanion && swift test && ./build-app.sh`,
   then `pkill -f Stanbot.app/Contents/MacOS/Stanbot; open build/Stanbot.app`.
+- **If the screen looks wrong, POWER CYCLE before diagnosing** -- hold the
+  robot's button; its battery means pulling USB is not enough. `esp_restart()`
+  does not reset the LCD's own controller, so a panel corrupted by an aborted
+  SPI transfer stays corrupted across a reboot and across a reflash. On
+  2026-09-17 that made a software bug look like a failing ribbon cable, and made
+  a correct revert look like it had not worked. See `docs/recovery.md`.
+- **Do not draw the face from inside a session.** Every eye render belongs in
+  `loop()`, which is blocked for the whole of `runFollowSession()` -- which is
+  why the face freezes while the head moves. A second renderer inside the
+  session tore the panel (above). If you add one anywhere, push the sprite ONLY
+  when `eyes.update()` returns true: it paces itself at ~30 fps and returns
+  false without touching the sprite, so pushing anyway shows a stale buffer.
 - **Native firmware tests:** compile and run every `companion/test_*.cpp` with
   `c++ -std=c++17 -include initializer_list`. Python: `companion/test_*.py`.
 - **What is it doing right now:** `python3 tools/stanbot status` (or `watch`).
@@ -174,10 +227,12 @@ firmware plus the sleep work.
   such call (mark a genuinely safe one `// i2c-ok: why`); use the camera task's
   driver instead, as `backlight.h` does. **After flashing anything that touches
   sleep, power, the display, the light bar or I2C, run
-  `python3 tools/check_sleep_wake.py`** (it stops the stream first: text and
-  frames share the USB channel, and a reply among JPEG data is shredded, which
-  on 2026-09-17 made it report a healthy robot as FAIL) (robot on USB, Stanbot closed; moves
+  `python3 tools/check_sleep_wake.py`** (robot on USB, Stanbot closed; moves
   nothing): it reads the base, sleeps and wakes three times, and reads it again.
+  It stops the stream first, because text and frames share the USB channel and a
+  reply arriving among JPEG data is shredded -- on 2026-09-17 that made it report
+  a perfectly healthy robot as FAIL, which is the one thing this check must
+  never do.
 - **Failures must be loud.** The robot reports its base link as `SBHL` on every
   connect and whenever it changes; the app shows it as the orange alert, the red
   dot and the trouble face. A session refused for lack of motor power says so
