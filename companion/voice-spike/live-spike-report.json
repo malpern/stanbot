@@ -1,0 +1,42 @@
+{
+  "connected" : true,
+  "endpoint" : "wss:\/\/api.openai.com\/v1\/live\/sessions",
+  "estimatedCostUSD" : 0.03391216327746709,
+  "eventsAfterBargeIn" : [
+    "session.output_audio.delta",
+    "session.input_transcript.delta",
+    "session.usage.updated",
+    "session.output_transcript.delta"
+  ],
+  "eventsSeen" : {
+    "session.input_transcript.delta" : 16,
+    "session.output_audio.delta" : 112,
+    "session.output_transcript.delta" : 6,
+    "session.started" : 1,
+    "session.usage.updated" : 2
+  },
+  "firstAudioAfterMs" : 2897.4529504776,
+  "firstEventOrder" : [
+    "session.started",
+    "session.output_audio.delta",
+    "session.input_transcript.delta",
+    "session.output_transcript.delta",
+    "session.usage.updated"
+  ],
+  "inputTranscript" : "Hello Stanbot. In one short sentence, what are youStop. Just say the word banana.",
+  "lastUsage" : "{\"seconds\":11}",
+  "model" : "gpt-live-1",
+  "notes" : [
+    "socket open",
+    "opening line, 168140 bytes: 18 frames",
+    "barge-in audio sent at 12 s",
+    "barge-in: 12 frames",
+    "stopped: time limit"
+  ],
+  "outputAudioBytes" : 537600,
+  "outputAudioSeconds" : 11.2,
+  "outputTranscript" : " I’m a tiny desk robotbanana",
+  "secondsConnected" : 40.69459593296051,
+  "sessionObjectFromServer" : "{\"audio\":{\"format\":{\"rate\":24000,\"type\":\"audio\\\/pcm\"},\"output\":{\"voice\":\"vesper\"}},\"delegation\":{\"type\":\"client\"},\"expires_at\":1789714301,\"id\":\"live_u7_EPKrUp3oNPbSd609ocOD79z16ifIoF5T\",\"input\":[],\"instructions\":\"You are Stanbot, a small desk robot. Be brief and plain: a sentence or two.\",\"model\":\"gpt-live-1\",\"status\":\"active\"}",
+  "sessionSecondsAllowed" : 7199.363386154175
+}
