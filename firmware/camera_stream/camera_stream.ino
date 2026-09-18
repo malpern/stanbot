@@ -183,6 +183,16 @@ std::atomic<bool> rebootRequested{false};
 // and docs/voice.md carry a list of things "built, not yet seen". Added
 // 2026-09-18.
 std::atomic<bool> screenshotRequested{false};
+// The face is drawn on the loop task and sent from the camera task, so the
+// sprite cannot simply be encoded where the command arrives: the first version
+// of this did exactly that and returned half-drawn faces -- one eye missing, an
+// X with a stroke absent -- which look like rendering bugs rather than a race.
+// So loop() copies the finished sprite here, and the camera task encodes that.
+uint8_t* screenshotPixels = nullptr;
+size_t screenshotBytes = 0;
+int screenshotWidth = 0, screenshotHeight = 0;
+bool screenshotSwapped = false;
+std::atomic<bool> screenshotReady{false};
 uint32_t rebootClosingSince = 0;   // the eyes are closing for a pending reset (0: not yet)
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
 std::atomic<uint32_t> maxEyeGapMs{0};
@@ -1172,20 +1182,50 @@ struct ScreenJpeg {
 // Answer C,SCREEN. Reports why on failure rather than going quiet: a
 // screenshot that silently never arrives is the same debugging problem this
 // exists to remove.
-void sendScreenshot() {
+// Copy the finished sprite aside. Runs on the loop task, between a push and
+// the next draw, so what it copies is a whole frame by construction.
+void captureScreenshot() {
   if (!eyeFrameReady) {
+    screenshotRequested.store(false);
     Telemetry.println("SBSH {\"ok\":false,\"why\":\"no sprite\"}");
     return;
   }
   const uint8_t* pixels = static_cast<const uint8_t*>(eyeFrame.getBuffer());
   const int w = eyeFrame.width(), h = eyeFrame.height();
+  const size_t needed = static_cast<size_t>(w) * h * 2;
+  if (pixels == nullptr || w <= 0 || h <= 0) {
+    screenshotRequested.store(false);
+    Telemetry.println("SBSH {\"ok\":false,\"why\":\"no buffer\"}");
+    return;
+  }
+  if (screenshotBytes < needed) {
+    heap_caps_free(screenshotPixels);
+    screenshotPixels = static_cast<uint8_t*>(heap_caps_aligned_alloc(16, needed, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    screenshotBytes = screenshotPixels ? needed : 0;
+  }
+  if (!screenshotPixels) {
+    screenshotRequested.store(false);
+    Telemetry.println("SBSH {\"ok\":false,\"why\":\"no memory\"}");
+    return;
+  }
+  memcpy(screenshotPixels, pixels, needed);
+  screenshotWidth = w;
+  screenshotHeight = h;
+  screenshotSwapped = eyeFrame.getSwapBytes();
+  screenshotRequested.store(false);
+  screenshotReady.store(true);
+}
+
+void sendScreenshot() {
+  const uint8_t* pixels = screenshotPixels;
+  const int w = screenshotWidth, h = screenshotHeight;
   if (pixels == nullptr || w <= 0 || h <= 0) {
     Telemetry.println("SBSH {\"ok\":false,\"why\":\"no buffer\"}");
     return;
   }
   const uint8_t* jpeg = nullptr;
   size_t length = 0;
-  const bool swapped = eyeFrame.getSwapBytes();
+  const bool swapped = screenshotSwapped;
   if (!screenJpeg.encode(pixels, w, h, !swapped, 85, &jpeg, &length)) {
     Telemetry.println("SBSH {\"ok\":false,\"why\":\"encode failed\"}");
     return;
@@ -2745,7 +2785,7 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
-    if (screenshotRequested.exchange(false)) sendScreenshot();
+    if (screenshotReady.exchange(false)) sendScreenshot();
     serviceLightBar(nullptr);
     {
       const uint32_t request = registerRequest.exchange(0);
@@ -2985,6 +3025,9 @@ void loop() {
       // Drawn after the face and before the push, so it costs no extra frame.
       if (!wifiLinkUp.load()) stanbot::drawNoNetworkBadge(eyeFrame);
       eyeFrame.pushSprite(0, 0);
+      // The sprite is whole exactly here: drawn, badged, and presented. Copy it
+      // for C,SCREEN now rather than letting the camera task read it mid-draw.
+      if (screenshotRequested.load() && !screenshotReady.load()) captureScreenshot();
       const uint32_t presentedMs = millis();
       if (lastEyeMs) {
         const uint32_t gap = presentedMs - lastEyeMs;
