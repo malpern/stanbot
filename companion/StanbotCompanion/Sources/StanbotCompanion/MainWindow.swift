@@ -155,6 +155,9 @@ struct CompanionView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
+            TalkButton()
+        }
+        ToolbarItem(placement: .primaryAction) {
             SleepWakeButton()
         }
         ToolbarItem(placement: .primaryAction) {
@@ -475,6 +478,24 @@ struct FollowButton: View {
                 .symbolEffect(.pulse, isActive: sessionRunning)
                 .frame(maxWidth: prominent ? .infinity : nil)
         }
+    }
+}
+
+/// Talking with Stanbot: the same shape of control as Follow, because it is the
+/// same shape of thing -- a standing intent, on until it is turned off, not a
+/// command that fires once. Its words and appearance come from `VoiceControl`
+/// so they can be checked without a window.
+struct TalkButton: View {
+    @EnvironmentObject private var robot: RobotConnection
+
+    var body: some View {
+        Button { } label: {
+            Label(VoiceControl.title(robot.voice), systemImage: VoiceControl.symbol(robot.voice))
+                .symbolEffect(.pulse, isActive: VoiceControl.pulses(robot.voice))
+        }
+        .disabled(robot.voiceRefusal != nil)
+        .help(VoiceControl.help(robot.voice, refusal: robot.voiceRefusal))
+        .accessibilityAddTraits(robot.voice.isRunning ? .isSelected : [])
     }
 }
 

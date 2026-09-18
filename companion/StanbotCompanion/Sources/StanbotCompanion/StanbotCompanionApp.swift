@@ -60,6 +60,10 @@ struct StanbotCompanionApp: App {
                     }
                 }
                 Divider()
+                Button("Start Conversation") { }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                    .disabled(true)   // until the transport exists (docs/voice.md phase 4)
+                Divider()
                 if speech.playing {
                     Button("Stop Mouth Test") { speech.stop() }
                 } else {
@@ -355,6 +359,24 @@ final class RobotConnection: ObservableObject {
     /// nil healthy or not yet known, otherwise what is wrong, in words. With the
     /// base unreachable there is no motor power and no light bar.
     @Published private(set) var robotFault: String?
+
+    // MARK: Voice
+    /// What a conversation is doing. The rules live in `VoiceSession`; this is
+    /// only what the window needs to draw. **The transport is not built yet**
+    /// (docs/voice.md phase 4), so Talk refuses with a reason rather than
+    /// pretending: a control that looks live and does nothing is worse than one
+    /// that says what it is waiting for.
+    @Published private(set) var voice: VoiceState = .off
+    @Published private(set) var voiceSecondsToday = 0
+
+    /// Why Talk cannot start, in the words the help text and subtitle will use.
+    var voiceRefusal: VoiceEnding? {
+        if !(connectedOverUSB || connectedOverWiFi) {
+            return .refused("Connect to Stanbot first.")
+        }
+        if asleep { return .robotAsleep }
+        return .refused("Talking is not wired up yet: the conversation transport is still to build.")
+    }
     /// Sessions that were started and never reported back, in a row. One may be
     /// a lost line; two is a fault and stops the automatic retrying.
     private var sessionsWithoutResult = 0
