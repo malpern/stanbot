@@ -235,9 +235,20 @@ question of taste and the only way to settle it is to watch both on the robot.
   grille takes none of that away.
 - **The cost, stated plainly.** The mouth is the only part that can show
   *valence* independently of gaze -- the trouble face is literally X eyes and a
-  frown. A speaker cannot frown. So the grille **leans** instead: `setMood(-1)`
-  sags the outer slots 3-4 px, `+1` lifts them, and the middle slot stays put so
-  the panel bends rather than slides. That recovers most of what the frown did.
+  frown. A speaker cannot frown. So the grille **bows** instead: each slot's ends
+  drop for sad and lift for pleased, so the three lines read as a frown or a
+  smile. Moving whole slots apart -- which is what this did first -- only looks
+  like the panel opening, which is loudness, and says nothing about feeling. The
+  sign was inverted at first and drew a smile when sad, which is worse than no
+  expression at all; it was caught by rendering it and looking, not by the
+  numbers, which passed throughout.
+- **The two faces differ here, deliberately** (docs/app-design.md, "Two faces").
+  The robot draws straight bars either side and steps each slot in three parts,
+  because an ESP32 painting a 16-bit sprite with no alpha, while running the
+  camera and the servos, can afford that and no more. The Mac draws the real
+  thing (`Shaders/StanbotGrille.metal`): concentric **curved arcs** struck from
+  the edge of the panel, opening wider as the voice rises, with bloom and
+  falloff, and slots that bow smoothly. Same shape, same timing, better drawn.
 - **Shape.** A dark body with three slots, sized once and never breathing in and
   out -- a panel that changes size is a mouth again. Loudness opens the slots
   apart, the way a cone moves, and puts one arc either side at 18% and a second
