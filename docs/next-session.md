@@ -191,6 +191,32 @@ firmware plus the sleep work.
 9. **Worth doing:** the 5% CPU the panel's large face costs at rest
    (`docs/app-design.md`, "What it costs") is the app's biggest standing cost.
 
+## Seeing and driving the robot without standing in front of it
+
+Three things added 2026-09-18, after the owner asked what would make iteration
+faster. The bottleneck was never the flash cycle (15 s to build, 40 s to flash)
+-- it was that the robot's face was invisible from here, which is why this file
+used to carry a task called "See what has never been seen, with the owner at
+the robot".
+
+- **`tools/stanbot screenshot /tmp/face.jpg`** -- a picture of what is actually
+  on the robot's screen. It composes its whole face into one sprite, and the
+  JPEG encoder takes RGB565 natively, so `C,SCREEN` grabs that sprite and sends
+  it back as an `SBSS` packet. **Prefer this over `tools/screenshot.py`**: it
+  goes through the app, which holds the transport, so it works while the app is
+  on USB -- which is most of the time, and when the standalone tool must refuse.
+- **`companion/render_face.cpp`** -- the same firmware drawing code run here,
+  writing a PNG, with no robot at all. For states that are hard to reach (the
+  trouble face) or that last 175 ms (the eyes mid-close). Build it with
+  `-I companion/stubs`, which holds just enough Arduino to compile the face.
+- **`tools/stanbot <verb>`** -- sleep, wake, reboot, follow, unfollow, mouth,
+  expression, screenshot. Through the app via `command.json`, NOT by opening the
+  robot's USB port alongside it: two readers on one port do not share, and every
+  symptom of that fight looks like a broken robot (see docs/transport.md).
+
+**`./test.sh`** runs all 29 suites; **`./flash.sh`** does the whole flash and
+refuses to report success it did not verify.
+
 ## How to work here
 
 - **A change is finished when it is ON THE ROBOT, not when it is committed.**

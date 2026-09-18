@@ -24,6 +24,44 @@ FRESH = {
 }
 
 
+def test_command_waits_for_its_own_answer():
+    """A result from a PREVIOUS command must never be read as this one's."""
+    with tempfile.TemporaryDirectory() as tmp:
+        request = os.path.join(tmp, "command.json")
+        result = os.path.join(tmp, "command-result.json")
+
+        # An old result is already lying there, as it always will be in practice.
+        with open(result, "w") as f:
+            json.dump({"id": "an-older-one", "ok": True, "detail": "stale"}, f)
+
+        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result)
+        assert ok is False, "took a stale result as its own answer"
+        assert "did not answer" in detail, detail
+
+        # The request itself was written, and is well formed.
+        with open(request) as f:
+            written = json.load(f)
+        assert written["command"] == "sleep" and written["id"], written
+        assert "argument" not in written, "no argument should mean no key"
+
+        # Now answer it properly.
+        with open(result, "w") as f:
+            json.dump({"id": written["id"], "ok": True, "detail": "asked the robot to sleep"}, f)
+        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result)
+        # A fresh id is minted each call, so the answer above is stale for it too.
+        assert ok is False, "ids must be unique per call"
+
+
+def test_command_carries_its_argument():
+    with tempfile.TemporaryDirectory() as tmp:
+        request = os.path.join(tmp, "command.json")
+        cli.command("mouth", "grille", timeout=0.2, request_path=request,
+                    result_path=os.path.join(tmp, "none.json"))
+        with open(request) as f:
+            written = json.load(f)
+        assert written["command"] == "mouth" and written["argument"] == "grille", written
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "status.json")
@@ -70,6 +108,8 @@ def main():
             f.write("{ not json")
         status, why = cli.read(path)
         assert status is None and "unreadable" in why
+    test_command_waits_for_its_own_answer()
+    test_command_carries_its_argument()
     print("stanbot cli: all checks passed")
 
 

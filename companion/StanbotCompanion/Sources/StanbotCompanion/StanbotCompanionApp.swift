@@ -525,7 +525,10 @@ final class RobotConnection: ObservableObject {
         guard automaticPolling else { return }
         // The status report: about once a second, off the 20 Hz tick.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.writeStatus() }
+            Task { @MainActor in
+                self?.writeStatus()
+                self?.serviceCommandFile()
+            }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -773,6 +776,28 @@ final class RobotConnection: ObservableObject {
     private func handle(_ chunk: DecodedChunk) {
         chunk.lines.forEach(handleLine)
         chunk.frames.forEach(analyze)
+        if let jpeg = chunk.screenshots.last { receiveScreenshot(jpeg) }
+    }
+
+    /// Where a `screenshot` command wants its picture written, and the id to
+    /// answer when it arrives. Nil when nobody has asked.
+    private var screenshotWanted: (path: URL, id: String)?
+
+    /// A picture of the robot's screen came back. Write it where it was asked
+    /// for and answer the command that asked.
+    private func receiveScreenshot(_ jpeg: Data) {
+        guard let wanted = screenshotWanted else { return }
+        screenshotWanted = nil
+        do {
+            try jpeg.write(to: wanted.path)
+            CommandFile.write(.init(id: wanted.id, ok: true,
+                                    detail: "\(wanted.path.path) (\(jpeg.count) bytes)"),
+                              to: followLogDirectory)
+        } catch {
+            CommandFile.write(.init(id: wanted.id, ok: false,
+                                    detail: "could not write \(wanted.path.path): \(error.localizedDescription)"),
+                              to: followLogDirectory)
+        }
     }
 
     private func handleLine(_ line: String) {
@@ -963,6 +988,82 @@ final class RobotConnection: ObservableObject {
         }
         if let log = followLogURL { fields["session_log"] = log.path }
         StatusFile.write(fields, to: followLogDirectory)
+    }
+
+    /// The id of the last command carried out, so the same request is not run
+    /// again every second. Nil until one arrives.
+    private var lastCommandId: String?
+
+    /// Carry out whatever a shell has asked for. See CommandFile.swift for why
+    /// this exists: the app holds the robot's transport, so a second process
+    /// opening the port directly fights it, and every symptom of that fight
+    /// looks like a broken robot.
+    func serviceCommandFile() {
+        guard let request = CommandFile.read(from: followLogDirectory) else { return }
+        guard request.id != lastCommandId else { return }
+        lastCommandId = request.id
+
+        func answer(_ ok: Bool, _ detail: String) {
+            CommandFile.write(.init(id: request.id, ok: ok, detail: detail), to: followLogDirectory)
+        }
+        guard let command = RobotCommand.parse(request.command) else {
+            answer(false, "no such command: \(request.command). Known: "
+                   + RobotCommand.allCases.map(\.rawValue).joined(separator: ", "))
+            return
+        }
+        if let why = command.rejection(for: request.argument) { answer(false, why); return }
+        guard connectedOverUSB || connectedOverWiFi else {
+            answer(false, "not connected to the robot (\(connection.title))")
+            return
+        }
+        switch command {
+        case .sleep:
+            guard !asleep else { answer(true, "already asleep"); return }
+            sleep()
+            answer(true, "asked the robot to sleep")
+        case .wake:
+            guard asleep else { answer(true, "already awake"); return }
+            wake()
+            answer(true, "woke the robot")
+        case .reboot:
+            rebootRobot()
+            answer(true, "asked the robot to reboot")
+        case .follow:
+            followAutomatically = true
+            if let why = followUnavailableReason { answer(false, why); return }
+            startFollowing()
+            answer(true, "following")
+        case .unfollow:
+            followAutomatically = false
+            stopFollowing()
+            answer(true, "stopped following")
+        case .mouth:
+            let style = (request.argument ?? "").lowercased()
+            guard send("C,MOUTH,\(style.uppercased())\n") else { answer(false, "could not send"); return }
+            answer(true, "mouth set to \(style)")
+        case .expression:
+            let name = (request.argument ?? "").lowercased()
+            guard send("E,\(name)\n") else { answer(false, "could not send"); return }
+            answer(true, "expression set to \(name)")
+        case .screenshot:
+            // Through the app because the app holds the port: tools/screenshot.py
+            // has to refuse whenever this app is on USB, which is most of the
+            // time, and that was the last place the two still fought over it.
+            let path = URL(fileURLWithPath: request.argument ?? "stanbot-screen.jpg")
+            guard send("C,SCREEN\n") else { answer(false, "could not send"); return }
+            screenshotWanted = (path, request.id)
+            // No answer here: receiveScreenshot writes it when the picture
+            // lands. If it never does, the caller times out and says so, which
+            // is the honest outcome -- an "ok" now would be a guess.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(8))
+                guard let self, let wanted = self.screenshotWanted, wanted.id == request.id else { return }
+                self.screenshotWanted = nil
+                CommandFile.write(.init(id: request.id, ok: false,
+                                        detail: "the robot sent no screenshot within 8 s"),
+                                  to: self.followLogDirectory)
+            }
+        }
     }
 
     /// Hand the robot back what this Mac kept for it across its reset. Sent on
@@ -1522,7 +1623,10 @@ struct DecodedChunk: Sendable {
     var frames: [CameraFrame] = []
     /// `SB__ {json}` lines, without the newline.
     var lines: [String] = []
-    var isEmpty: Bool { frames.isEmpty && lines.isEmpty }
+    /// Pictures of the robot's own screen (SBSS), kept apart from camera frames
+    /// so one is never shown or analysed as the other.
+    var screenshots: [Data] = []
+    var isEmpty: Bool { frames.isEmpty && lines.isEmpty && screenshots.isEmpty }
 }
 
 /// Splits the link into SBFR packets and `SB__ {json}` text lines.
@@ -1533,6 +1637,10 @@ struct DecodedChunk: Sendable {
 /// frames and replies from one task, which keeps lines between packets.
 final class FrameDecoder {
     private let magic: [UInt8] = [0x53, 0x42, 0x46, 0x52] // SBFR
+    /// A picture of the robot's own screen, answering C,SCREEN. Same framing as
+    /// a camera frame and a different magic, so neither is mistaken for the
+    /// other and a decoder that knows only SBFR resynchronises past it.
+    private let screenshotMagic: [UInt8] = [0x53, 0x42, 0x53, 0x53] // SBSS
     private let headerLength = 13
     private let maximumJPEGBytes = 300_000
     /// Longer than any line the firmware prints; past this, "SB" is noise.
@@ -1546,7 +1654,9 @@ final class FrameDecoder {
             // Data's integer indices need not begin at zero after removeFirst.
             // Normalize each small packet header before indexed inspection.
             let raw = Array(buffer)
-            guard Array(raw.prefix(4)) == magic else {
+            let head = Array(raw.prefix(4))
+            let isScreenshot = head == screenshotMagic
+            guard head == magic || isScreenshot else {
                 if raw[0] == 0x53, raw[1] == 0x42 { // "SB": possibly a text line
                     if let newline = raw.prefix(maximumLineBytes).firstIndex(of: 0x0a) {
                         // Serial.println() ends lines with \r\n. Without dropping
@@ -1585,7 +1695,8 @@ final class FrameDecoder {
                 buffer.removeFirst(4)
                 continue
             }
-            chunk.frames.append(CameraFrame(sequence: sequence, jpeg: jpeg))
+            if isScreenshot { chunk.screenshots.append(jpeg) }
+            else { chunk.frames.append(CameraFrame(sequence: sequence, jpeg: jpeg)) }
             buffer.removeFirst(headerLength + length)
         }
         return chunk

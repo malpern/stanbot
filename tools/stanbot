@@ -5,6 +5,16 @@
     tools/stanbot status --json   # the whole object
     tools/stanbot watch           # the short report, until interrupted
 
+    tools/stanbot sleep           # and: wake, reboot, follow, unfollow
+    tools/stanbot mouth grille    # capsule | grille
+    tools/stanbot expression sad
+    tools/stanbot screenshot /tmp/face.jpg   # what is on the robot's screen
+
+Commands go THROUGH the app, which holds the robot's transport, rather than
+opening the robot's USB port alongside it -- two readers on one port do not
+share, and every symptom of that fight looks like a broken robot. They print
+what happened and exit non-zero if it did not.
+
 The app is the only thing that can talk to the robot -- it holds the robot's one
 Wi-Fi viewer slot -- so its own state is the answer to most questions, and until
 this existed the only way to read it was to look at the window. The app writes
@@ -69,12 +79,62 @@ def describe(status, age):
     return "\n".join(lines)
 
 
+COMMANDS = ["sleep", "wake", "reboot", "follow", "unfollow", "mouth", "expression", "screenshot"]
+COMMAND = os.path.expanduser("~/Library/Logs/Stanbot/command.json")
+RESULT = os.path.expanduser("~/Library/Logs/Stanbot/command-result.json")
+
+
+def command(verb, argument=None, timeout=12.0, request_path=COMMAND, result_path=RESULT):
+    """Ask the app to do something; return (ok, detail).
+
+    Through the app rather than the robot's USB port on purpose: the app holds
+    that port, and a second process opening it fights for every reply. See
+    CommandFile.swift.
+    """
+    request = {"id": "%d-%d" % (int(time.time() * 1000), os.getpid()), "command": verb}
+    if argument:
+        request["argument"] = argument
+    temporary = request_path + ".%d.tmp" % os.getpid()
+    os.makedirs(os.path.dirname(request_path), exist_ok=True)
+    with open(temporary, "w") as f:
+        json.dump(request, f)
+    os.replace(temporary, request_path)   # atomic: the app never sees half of it
+
+    # Wait for a result carrying OUR id. Anything else is a previous answer,
+    # and reporting one of those as this command's outcome is the stale-answer
+    # trap that had screenshot.py handing back an old picture.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with open(result_path) as f:
+                answer = json.load(f)
+            if answer.get("id") == request["id"]:
+                return bool(answer.get("ok")), answer.get("detail", "")
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.2)
+    return False, ("the app did not answer in %.0f s. Is Stanbot running? "
+                   "(`tools/stanbot status` says)" % timeout)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("verb", nargs="?", default="status", choices=["status", "watch"])
+    parser.add_argument("verb", nargs="?", default="status",
+                        choices=["status", "watch"] + COMMANDS)
+    parser.add_argument("argument", nargs="?", help="for mouth (capsule|grille) and expression")
     parser.add_argument("--json", action="store_true", help="print the whole status object")
     parser.add_argument("--path", default=STATUS, help="a status file elsewhere")
     args = parser.parse_args(argv)
+
+    if args.verb in COMMANDS:
+        argument = args.argument
+        if args.verb == "screenshot":
+            # The app resolves a relative path against ITS working directory,
+            # not this shell's, so the picture would land somewhere surprising.
+            argument = os.path.abspath(argument or "stanbot-screen.jpg")
+        ok, detail = command(args.verb, argument)
+        print(detail, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
 
     while True:
         status, age = read(args.path)

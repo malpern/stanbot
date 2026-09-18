@@ -66,6 +66,21 @@ replies and suggests putting Stanbot on Wi-Fi. **Quitting Stanbot is not the
 general fix; anything holding the port does this**, including a serial monitor
 or another check.
 
+## The app is the way to command the robot, not a second reader
+
+Because two processes on one `/dev/cu.*` do not share, anything that wants to
+command the robot from a shell should go **through the app**, which already
+holds the transport: `tools/stanbot sleep`, `wake`, `reboot`, `follow`,
+`unfollow`, `mouth`, `expression`, `screenshot`. The CLI writes
+`~/Library/Logs/Stanbot/command.json` with a fresh id; the app carries it out
+and writes `command-result.json` with the same id, so a previous answer is
+never mistaken for this one. See `CommandFile.swift`.
+
+It is exactly as privileged as the user's own shell and no more: anything that
+can write that file can already open the robot's USB port, and the robot's own
+authorization still applies to everything that moves the head. `off` is
+deliberately not in the vocabulary -- only the robot's button undoes it.
+
 ## USB speed is the robot's limit, not the Mac's
 
 The link negotiates to its slowest end, and the ESP32-S3's built-in serial
