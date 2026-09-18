@@ -9,8 +9,10 @@ speaker are a separate, larger project.
 ## Decisions so far
 
 - Model: `gpt-live-1` (recommended below; `gpt-realtime-2.1` is the fallback).
-- Voice: male and expressive. `cedar`, one of the two voices OpenAI recommends,
-  if `gpt-live-1` offers it; otherwise the closest male voice in Live's list.
+- Voice: male and expressive. **`cedar` does not exist on Live** (checked
+  2026-09-17); the default is `marin` and `vesper` is confirmed working. The
+  full list is in `Live.voices`. Which one Stanbot should have is for the owner
+  to hear and choose.
   Expressive in delivery, still brief and calm in what it says.
 - Text transcripts are kept in the logs (owner, 2026-09-17).
 
@@ -34,10 +36,38 @@ desk rather than a walkie-talkie, and it costs a predictable $3 an hour plus
 the delegated model. The client talks to the model through one small protocol
 (`VoiceModelClient`) so `gpt-realtime-2.1` can stand in if Live disappoints.
 
-**Verified:** the model, its price and full duplex (model page), and the two
-audio event names (migration guide). **Not yet verified:** endpoint, audio
-format and sample rate, session length limit, voice list, and how the client
-learns it has been interrupted. Spike (a) settles these.
+**Verified against the live service 2026-09-17** by `companion/voice-spike`,
+for six cents. Endpoint `wss://api.openai.com/v1/live/sessions`, bearer header,
+`session.start` first, `session.input_audio.append` with base64 PCM,
+`session.output_audio.delta` back. Mono signed 16-bit little-endian at 24 kHz is
+right. A session may run **two hours** (`expires_at`), and
+`session.usage.updated` reports billed seconds, so usage is the server's number
+rather than a stopwatch here.
+
+**Four things in this plan were wrong, and are corrected above and in
+`Live.swift`:**
+
+| guessed | actually |
+| --- | --- |
+| `session.voice` | `session.audio.output.voice`; `session.voice` is rejected |
+| `audio.input` / `audio.output` formats | one `audio.format` = `{"type":"audio/pcm","rate":24000}` |
+| voice `cedar` | not a Live voice. Default `marin`; `vesper` confirmed working |
+| "no event: the client watches its own playback" | true, and it matters more than it sounds -- see below |
+
+**Interruption, settled.** Talking over a reply does cut it off mid-sentence and
+the model obeys the new instruction: the spike's transcript reads " I'm a tiny
+desk robot" + "banana" where the full answer would have run on. But **nothing
+announces it** -- the events after a barge-in are only more
+`session.output_audio.delta`. There is no cancel, cleared or flush. So the
+playout buffer is not a tuning knob, it IS the interruption mechanism: whatever
+is queued locally will be heard over the person who interrupted. `PlayoutBuffer`
+holds 200 ms, drops the oldest audio on overrun, and is emptied on every ending.
+An input transcript arriving mid-reply is the only notice available, and
+`VoiceSession` flushes on it.
+
+The technique worth remembering: a wrong session shape is rejected **before the
+session starts**, so it costs nothing. Send the minimum and read the session
+object the server echoes back in `session.started` -- that is the schema.
 
 **Transport: WebSocket.** WebRTC hides the audio inside media tracks, and
 Stanbot needs the raw samples to choose the speakers and drive the mouth.
@@ -231,15 +261,22 @@ Pieces:
    pair: play speech, talk over it, confirm no echo reaches the capture and
    other audio is not ducked. (c) The same during a Meet call: the call's
    audio and microphone are unaffected, before, during and after.
-3. **The Live spike.** (a) A command-line Swift client: open a `gpt-live-1`
-   session with the key, talk through the Studio Display, print transcripts.
-   Pass: the unverified facts above are settled, the playout buffer stays at
-   about 200 ms, and talking over Stanbot stops its speech promptly.
-4. **Conversation in the app.** `VoiceSession`, the Talk toggle, menu item,
-   Settings, inspector, logs, idle stop and daily limit, wired to the mouth
-   from phase 1. Tests: the envelope follower on synthetic samples; a fake
-   robot (like `NetworkTransportTests`) asserting mouth datagram cadence and
-   the closing 0; a fake model server for state transitions.
+3. **The Live spike. DONE 2026-09-17** (`companion/voice-spike`), headless
+   rather than through the Studio Display: it feeds synthesized samples and
+   writes the reply to a WAV, so it ran overnight without a microphone, a
+   speaker, or anyone there. All the unverified facts are settled (above), and
+   interruption passes on the condition that the playout buffer stays small.
+   `$0.06` of the owner's $5 cap.
+4. **Conversation in the app.** Scaffolding built 2026-09-17, unwired:
+   `Live` (the verified protocol), `PlayoutBuffer` (the interruption
+   mechanism), `VoiceSession` and `VoicePolicy` (states, endings, idle stop,
+   daily limit, refusals in the words the subtitle uses) and `VoiceControl`
+   (the Talk control's words and appearance), with 23 tests that need no
+   network, no sound card and no robot. **What is left is the parts that touch
+   hardware:** the WebSocket transport itself, `AVAudioEngine` capture and
+   playback with voice processing, the Talk control in the toolbar and Robot
+   menu, Settings and inspector, the voice log, and the wiring to the mouth
+   from phase 1.
 5. **Robot audio** (see below), only if still wanted after using phase 4.
 
 ## Robot audio: a separate project
