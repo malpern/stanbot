@@ -2239,7 +2239,7 @@ void runFollowSession() {
           if (rebootRequested.load() || otaActive.load() || asleep.load()) {
             if (centringForReboot == 0) {
               centringForReboot = now;
-              tracker.beginReturn();
+              tracker.comeHome();   // latched: a face or a search must not divert it
             } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
               result = asleep.load() ? "stopped_for_sleep"
                      : otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";

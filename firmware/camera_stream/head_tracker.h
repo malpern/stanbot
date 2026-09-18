@@ -270,6 +270,7 @@ class HeadTracker {
       pitch_ = goalPitch_ = pitchHome_ = pitchLow_ = pitchHigh_ = pitchNow;
     }
     mode_ = FollowMode::Idle;
+    goingHome_ = false;
     lastControlMs_ = nowMs - config_.controlPeriodMs;
     lastTargetMs_ = 0;
     haveGoal_ = false;
@@ -302,6 +303,7 @@ class HeadTracker {
     if (sequence <= lastSequence_) return false;
     lastSequence_ = sequence;
     if (inManual(nowMs)) return false;   // the person steering wins; consumed, not queued
+    if (goingHome_) return false;        // coming home for a sleep or a reset: nothing diverts it
     if (confidence < config_.confidenceToAttend) return false;
     if (scanning()) foundDuringScan_ = true;   // the look around found someone
     scanning_ = false;
@@ -376,6 +378,7 @@ class HeadTracker {
       record(nowMs);
       return {true, yaw_, pitch_, mode_};
     }
+    if (goingHome_) { mode_ = FollowMode::Returning; beginReturn(); }
     if (mode_ == FollowMode::Attending && nowMs - lastTargetMs_ >= config_.targetTimeoutMs) {
       if (config_.search) beginSearch(nowMs);
       else beginReturn();
@@ -502,8 +505,21 @@ class HeadTracker {
   bool lookingAround() const { return mode_ == FollowMode::Searching; }
   // The head is home, within the deadband it would stop at anyway. Used to
   // tell when a return-to-centre before a reboot has finished.
-  // Come home now: the head returns to rest, wherever it was going. Public
-  // because a pending reset asks for it from outside the tracker.
+  // Come home and STAY coming home: the head returns to rest and nothing
+  // diverts it -- not a face, not a search waypoint. Public because a reset or
+  // a sleep asks for it from outside the tracker.
+  //
+  // It has to latch. On 2026-09-17 sleep called beginReturn() once, mid look
+  // around; the search's own advanceSearch took the wheel back on the very next
+  // tick and the session ended 50 degrees off centre with the head still
+  // hunting, 22 degrees above level. A single instruction is only a suggestion
+  // when something else is steering every tick.
+  void comeHome() {
+    goingHome_ = true;
+    beginReturn();
+  }
+  bool goingHome() const { return goingHome_; }
+
   void beginReturn() {
     mode_ = FollowMode::Returning;
     goalYaw_ = limits_.yawRest;
@@ -648,6 +664,7 @@ class HeadTracker {
   // this is sixteen; the layout stops adding rather than overrun.
   Waypoint waypoints_[kMaxWaypoints] = {};
   bool scanning_ = false;
+  bool goingHome_ = false;
   bool haveLastSeen_ = false;
   int lastSeenYaw_ = 0, lastSeenPitch_ = 0;
   bool foundDuringScan_ = false;

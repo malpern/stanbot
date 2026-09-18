@@ -446,6 +446,15 @@ sleep**, so the robot does not nod off mid-turn and stay that way all night:
 Every step is bounded, in both directions: a head that cannot get home and lids
 that never report closed must not be able to prevent a reboot.
 
+**Coming home latches** (`HeadTracker::comeHome`): while it runs, an accepted
+face is refused and the search's waypoints are ignored, and the head is driven
+to rest every tick until it arrives. A single `beginReturn()` is only a
+suggestion when something else is steering: on 2026-09-17 sleep issued one
+mid look around, `advanceSearch` took the wheel back on the next tick, and the
+session ended 50 degrees off centre and 22 above level -- reporting
+`stopped_for_sleep` as though it had worked. The latch is cleared by `begin()`,
+so it never outlives its session.
+
 **Sleep parks level, not down.** There is no downward droop to strike: M5Stack's
 Y axis runs 0..90 degrees from level to straight up, so level is the bottom of
 the range (see `head_tracker.h`). `C,SLEEP` therefore brings the head home and

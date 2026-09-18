@@ -890,6 +890,47 @@ void atRestKnowsWhenTheHeadIsHome() {
   assert(ticks * kConfig.controlPeriodMs < 2500);   // kRebootCentreMs: the reset does not wait longer
 }
 
+// Coming home for a sleep or a reset LATCHES: nothing diverts it. The bug this
+// pins put the head 50 degrees off centre with the session ending anyway --
+// beginReturn() was issued once, mid look around, and the search's own waypoint
+// machinery took the wheel back on the next tick.
+void comingHomeIsNotDivertedByAnything() {
+  // As the robot is configured: pitch rest confirmed, so home is a fixed level
+  // rather than wherever the session found the head (kFollowLimits).
+  FollowLimits limits = kLimits;
+  limits.pitchMax = 870;
+  limits.pitchUpTravel = 320;
+  limits.pitchRestConfirmed = true;
+  HeadTracker tracker(limits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(limits.yawMax - 20, 650, now);
+  // Mid look around, well away from home.
+  tracker.beginScan(now);
+  for (int i = 0; i < 30; ++i) { now += kConfig.controlPeriodMs; tracker.step(now); }
+  assert(tracker.mode() == FollowMode::Searching);
+  assert(!tracker.atRest());
+
+  tracker.comeHome();
+  assert(tracker.goingHome());
+  // A face arrives, and the search would otherwise carry on: neither may steer.
+  for (int i = 0; i < 400 && !tracker.atRest(); ++i) {
+    now += kConfig.controlPeriodMs;
+    assert(!tracker.observe(static_cast<uint32_t>(i + 1), 0.9f, -0.9f, 0.99f, now));
+    tracker.step(now);
+    assert(tracker.mode() != FollowMode::Attending && tracker.mode() != FollowMode::Searching);
+  }
+  assert(tracker.atRest());
+  assert(std::abs(tracker.commandedYaw() - limits.yawRest) <= kConfig.deadbandRaw);
+  assert(std::abs(tracker.commandedPitch() - limits.pitchRest) <= kConfig.deadbandRaw);
+  std::printf("  came home to yaw %d pitch %d (rest %d, %d), undiverted\n",
+              tracker.commandedYaw(), tracker.commandedPitch(), limits.yawRest, limits.pitchRest);
+
+  // A new session starts clean: the latch does not outlive it.
+  tracker.begin(limits.yawRest, 650, now);
+  assert(!tracker.goingHome());
+  assert(tracker.observe(9000, 0.5f, 0.0f, 0.95f, now));
+}
+
 // A look around starts where someone was last seen, when this boot has seen
 // anyone: the owner asked for it after watching a scan sweep past them.
 void aScanStartsWhereSomeoneWasLastSeen() {
@@ -1020,6 +1061,7 @@ void wakeScanLooksAroundWithinLimits() {
 
 int main() {
   atRestKnowsWhenTheHeadIsHome();
+  comingHomeIsNotDivertedByAnything();
   aScanStartsWhereSomeoneWasLastSeen();
   wakeScanLooksAroundWithinLimits();
   measuredPitchLevelFromDroop();
