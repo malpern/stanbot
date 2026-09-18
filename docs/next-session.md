@@ -140,6 +140,10 @@ firmware plus the sleep work.
 1. **See what has never been seen**, with the owner at the robot: the mouth
    (Robot menu, Play Mouth Test; then set `robotLead` by eye), the trouble face,
    and the sad "I couldn't find you" face with its **Look again...** link.
+   The mouth's *pipeline* is now proven without eyes -- `python3
+   tools/check_mouth.py` sent 52 packets at the app's cadence and the robot
+   accepted every one, 0 rejected (2026-09-17). So if the mouth does not appear,
+   the fault is in the drawing or the app's envelope, not in the link.
 2. **The sleep sequence the owner actually asked for.** Today's sleep parks the
    head home and level, ends the session, THEN closes the eyes and darkens --
    three beats. He wants one: lids closing as it sets off, the closed eyes
