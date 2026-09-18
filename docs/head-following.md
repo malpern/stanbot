@@ -338,11 +338,34 @@ they were sitting: "Remember where I was last time and start the search in that
 general area. Only if that fails, then do a full scan search."
 
 The remembered place is where the head would have had to point to look straight
-at the last accepted observation. `HeadTracker` records it, the sketch carries
-it from session to session in RAM, and the **Mac** keeps it across a reset: the
-robot reports it in `SBMV` (`last_seen_yaw`, `last_seen_pitch`) and the app
-hands it back on connecting. With nothing remembered at all the sweep starts
+at an accepted observation. `HeadTracker` records it, the sketch carries it from
+session to session in RAM, and the **Mac** keeps it across a reset: the robot
+reports it in `SBMV` (`last_seen_yaw`, `last_seen_pitch`) and the app hands one
+back on connecting with `K,`. With nothing remembered at all the sweep starts
 robot-left as before.
+
+### Learning the usual place, and unlearning it
+
+The Mac keeps the last eight sightings and sends the **densest cluster** among
+them, not the latest one and not their average -- an average of the desk and the
+doorway is the wall between them, where nobody has ever been. It sends a real
+sighting from that cluster, so the place is somewhere a person actually was.
+Ties go to the more recent cluster, so moving desks takes a few sittings rather
+than never. `RobotState.usualPlace()`.
+
+**Unlearning is the important half, and it is what the design is really for.**
+The robot sits on a desk and can be nudged round; the owner may work somewhere
+else for a day. Either way every stored place is wrong -- by the same offset if
+the robot was moved -- and a prior that cannot be disbelieved would aim
+confidently at a wall for ever. So a look around that leads with the usual place
+and finds nobody counts against it, and after `missesBeforeDoubt` (2) the app
+stops sending one at all and lets the robot sweep. Any sighting anywhere clears
+the count and becomes evidence; three more like it make it the new usual place.
+
+The robot knows none of this. It is told one place to look first, and answers
+`SBRS` with what it took. The learning lives on the Mac, where it can be
+printed, reset (`RobotState.forgetSightings()`) and tested with no robot
+present.
 
 ### State that survives a reset
 
