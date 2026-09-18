@@ -91,15 +91,18 @@ after = got.get("after") or {}
 print("yes" if got.get("verified") and after.get("commit", "").startswith(sys.argv[1]) else "no")
 ' "$commit" 2>/dev/null)
 
+# Verify BEFORE reopening the app. Reopening first takes the robot's one Wi-Fi
+# viewer slot back, so the retry this failure tells you to run then fails for
+# that reason instead -- which is exactly what happened on 2026-09-18, twice.
+if [[ "$verified" != "yes" ]]; then
+  die "the robot is NOT running $commit -- read the result above, and note the
+       app has been left CLOSED so a retry can reach the robot. A common cause
+       is 'no V reply', where the viewer slot was still held; run this again."
+fi
+
 say "reopening the app"
 open "$APP"
 sleep 6
-
-if [[ "$verified" != "yes" ]]; then
-  die "the robot is NOT running $commit -- read the result above. A common cause is
-       'no V reply', where the app had not released the viewer slot; wait a few
-       seconds and run this again."
-fi
 
 say "what the robot says it is running"
 python3 tools/stanbot status || true

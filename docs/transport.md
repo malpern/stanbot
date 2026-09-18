@@ -66,6 +66,33 @@ replies and suggests putting Stanbot on Wi-Fi. **Quitting Stanbot is not the
 general fix; anything holding the port does this**, including a serial monitor
 or another check.
 
+## Which task answers, and when
+
+Three tasks share the robot, and **which one is running decides what can be
+answered**. This is not a detail: a screenshot asked for during a follow session
+went unanswered for the whole session -- the state the robot is in most of the
+time -- because both tasks that normally handle it were stopped.
+
+| Task | Normally | During a follow session |
+| --- | --- | --- |
+| **loop** | draws the face, `pollCommands` (USB input) | inside `runFollowSession`: draws nothing, parses no USB |
+| **camera** | camera frames, `pollNetworkCommands`, owns the viewer socket | **blocked in `captureBuffer()`** -- the session task has the camera |
+| **sessionCapture** | not running | frames, `pollNetworkCommands`, owns the viewer |
+
+So anything that must work during a session belongs on `sessionCaptureTask`,
+and anything writing to the viewer must be on whichever task owns it -- never
+both. `serviceScreenshot()` is called from the camera task normally and from
+the session task during a session, and is shared so the two cannot drift.
+
+**The face is frozen for the length of a session** (which is why it does not
+animate while the head moves), so copying the sprite from another task is safe
+there. Outside a session the loop task takes the copy between a push and the
+next draw, where the frame is whole by construction.
+
+**Known limitation:** USB commands are parsed by `pollCommands` on the loop
+task, so a command sent over USB during a session is not seen until the session
+ends. Wi-Fi commands are parsed throughout.
+
 ## The app is the way to command the robot, not a second reader
 
 Because two processes on one `/dev/cu.*` do not share, anything that wants to
