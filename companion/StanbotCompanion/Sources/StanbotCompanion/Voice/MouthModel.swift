@@ -75,3 +75,54 @@ struct MouthModel {
         value += velocity * step
     }
 }
+
+/// Which mouth Stanbot wears. Mirrors `stanbot::MouthStyle` on the robot, and
+/// the app tells the robot which to draw (`C,MOUTH,...`) so the two never
+/// disagree about what Stanbot's face is.
+enum MouthStyle: String, CaseIterable, Identifiable {
+    case capsule, grille
+
+    var id: String { rawValue }
+    var title: String { self == .capsule ? "Mouth" : "Speaker" }
+    /// What choosing it actually changes, for the Settings row.
+    var detail: String {
+        switch self {
+        case .capsule: return "A mouth that opens and shapes with the voice."
+        case .grille: return "A speaker panel with sound coming out of it."
+        }
+    }
+    var command: String { self == .capsule ? "C,MOUTH,CAPSULE\n" : "C,MOUTH,GRILLE\n" }
+}
+
+/// The grille's geometry, in robot display pixels, matching `GrilleShape` in
+/// `MouthModel.h` so the Mac and the robot agree about shape and differ only in
+/// how well it is drawn.
+struct GrilleGeometry {
+    static let width = 74.0
+    static let height = 26.0
+    static let slots = 3.0
+    static let slotThickness = 3.0
+    static let maxTilt = 4.0
+    static let arcGap = 6.0
+    static let arcMinLength = 4.0
+    static let arcMaxLength = 11.0
+    static let arcFirstAt = 0.18
+    static let arcSecondAt = 0.55
+
+    /// Slot spacing: louder speech opens the slots apart, the way a cone moves.
+    static func spacing(open: Double) -> Double {
+        let span = height - 2 * slotThickness
+        return span * (0.45 + 0.55 * open) / (slots - 1)
+    }
+
+    /// How many arcs are showing, and how far they reach. Brightness stretches
+    /// them, so an "ee" carries further than an "oo" at the same loudness.
+    static func arcs(open: Double, shape: Double) -> (count: Double, length: Double) {
+        let count = open >= arcSecondAt ? 2.0 : (open >= arcFirstAt ? 1.0 : 0.0)
+        let reach = open * (1 + 0.25 * max(0, shape))
+        return (count, min(arcMaxLength, arcMinLength + (arcMaxLength - arcMinLength) * reach))
+    }
+
+    /// Mood bends the outer slots: down when sad, up when pleased.
+    static func tilt(mood: Double) -> Double { -max(-1, min(1, mood)) * maxTilt }
+}

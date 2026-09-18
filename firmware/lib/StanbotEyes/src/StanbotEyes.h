@@ -253,13 +253,21 @@ class StanbotEyes {
                           min(g.width, g.height) / 3, kBody);
     const int first = g.centerY - (g.slotCount - 1) * g.slotSpacing / 2;
     for (int index = 0; index < g.slotCount; ++index) {
-      // The outer slots carry the lean; the middle one stays put, so the panel
-      // bends rather than slides.
-      const int fromCentre = index - (g.slotCount - 1) / 2;
-      const int lean = fromCentre == 0 ? 0 : (fromCentre > 0 ? g.tilt : -g.tilt);
-      const int y = first + index * g.slotSpacing + lean;
-      display.fillRoundRect(g.centerX - g.slotWidth / 2, y - g.slotHeight / 2,
-                            g.slotWidth, g.slotHeight, g.slotHeight / 2, kSlot);
+      const int y = first + index * g.slotSpacing;
+      // Mood BOWS each slot: the ends drop for sad and lift for pleased, so the
+      // three lines read as a frown or a smile. Moving whole slots apart --
+      // which this did first -- looks like the panel opening, which is
+      // loudness, and says nothing about how it feels. The Mac draws a smooth
+      // curve (StanbotGrille.metal); here it is three steps, which is what an
+      // ESP32 painting a 16-bit sprite can afford and reads the same at arm's
+      // length.
+      const int third = g.slotWidth / 3;
+      for (int part = -1; part <= 1; ++part) {
+        const int lift = part == 0 ? 0 : g.tilt;   // ends only
+        const int x = g.centerX + part * third - third / 2;
+        display.fillRoundRect(x, y - g.slotHeight / 2 + lift, third, g.slotHeight,
+                              g.slotHeight / 2, kSlot);
+      }
     }
     for (int arc = 0; arc < g.arcCount; ++arc) {
       const int offset = g.width / 2 + g.arcGap + arc * (g.arcThickness + g.arcGap);

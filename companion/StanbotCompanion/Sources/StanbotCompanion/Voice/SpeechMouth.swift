@@ -64,6 +64,10 @@ final class SpeechMouth {
     private(set) var level = 0.0
     /// Seconds since this mouth first moved, for gentle shader motion.
     private(set) var time = 0.0
+    /// How Stanbot feels, -1 sad to +1 pleased. Only the grille uses it: a
+    /// speaker cannot frown, so its slots lean instead. The capsule ignores it,
+    /// because a mouth already has a shape for this.
+    var mood = 0.0
     private(set) var playing = false
     private(set) var lastError: String?
 
@@ -82,6 +86,18 @@ final class SpeechMouth {
     /// Speaks a recorded line with the "Daniel" voice through the default
     /// output (the Studio Display on the mini). `robotHost` is the robot's
     /// Wi-Fi host, or nil to animate only the app's mouth.
+    /// Put the mouth in a given state for a rendering test or a preview, with no
+    /// sound and no robot. Only a test calls this; speech itself goes through
+    /// the envelope follower.
+    func previewSpeaking(opening: Double, shape: Double, level: Double, mood: Double = 0) {
+        self.opening = opening
+        self.shape = shape
+        self.level = level
+        self.mood = mood
+        self.presence = 1
+        self.time = 0
+    }
+
     func playTest(robotHost: String?) {
         guard !playing else { return }
         lastError = nil

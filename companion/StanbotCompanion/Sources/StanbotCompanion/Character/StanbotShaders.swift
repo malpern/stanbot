@@ -17,6 +17,22 @@ enum StanbotShaders {
                                          .float(level), .float(presence), .float(time)]) }
     }
 
+    /// The mouth as a speaker grille (Shaders/StanbotGrille.metal): the same
+    /// panel the robot draws flat, with the depth, bloom and falloff a Mac can
+    /// afford. `slots` is (count, thickness, spacing) and `arcs` is
+    /// (count, length, gap), both in robot display pixels; `tilt` is how far the
+    /// outer slots lean, positive downward for sad.
+    static func grille(size: CGSize, unit: Double, body: CGSize,
+                       slots: (Double, Double, Double), tilt: Double,
+                       arcs: (Double, Double, Double),
+                       level: Double, presence: Double, time: Double) -> Shader? {
+        library.map { Shader(function: ShaderFunction(library: $0, name: "stanbotGrille"),
+                             arguments: [.float2(size), .float(unit), .float2(body),
+                                         .float3(slots.0, slots.1, slots.2), .float(tilt),
+                                         .float3(arcs.0, arcs.1, arcs.2),
+                                         .float(level), .float(presence), .float(time)]) }
+    }
+
     /// Looking out through Stanbot's eyes (Shaders/StanbotEyeView.metal): bokeh
     /// defocus inside the two eye windows, and the room's light glowing warm
     /// through the lids outside them. Eyes are (centre x, centre y, half width,

@@ -12,6 +12,11 @@ struct StanbotCompanionApp: App {
     @StateObject private var robot = RobotConnection.fromEnvironment()
     @State private var speech = SpeechMouth()
     @State private var confirmingTurnOff = false
+    @AppStorage(MouthStyleSetting.key) private var mouthStyleName = MouthStyle.capsule.rawValue
+    private var mouthStyle: MouthStyle {
+        get { MouthStyle(rawValue: mouthStyleName) ?? .capsule }
+        nonmutating set { mouthStyleName = newValue.rawValue }
+    }
     @AppStorage("StanbotShowControls") private var showControls = true
 
     var body: some Scene {
@@ -57,6 +62,14 @@ struct StanbotCompanionApp: App {
                 Picker("Expression", selection: Binding(get: { robot.selectedEmotion }, set: { robot.select($0) })) {
                     ForEach(Emotion.allCases) { emotion in
                         Label(emotion.title, systemImage: emotion.symbol).tag(emotion)
+                    }
+                }
+                // Which mouth Stanbot wears, switchable while watching it: the
+                // choice is a matter of taste and cannot be settled any other way.
+                Picker("Mouth", selection: Binding(get: { mouthStyle },
+                                                   set: { mouthStyle = $0; robot.sendMouthStyle($0) })) {
+                    ForEach(MouthStyle.allCases) { style in
+                        Text(style.title).tag(style)
                     }
                 }
                 Divider()
@@ -773,6 +786,7 @@ final class RobotConnection: ObservableObject {
             firmware = .reported(info)
             announceFirmwareChange(info)
             restoreRobotState()
+            sendMouthStyle()
             // A robot that has only just booted gets a look around, the way a
             // wake does. Reconnecting to one that has been up for hours does
             // not: it has been sitting there with nobody to find. A report
@@ -956,6 +970,13 @@ final class RobotConnection: ObservableObject {
     /// and it means a robot that rebooted mid-session is caught too. The robot
     /// answers `SBRS` with what it took, so the session log shows the value
     /// rather than this side's belief having to be taken on trust.
+    /// Tell the robot which mouth to wear. A display change, so it needs no
+    /// authorization; sent on every version report, which is once per
+    /// connection, so the two faces cannot drift apart.
+    func sendMouthStyle(_ style: MouthStyle = MouthStyleSetting.current) {
+        _ = send(style.command)
+    }
+
     func restoreRobotState() {
         guard let line = RobotState.restoreLine(RobotState.lastSeen) else { return }
         _ = send(line)

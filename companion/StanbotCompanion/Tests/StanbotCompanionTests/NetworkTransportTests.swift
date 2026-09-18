@@ -146,7 +146,11 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertEqual(robot.cameraState, .receiving)
         guard case .reported(let info) = robot.firmware else { return XCTFail("no firmware over Wi-Fi: \(robot.firmware)") }
         XCTAssertEqual(info.shortCommit, "0123456")
-        XCTAssertEqual(fake.commands, "V\nS\n")
+        // V then S, and then which mouth to wear: the robot is told on every
+        // version report, so the two faces cannot drift apart after a reboot.
+        XCTAssertTrue(fake.commands.hasPrefix("V\nS\n"), "unexpected opening: \(fake.commands)")
+        XCTAssertTrue(fake.commands.contains(MouthStyleSetting.current.command),
+                      "the robot was never told which mouth: \(fake.commands)")
     }
 
     @MainActor
