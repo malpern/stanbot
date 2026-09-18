@@ -27,6 +27,7 @@ answer rather than a missing one. Stdlib only.
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -84,13 +85,26 @@ COMMAND = os.path.expanduser("~/Library/Logs/Stanbot/command.json")
 RESULT = os.path.expanduser("~/Library/Logs/Stanbot/command-result.json")
 
 
-def command(verb, argument=None, timeout=12.0, request_path=COMMAND, result_path=RESULT):
-    """Ask the app to do something; return (ok, detail).
+def app_is_running():
+    """Is Stanbot up? The command channel only means anything if it is."""
+    return subprocess.run(["pgrep", "-f", "Stanbot.app/Contents/MacOS/Stanbot"],
+                          capture_output=True).returncode == 0
 
-    Through the app rather than the robot's USB port on purpose: the app holds
-    that port, and a second process opening it fights for every reply. See
-    CommandFile.swift.
+
+def command(verb, argument=None, timeout=12.0, request_path=COMMAND, result_path=RESULT,
+            allow_usb=True):
+    """Ask for something to happen; return (ok, detail).
+
+    Through the app when the app is running, because it holds the robot's port
+    and a second reader fights it for every reply (CommandFile.swift). With the
+    app closed there is nothing to fight: USB is free, and going straight there
+    is both correct and the only thing that can work. Picking the route here
+    rather than making the caller know which one applies is the whole point --
+    the first version of this only knew the app, and quietly timed out whenever
+    Stanbot was closed.
     """
+    if allow_usb and not app_is_running():
+        return command_over_usb(verb, argument)
     request = {"id": "%d-%d" % (int(time.time() * 1000), os.getpid()), "command": verb}
     if argument:
         request["argument"] = argument
@@ -113,8 +127,60 @@ def command(verb, argument=None, timeout=12.0, request_path=COMMAND, result_path
         except (OSError, ValueError):
             pass
         time.sleep(0.2)
-    return False, ("the app did not answer in %.0f s. Is Stanbot running? "
-                   "(`tools/stanbot status` says)" % timeout)
+    if allow_usb and not app_is_running():
+        # It quit while we were waiting -- rare, but the fallback is right.
+        return command_over_usb(verb, argument)
+    return False, ("the app did not answer in %.0f s, though it is running. "
+                   "See `tools/stanbot status`." % timeout)
+
+
+# What each verb is over USB. Deliberately the same vocabulary as the app's, so
+# a command does the same thing whichever route it takes.
+USB_LINES = {
+    "sleep": "C,SLEEP", "wake": "C,WAKE", "reboot": "C,REBOOT",
+    "follow": "C,FOLLOW", "unfollow": "C,UNFOLLOW",
+}
+
+
+def command_over_usb(verb, argument=None):
+    """The same command, sent straight down the wire, for when Stanbot is closed."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import usb_port
+    except ImportError as error:
+        return False, "cannot reach the robot: %s" % error
+
+    port, why = usb_port.find_port()
+    if port is None:
+        return False, "%s (and Stanbot is not running to ask instead)" % why
+    held = usb_port.contention_note(port)
+    if held:
+        return False, held
+
+    if verb == "screenshot":
+        import screenshot as shot
+        code = shot.main(["--out", argument or "stanbot-screen.jpg", "--port", port])
+        return code == 0, ("%s" % (argument or "stanbot-screen.jpg") if code == 0
+                           else "the robot sent no screenshot")
+    if verb == "mouth":
+        line = "C,MOUTH,%s" % (argument or "").upper()
+    elif verb == "expression":
+        line = "E,%s" % (argument or "").lower()
+    elif verb in USB_LINES:
+        line = USB_LINES[verb]
+    else:
+        return False, "%s cannot be sent over USB; it needs the app" % verb
+
+    fd = usb_port.open_port(port)
+    try:
+        sent, why = usb_port.send_line(fd, line)
+        if not sent:
+            return False, why
+    finally:
+        os.close(fd)
+    # Most commands are not acknowledged, so this says what was SENT rather
+    # than claiming it took effect. `tools/stanbot screenshot` is how you see.
+    return True, "sent %s over USB (Stanbot is not running)" % line
 
 
 def main(argv=None):

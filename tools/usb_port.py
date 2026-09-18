@@ -96,6 +96,26 @@ def drain(fd, quiet_for=0.25, limit=3.0):
     return False
 
 
+def send_line(fd, line, settle=0.15, limit=1.0):
+    """Write one command and make sure it actually leaves.
+
+    **Closing the descriptor straight after the write LOSES THE COMMAND.** Found
+    2026-09-18: `E,trouble` was reported as sent, and the robot's own screenshot
+    showed a face that had not changed at all. The bytes are still in flight
+    when the fd goes. Reading for a beat afterwards both drains the reply and
+    gives the CDC time to finish, so this is the only correct way to fire a
+    command and walk away. `exchange()` is safe already, because it reads.
+
+    Returns (True, None) or (False, why).
+    """
+    payload = (line + "\n").encode()
+    written = os.write(fd, payload)
+    if written != len(payload):
+        return False, "only %d of %d bytes reached the robot" % (written, len(payload))
+    drain(fd, quiet_for=settle, limit=limit)
+    return True, None
+
+
 def holders(path):
     """The other processes with this port open: [(pid, name)]. Empty when we
     are alone; empty too if `lsof` is unavailable, which is why callers treat

@@ -34,7 +34,8 @@ def test_command_waits_for_its_own_answer():
         with open(result, "w") as f:
             json.dump({"id": "an-older-one", "ok": True, "detail": "stale"}, f)
 
-        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result)
+        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result,
+                                 allow_usb=False)
         assert ok is False, "took a stale result as its own answer"
         assert "did not answer" in detail, detail
 
@@ -47,7 +48,8 @@ def test_command_waits_for_its_own_answer():
         # Now answer it properly.
         with open(result, "w") as f:
             json.dump({"id": written["id"], "ok": True, "detail": "asked the robot to sleep"}, f)
-        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result)
+        ok, detail = cli.command("sleep", timeout=0.6, request_path=request, result_path=result,
+                                 allow_usb=False)
         # A fresh id is minted each call, so the answer above is stale for it too.
         assert ok is False, "ids must be unique per call"
 
@@ -56,10 +58,34 @@ def test_command_carries_its_argument():
     with tempfile.TemporaryDirectory() as tmp:
         request = os.path.join(tmp, "command.json")
         cli.command("mouth", "grille", timeout=0.2, request_path=request,
-                    result_path=os.path.join(tmp, "none.json"))
+                    result_path=os.path.join(tmp, "none.json"), allow_usb=False)
         with open(request) as f:
             written = json.load(f)
         assert written["command"] == "mouth" and written["argument"] == "grille", written
+
+
+def test_the_route_depends_on_whether_the_app_is_running():
+    """With Stanbot closed there is nothing holding the port, so USB is both
+    correct and the only thing that can work. The first version of this only
+    knew the app and quietly timed out whenever Stanbot was closed."""
+    took = []
+    cli.command_over_usb = lambda verb, argument=None: (took.append((verb, argument)) or (True, "usb"))
+
+    cli.app_is_running = lambda: False
+    ok, detail = cli.command("sleep")
+    assert ok and detail == "usb", (ok, detail)
+    assert took == [("sleep", None)], took
+
+    # With the app up, the app gets it -- a second reader on the port would
+    # fight it for every reply.
+    took.clear()
+    cli.app_is_running = lambda: True
+    with tempfile.TemporaryDirectory() as tmp:
+        ok, detail = cli.command("sleep", timeout=0.3,
+                                 request_path=os.path.join(tmp, "c.json"),
+                                 result_path=os.path.join(tmp, "r.json"))
+    assert took == [], "went to USB while the app was running"
+    assert ok is False and "though it is running" in detail, detail
 
 
 def main():
@@ -110,6 +136,7 @@ def main():
         assert status is None and "unreadable" in why
     test_command_waits_for_its_own_answer()
     test_command_carries_its_argument()
+    test_the_route_depends_on_whether_the_app_is_running()
     print("stanbot cli: all checks passed")
 
 

@@ -92,6 +92,37 @@ def test_drain_gives_up_on_a_line_that_never_stops():
         usb_port.time.time = real_time
 
 
+def test_send_line_does_not_leave_before_the_bytes_do():
+    """Closing straight after the write loses the command outright."""
+    order = []
+    usb_port.time.sleep = lambda s: None
+    clock = [0.0]
+    real_time = usb_port.time.time
+    usb_port.time.time = lambda: clock[0]
+    usb_port.os.write = lambda fd, data: (order.append("write") or len(data))
+
+    def read(fd, n):
+        clock[0] += 0.05
+        order.append("read")
+        return b""
+
+    usb_port.os.read = read
+    try:
+        ok, why = usb_port.send_line(77, "E,trouble")
+        assert ok and why is None, why
+        # It read AFTER writing: that is what drains the line and gives the CDC
+        # time to finish before the caller closes the descriptor.
+        assert order[0] == "write" and "read" in order[1:], order
+    finally:
+        usb_port.time.time = real_time
+
+
+def test_send_line_reports_a_short_write():
+    usb_port.os.write = lambda fd, data: len(data) - 1
+    ok, why = usb_port.send_line(77, "E,sad")
+    assert ok is False and "reached the robot" in why, why
+
+
 def test_holders_parses_lsof():
     class Done:
         stdout = "p4242\ncStanbot\nn/dev/cu.usbmodem31201\np%d\ncpython3\n" % os.getpid()
@@ -128,6 +159,8 @@ def main():
     test_open_port_raises_dtr()
     test_drain_waits_for_real_silence()
     test_drain_gives_up_on_a_line_that_never_stops()
+    test_send_line_does_not_leave_before_the_bytes_do()
+    test_send_line_reports_a_short_write()
     test_holders_parses_lsof()
     test_no_holders_and_no_lsof_are_both_quiet()
     print("tools/test_usb_port.py: all checks passed")
