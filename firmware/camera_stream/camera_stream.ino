@@ -2785,6 +2785,15 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
+    // A follow session owns the loop task for its whole length, so loop()
+    // cannot take the copy and C,SCREEN simply timed out -- while following,
+    // which is the state the robot is in most of the time. But a blocked loop
+    // is exactly what makes this safe: the face is frozen for the session
+    // (which is why it does not animate while the head moves), so nothing is
+    // writing the sprite and this task can copy it itself.
+    if (screenshotRequested.load() && !screenshotReady.load() && motionRunning.load()) {
+      captureScreenshot();
+    }
     if (screenshotReady.exchange(false)) sendScreenshot();
     serviceLightBar(nullptr);
     {
