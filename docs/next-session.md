@@ -165,8 +165,19 @@ firmware plus the sleep work.
    document the X axis as +-128 deg, so the servo has room past the +-90 deg
    built here; the compile-time assert caps at 288, and the cable and the body,
    not the motor, are the real limit.
-6. **Voice, phase 2 and 3** (`docs/voice.md`): echo and Meet-call tests on the
-   Mac, then a command-line `gpt-live-1` client. The Talk button is phase 4.
+6. **Voice.** Phase 3 is **done**: `companion/voice-spike` talked to
+   `gpt-live-1` headlessly and settled everything `docs/voice.md` had guessed --
+   four of those guesses were wrong, including the voice name and where it goes
+   in the session object, and there is genuinely no interruption event, which
+   makes the 200 ms playout buffer the mechanism rather than a nicety. $0.06 of
+   a $5 cap. Phase 4's pure half is built and tested (`Live`, `PlayoutBuffer`,
+   `VoiceSession`, `VoicePolicy`, `VoiceControl`; 23 tests, no network or sound
+   card), and a disabled Talk control is in the toolbar saying what it waits
+   for. **What is left all touches hardware:** the WebSocket transport,
+   `AVAudioEngine` capture and playback with voice processing, wiring Talk,
+   Settings and the inspector, the voice log, and the mouth from phase 1.
+   **Phase 2 was not attempted** and needs the owner: it plays sound and makes
+   judgements by ear (no echo into the capture, no ducking of a Meet call).
 7. **When calibration is done**, decide whether `measured` can be true in the
    normal build rather than only in calibration builds.
 8. **Gaze: paused.** See `docs/gaze.md`. The Studio Display (desk) camera code
