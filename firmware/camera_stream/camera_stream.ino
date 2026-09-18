@@ -165,6 +165,11 @@ std::atomic<bool> yawSweepRequested{false};
 std::atomic<bool> yawCenterRequested{false};
 std::atomic<bool> pitchNudgeRequested{false};
 std::atomic<int> pitchLevelRequested{0};   // raw goal; 0 none; -1 malformed or out of range
+// A reset returns the head to centre first, then closes the eyes, then
+// restarts. Both steps are bounded: a head that cannot get home, or lids that
+// never report closed, must not be able to prevent a reboot.
+constexpr uint32_t kRebootCentreMs = 2500;
+constexpr uint32_t kRebootEyesMs = 1200;
 std::atomic<bool> rebootRequested{false};
 uint32_t rebootClosingSince = 0;   // the eyes are closing for a pending reset (0: not yet)
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
@@ -489,6 +494,15 @@ void startNetworkServices() {
       otaCloseClientRequested.store(true);
       const uint32_t closeStarted = millis();
       while (otaCloseClientRequested.load() && millis() - closeStarted < 1000) vTaskDelay(pdMS_TO_TICKS(10));
+      // The head has come home above; now the eyes close, as they do for the
+      // Reboot command and for sleep. Drawn right here because this handler
+      // runs ON the loop task, so loop() is not going round to animate them.
+      eyes.beginSleep(millis());
+      const uint32_t lidsStarted = millis();
+      while (!eyes.closedForSleep(millis()) && millis() - lidsStarted < kRebootEyesMs) {
+        if (eyeFrameReady) { eyes.update(eyeFrame, millis()); eyeFrame.pushSprite(0, 0); }
+        vTaskDelay(pdMS_TO_TICKS(16));
+      }
     });
     ArduinoOTA.onEnd([]() { otaActive.store(false); });
     ArduinoOTA.onError([](ota_error_t) { otaActive.store(false); });
@@ -1988,11 +2002,6 @@ constexpr uint32_t kFollowIdleEndMs = 12000;    // no accepted target this long:
 constexpr uint32_t kFollowRenewEveryMs = 1000;
 constexpr uint32_t kFollowEndMarginMs = 500;    // end by the session's own path before the cutoff would
 constexpr uint32_t kFollowCooldownMs = 3000;
-// A reset returns the head to centre first, then closes the eyes, then
-// restarts. Both steps are bounded: a head that cannot get home, or lids that
-// never report closed, must not be able to prevent a reboot.
-constexpr uint32_t kRebootCentreMs = 2500;
-constexpr uint32_t kRebootEyesMs = 1200;
 // Used only when a target names a frame the robot no longer remembers sending.
 constexpr uint32_t kFollowAssumedLatencyMs = 250;  // between sessions; see runFollowSession
 uint32_t followEndedMs = 0;
@@ -2202,27 +2211,29 @@ void runFollowSession() {
             powerCutoff.renewedMs.store(now);
             ++renewals;
           }
-          if (otaActive.load()) { result = "stopped_for_update"; break; }
-          if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
-          // A reboot is handled by the main loop, which cannot reach it until
-          // this session returns -- up to the three minute cap. Asked for one
-          // on 2026-09-17, the owner saw nothing happen for minutes. End here
-          // instead and let the loop do it; the flag is left set for it.
+          // A reset of any kind -- the Reboot command, or a firmware update,
+          // which restarts through espota's own path -- brings the head home
+          // FIRST, while there is still motor power to do it with. The owner
+          // asked that a reset begin by returning to centre and closing the
+          // eyes rather than the robot freezing mid-turn and coming back facing
+          // the wall, and said "or whenever the robot is being reset", which is
+          // why an update is here too. Bounded hard: neither is held up longer
+          // than kRebootCentreMs, whatever the head does.
           //
-          // But bring the head home first, while there is still motor power to
-          // do it with: the owner asked that a reset begin by returning to
-          // centre and closing the eyes, rather than the robot freezing mid-turn
-          // and coming back facing the wall. Bounded hard -- the reboot is not
-          // held up for more than kRebootCentreMs whatever the head does.
-          if (rebootRequested.load()) {
+          // The reboot itself is the main loop's, which cannot reach it while
+          // this session runs -- up to the three minute cap. Asked for one on
+          // 2026-09-17, the owner saw nothing happen for minutes. So this ends
+          // the session and leaves the flag set for the loop.
+          if (rebootRequested.load() || otaActive.load()) {
             if (centringForReboot == 0) {
               centringForReboot = now;
               tracker.beginReturn();
             } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
-              result = "stopped_for_reboot";
+              result = otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";
+              followStopRequested.store(false);   // onStart sets it too; do not leave it armed
               break;
             }
-          }
+          } else if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
           serviceLightBar(device);   // the session's handle: no second device on the expander
           ++iterations;

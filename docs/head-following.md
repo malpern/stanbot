@@ -403,7 +403,10 @@ robot that is restarting -- and because it is not, the app clears a finished
 session when it sees a new boot, or the reboot's own look around would never
 start.
 
-**A reset is a small sequence, not a snap** (asked for 2026-09-17):
+**A reset is a small sequence, not a snap** (asked for 2026-09-17), and it is
+the same sequence for the Reboot command and for a firmware update -- the owner
+said "or whenever the robot is being reset", and an update restarts through
+espota's own path, which never touches `rebootRequested` at all:
 
 1. **Home.** The session sees the pending reboot and returns the head to centre
    while it still has motor power, rather than freezing mid-turn and coming back
@@ -415,6 +418,11 @@ start.
 
 Every step is bounded, in both directions: a head that cannot get home and lids
 that never report closed must not be able to prevent a reboot.
+
+For an update the same two steps happen inside `ArduinoOTA.onStart`: the
+session ends `stopped_for_update` once the head is home, and the lids are then
+closed and **drawn right there**, because that handler runs ON the loop task and
+`loop()` is not going round to animate them.
 
 **That drain is not padding.** At 100 ms the last two lines of a 256-line
 telemetry block were lost on 2026-09-17 and the app called the session
