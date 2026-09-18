@@ -106,9 +106,19 @@ def main(argv=None):
     sent += 1
     time.sleep(0.5)
 
-    after = stats(serial_port)
+    # The app re-enables the stream whenever it reconnects, and text arriving
+    # among JPEG frames is shredded, so one read can come back empty while the
+    # robot is perfectly well. Try a few times before calling it a failure --
+    # on 2026-09-17 a run that had actually delivered every packet reported "no
+    # SBST" and looked like a fault.
+    after = None
+    for _ in range(3):
+        after = stats(serial_port)
+        if after is not None:
+            break
     if after is None:
-        print("no SBST after sending", file=sys.stderr)
+        print("could not read SBST back. The packets may still have arrived: "
+              "watch the robot, or quit Stanbot and try again.", file=sys.stderr)
         return 2
     accepted = after["mouth_packets"] - before["mouth_packets"]
     rejected = after["mouth_rejected"] - before["mouth_rejected"]

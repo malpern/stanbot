@@ -103,7 +103,11 @@ otherwise.
   a face ends it at once and the face reacts surprised, glee, focused. Seen
   working after a reboot; the reaction itself has not been watched closely.
 - **Mouth:** opens and shapes with speech the Mac plays, from UDP port 3334,
-  shown only while speaking. **Never yet seen on the robot.**
+  shown only while speaking. **SEEN ON THE ROBOT 2026-09-17**, driven by
+  `tools/check_mouth.py` rather than by speech -- the owner watched it move
+  while in a meeting, so it was proved with no audio anywhere. What is still
+  unjudged is the *timing*: `robotLead` (60 ms) can only be set by eye against
+  real speech, because the question is whether the mouth leads the sound.
 - **Trouble face** (X eyes, a frown) for 12 s after a session that ends in a
   fault. Never yet seen on the robot.
 - **Health:** `SBHL` reports whether the head can reach its base, on connect and

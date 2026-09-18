@@ -252,11 +252,16 @@ Pieces:
 
 ## Phases
 
-1. **The mouth, with a recorded voice.** Firmware: the UDP mouth task, the model
-   and the drawing (one flash, no motion). App: play a voice recording through
-   the Studio Display and drive the mouth from it. Measure the lag by eye and
-   `max_eye_gap_ms` for any display cost. Needs no API key, and proves the
-   hardest timing problem first.
+1. **The mouth, with a recorded voice. DRAWING CONFIRMED 2026-09-17.** The
+   firmware half is done and **seen working on the robot**: `tools/check_mouth.py`
+   sends the datagrams the app would send while speaking, at the same 20 Hz but
+   with no sound at all, and the owner watched the mouth open, shape and shrink
+   away. 52 of 52 packets accepted, none rejected. That means the UDP task, the
+   source-address check, the parse, the queue and the drawing all work.
+   **Unjudged: the timing.** `robotLead` (60 ms) is a guess about how far the
+   picture should lead the sound, and only real speech and an eye can settle it.
+   People forgive a mouth that leads far more than one that lags, so if in doubt
+   lead more.
 2. **Audio spikes on the Mac.** (b) Voice processing with the Studio Display
    pair: play speech, talk over it, confirm no echo reaches the capture and
    other audio is not ducked. (c) The same during a Meet call: the call's
