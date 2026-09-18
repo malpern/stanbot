@@ -6,6 +6,31 @@ the link really is, and what the partition table allows — live in
 **head** port on this unit, and the flashed partition table already supports OTA
 (otadata plus two 3 MB app slots), so flashing over Wi-Fi needs no repartitioning.
 
+## The screen came up as bands, and only a power cycle cleared it, 2026-09-17
+
+The panel showed two bright cyan bars instead of a face. It survived
+`C,REBOOT`, it survived flashing the firmware that caused it back off the
+robot, and it was there through the boot splash -- which is drawn before any of
+the suspect code runs. On that evidence I said it looked like a failing display
+ribbon and sent the owner to wiggle the connector. Wrong. **A battery power
+cycle fixed it completely.**
+
+**`esp_restart()` does not reset the LCD's own controller.** The ESP32 restarts,
+the driver re-initialises its side, and the panel keeps whatever internal state
+it was left in. So a display corrupted by an aborted SPI transfer stays
+corrupted across a software reboot AND across a reflash, which makes it look
+like hardware, or like a fix that did not work.
+
+**What aborted the transfer:** pushing the eye sprite from inside
+`runFollowSession()`, contending with the camera stream and servo I/O (see
+"drawing the face from inside a session" in head-following.md). That code is
+reverted. If it is ever attempted again, know that a mistake there can outlive
+the mistake.
+
+**If the screen looks wrong:** power cycle before diagnosing anything. Hold the
+robot's button; its battery means pulling USB is not enough. Only if the bands
+survive a true power cycle is it worth suspecting the panel or its cable.
+
 ## Secure OTA installed and verified, 2026-09-16
 
 All over Wi-Fi with `firmware/ota.py`, run from the mini through

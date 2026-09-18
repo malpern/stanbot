@@ -470,6 +470,16 @@ session ended 50 degrees off centre and 22 above level -- reporting
 `stopped_for_sleep` as though it had worked. The latch is cleared by `begin()`,
 so it never outlives its session.
 
+**Do not draw the face from inside a session.** It was tried on 2026-09-17, so
+the lids could be seen closing while the head came home, and it put torn bands
+on the panel: the push contends with the camera stream and the servo I/O a
+session is already doing, and an aborted SPI transfer leaves the LCD's own
+controller in a bad state. Worse, that state outlives `esp_restart()` and
+outlives reflashing the offending build away -- only a battery power cycle
+clears it, which made a software bug look like a failing ribbon cable. See
+`docs/recovery.md`. Getting the lids closed before the journey home needs the
+session to yield to `loop()` for rendering, not a second renderer inside it.
+
 **Sleep parks level, not down.** There is no downward droop to strike: M5Stack's
 Y axis runs 0..90 degrees from level to straight up, so level is the bottom of
 the range (see `head_tracker.h`). `C,SLEEP` therefore brings the head home and
