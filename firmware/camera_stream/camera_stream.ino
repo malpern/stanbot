@@ -172,6 +172,8 @@ std::atomic<int> pitchLevelRequested{0};   // raw goal; 0 none; -1 malformed or 
 // at ~75 raw/s is 3.8 s, and easing adds to that. 2500 was sized for a reboot
 // from near centre and never re-checked against +-288; on 2026-09-17 a sleep
 // from 634 gave up at 527, 30 degrees short of home, and reported success.
+// Nobody has connected since the boot screen handed over: open the eyes anyway.
+constexpr uint32_t kBootEyesOpenAnywayMs = 4000;
 constexpr uint32_t kRebootCentreMs = 6000;
 constexpr uint32_t kRebootEyesMs = 1200;
 std::atomic<bool> rebootRequested{false};
@@ -193,6 +195,10 @@ bool splashDone = false;
 // hands over to the eyes for good. It never comes back: a mid-session reconnect
 // should not interrupt the face.
 bool bootScreenActive = true;
+// The eyes start shut after a boot and open exactly once, so a viewer
+// reconnecting later does not make the robot open eyes that are already open.
+bool eyesOpenedAfterBoot = true;
+uint32_t bootFaceAppearedMs = 0;
 M5Canvas eyeFrame(&M5.Display);
 bool eyeFrameReady = false;
 char commandLine[160]{};
@@ -2793,6 +2799,12 @@ void updateBootScreen(uint32_t now) {
   if (settled && bootScreen.phaseAgeMs(now) > kSettleMs) {
     bootScreenActive = false;
     eyes.begin(millis() - 34);   // start the face cleanly rather than mid-blink
+    // ...with its eyes SHUT. Coming back from a reboot or a reflash, the face
+    // used to pop in already awake, which skips the only interesting moment.
+    // They open below, when there is someone to open them on.
+    eyes.beginClosed(millis());
+    eyesOpenedAfterBoot = false;
+    bootFaceAppearedMs = 0;
   }
   delay(5);
 }
@@ -2809,6 +2821,18 @@ void loop() {
   // Cheap when idle; blocks for the duration of an actual update, during which
   // the eyes stop. The camera task stands down via the onStart handler.
   if (servicesStarted && otaEnabled.load()) ArduinoOTA.handle();
+  // Open the eyes after a boot when the app is watching -- the moment its own
+  // eyes open on the first frame -- so the robot and the Mac do it together
+  // rather than seconds apart. If nobody ever connects, open anyway: a robot
+  // sitting with its eyes shut because no Mac turned up is not waiting, it is
+  // broken.
+  if (!eyesOpenedAfterBoot && !bootScreenActive) {
+    if (bootFaceAppearedMs == 0) bootFaceAppearedMs = now;
+    if (streamEnabled.load() || now - bootFaceAppearedMs > kBootEyesOpenAnywayMs) {
+      eyes.openAfterBoot(now);
+      eyesOpenedAfterBoot = true;
+    }
+  }
   const int emotion = pendingEmotion.exchange(-1);
   if (emotion >= 0) { chosenEmotion = static_cast<StanbotEmotion>(emotion); eyes.setEmotion(chosenEmotion); }
   if (const int style = mouthStyleRequested.exchange(-1); style >= 0) {

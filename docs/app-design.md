@@ -246,6 +246,25 @@ it is there to say "this is what Stanbot sees out of", not to cap the fidelity.
 Where the two disagree, the app may be richer; it must never be *different* --
 same expression, same timing, same meaning, better drawn.
 
+## Coming back: the eyes open, they do not appear open
+
+After a reboot or a reflash the robot's face used to pop in already awake, which
+skips the only interesting moment. Now the face appears with its **eyes shut**
+and opens them over 2.4 s -- `SleepCurtain::kBootOpenMs`, the same span as the
+Mac's own waking (`EyeAperture.wakeDuration`), so the two are one event rather
+than two.
+
+**They open when the app starts watching**, not when the face appears. The
+robot's face is up before the Mac has connected and asked for frames, so opening
+at handover would have the robot awake seconds before its Mac face is -- the
+same moment, differently timed, which reads worse than either alone. The robot
+waits for `streamEnabled`, which is the app asking for pictures, which is what
+makes the app's eyes open too. If nobody ever connects it opens anyway after 4 s
+(`kBootEyesOpenAnywayMs`): a robot sitting with its eyes shut because no Mac
+turned up is not waiting, it is broken.
+
+Asked for on 2026-09-18.
+
 ## The screen look (Metal)
 
 The eyes glow a little and, when drawn large, carry a faint LCD pixel grid with

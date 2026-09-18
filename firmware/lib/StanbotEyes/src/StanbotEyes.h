@@ -66,6 +66,14 @@ class StanbotEyes {
   // opens its eyes, and only then looks around (asked for 2026-09-17).
   bool eyesOpen(uint32_t now) const { return curtain_.openness(now) >= 1.0f; }
 
+  /// The face has just appeared after a boot: start with the eyes shut, and
+  /// wait to be told when to open them. A face that pops in already awake
+  /// skips the moment it becomes awake, which is the only interesting part.
+  void beginClosed(uint32_t now) { curtain_.startClosed(now); }
+
+  /// Open on the room, slowly, the way the Mac's own eyes do.
+  void openAfterBoot(uint32_t now) { curtain_.open(now, stanbot::SleepCurtain::kBootOpenMs); }
+
   // Which mouth to draw. Public because the sketch switches it at runtime
   // (C,MOUTH,...), so the two can be compared by eye on the robot.
   void setMouthStyle(stanbot::MouthStyle style) { mouthStyle_ = style; }
