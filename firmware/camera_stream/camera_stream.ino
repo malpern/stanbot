@@ -2158,7 +2158,6 @@ void runFollowSession() {
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
   uint32_t lastManualSequence = manualSequence.load();
   uint32_t centringForReboot = 0;   // when the head started home for a pending reset
-  uint32_t lastParkFrameMs = 0;     // the face is drawn from in here while it parks to sleep
   int manualInputs = 0;
 
   // Both servos must start inside the follow limits, torque off and still.
@@ -2261,9 +2260,14 @@ void runFollowSession() {
             // while the head travels. Drive it from here while coming home to
             // sleep, so the lids can be seen closing and then staying closed.
             // Bounded to this one state, which lasts under four seconds.
-            if (asleep.load() && eyeFrameReady && now - lastParkFrameMs >= 40) {
-              lastParkFrameMs = now;
-              eyes.update(eyeFrame, now);
+            //
+            // PUSH ONLY WHEN update() SAYS IT DREW. It paces itself at about
+            // 30 fps and returns false without touching the sprite when called
+            // sooner; pushing anyway puts a stale, half-composed buffer on the
+            // screen. That is exactly what it looked like on 2026-09-17 -- the
+            // screen flashing and the eyes drawn a fraction of the way -- and
+            // it is why loop() has always tested the return value.
+            if (asleep.load() && eyeFrameReady && eyes.update(eyeFrame, now)) {
               eyeFrame.pushSprite(0, 0);
             }
           } else if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
