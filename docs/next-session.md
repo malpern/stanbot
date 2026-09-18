@@ -141,6 +141,14 @@ firmware plus the sleep work.
   then `pkill -f Stanbot.app/Contents/MacOS/Stanbot; open build/Stanbot.app`.
 - **Native firmware tests:** compile and run every `companion/test_*.cpp` with
   `c++ -std=c++17 -include initializer_list`. Python: `companion/test_*.py`.
+- **What is it doing right now:** `python3 tools/stanbot status` (or `watch`).
+  The app writes `~/Library/Logs/Stanbot/status.json` once a second: the
+  connection, the firmware and its flags, the Follow toggle, the session state
+  and the reason one cannot start, the camera, the face, and the remembered
+  place. **Ask it before asking the owner.** It exists because on 2026-09-17
+  two diagnoses turned into questions put to the owner about state the machine
+  already knew. A stale file is reported as STALE and exits 2, because a
+  plausible report from a dead app is worse than none.
 - **Session logs:** `~/Library/Logs/Stanbot/follow-*.log` (APP lines per frame,
   SBPD trace, SBMV result, SBPW power). `tools/follow_replay.py` renders one;
   `tools/read_steered_yaw.py` reads the position the owner steered to out of

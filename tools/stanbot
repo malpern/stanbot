@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""What Stanbot is doing, from a shell.
+
+    tools/stanbot status          # a short report
+    tools/stanbot status --json   # the whole object
+    tools/stanbot watch           # the short report, until interrupted
+
+The app is the only thing that can talk to the robot -- it holds the robot's one
+Wi-Fi viewer slot -- so its own state is the answer to most questions, and until
+this existed the only way to read it was to look at the window. The app writes
+`~/Library/Logs/Stanbot/status.json` about once a second; this reads it.
+
+It reports the file's age, because a stale file and a live one look identical
+otherwise, and "Follow is on" from a status written an hour ago is a wrong
+answer rather than a missing one. Stdlib only.
+"""
+import argparse
+import json
+import os
+import sys
+import time
+
+STATUS = os.path.expanduser("~/Library/Logs/Stanbot/status.json")
+STALE_SECONDS = 5
+
+
+def read(path=STATUS):
+    """The status object and how many seconds old it is, or (None, reason)."""
+    if not os.path.exists(path):
+        return None, "no status file: is Stanbot running? (%s)" % path
+    try:
+        with open(path) as f:
+            status = json.load(f)
+    except (ValueError, OSError) as error:
+        return None, "unreadable status file: %s" % error
+    return status, time.time() - os.path.getmtime(path)
+
+
+def describe(status, age):
+    """The short report: what it is doing, and why it is not doing the rest."""
+    lines = []
+    if age > STALE_SECONDS:
+        lines.append("STALE: written %.0f s ago -- Stanbot is not running, or is wedged." % age)
+    lines.append("connection  %s" % status.get("connection", "?"))
+    firmware = status.get("firmware") or {}
+    if firmware:
+        bits = ["yaw +-%s" % firmware["yaw_range"] if "yaw_range" in firmware else None,
+                "pitch" if firmware.get("pitch") else "yaw only",
+                "owes a look around" if firmware.get("scan_pending") else None,
+                "DIRTY BUILD" if firmware.get("dirty") else None]
+        lines.append("firmware    %s (%s)" % (firmware.get("commit", "?"),
+                                              ", ".join(b for b in bits if b)))
+    follow = status.get("follow") or {}
+    state = follow.get("state", "?")
+    detail = ""
+    if state == "finished" and follow.get("last_result"):
+        detail = " -- last: %s" % follow["last_result"]
+    lines.append("follow      toggle %s, %s%s" % ("ON" if follow.get("toggle") else "OFF", state, detail))
+    if follow.get("unavailable_reason"):
+        lines.append("            cannot start: %s" % follow["unavailable_reason"])
+    lines.append("camera      %s, face %s" % (status.get("camera", "?"), status.get("face", "?")))
+    if status.get("asleep"):
+        lines.append("            asleep")
+    place = status.get("last_seen")
+    lines.append("last seen   %s" % ("yaw %s, pitch %s" % (place["yaw"], place["pitch"]) if place
+                                     else "nowhere yet (nothing remembered)"))
+    if status.get("last_action"):
+        lines.append("last action %s" % status["last_action"])
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("verb", nargs="?", default="status", choices=["status", "watch"])
+    parser.add_argument("--json", action="store_true", help="print the whole status object")
+    parser.add_argument("--path", default=STATUS, help="a status file elsewhere")
+    args = parser.parse_args(argv)
+
+    while True:
+        status, age = read(args.path)
+        if status is None:
+            print(age, file=sys.stderr)
+            return 1
+        print(json.dumps(status, indent=2, sort_keys=True) if args.json else describe(status, age))
+        if args.verb != "watch":
+            return 0 if age <= STALE_SECONDS else 2
+        time.sleep(1)
+        print()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

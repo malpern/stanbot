@@ -282,6 +282,7 @@ final class RobotConnection: ObservableObject {
         }
     }
 
+    private var statusTimer: Timer?
     @Published private(set) var connection: ConnectionState = .disconnected
     @Published private(set) var selectedEmotion = Emotion.normal
     @Published private(set) var lastAction = "Waiting to connect" {
@@ -482,6 +483,10 @@ final class RobotConnection: ObservableObject {
         guard connectOnStart else { return }
         connect()
         guard automaticPolling else { return }
+        // The status report: about once a second, off the 20 Hz tick.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.writeStatus() }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -851,6 +856,56 @@ final class RobotConnection: ObservableObject {
     var mouthHost: String? { connectedOverWiFi ? networkHost : nil }
 
     func refreshPassphrase() { passphraseAvailable = passphrase() != nil }
+
+    /// Everything a person -- or an agent at a shell -- needs to answer "what is
+    /// it doing, and why isn't it doing the other thing", written beside the
+    /// session logs. See StatusFile.swift for why this exists.
+    func writeStatus() {
+        var fields: [String: Any] = [
+            "written": ISO8601DateFormatter().string(from: Date()),
+            "connection": connection.title,
+            "connected": { if case .connected = connection { return true } else { return false } }(),
+            "camera": cameraState.title,
+            "face": "\(faceState)",
+            "asleep": asleep,
+            "last_action": lastAction,
+            "passphrase_available": passphraseAvailable,
+            "app_is_waking": appIsWaking,
+            "robot_owes_look_around": robotOwesLookAround,
+        ]
+        // Follow: the standing toggle, what a session is doing now, and the
+        // reason it cannot start -- the three things that were guessed at.
+        var follows: [String: Any] = ["toggle": followAutomatically]
+        follows["unavailable_reason"] = followUnavailableReason ?? NSNull()
+        switch follow {
+        case .idle: follows["state"] = "idle"
+        case .following(let since):
+            follows["state"] = "following"
+            follows["since"] = ISO8601DateFormatter().string(from: since)
+        case .finished(let result):
+            follows["state"] = "finished"
+            follows["last_result"] = result.code
+            follows["last_result_summary"] = result.summary
+            follows["last_result_retryable"] = result.retryable
+        }
+        if let ended = lastFollowEnded { follows["last_ended"] = ISO8601DateFormatter().string(from: ended) }
+        fields["follow"] = follows
+
+        if case .reported(let info) = firmware {
+            var report: [String: Any] = ["commit": info.shortCommit, "protocol": info.protocolVersion,
+                                         "limits_measured": info.followLimitsMeasured, "pitch": info.followPitch]
+            if let range = info.followYawRange { report["yaw_range"] = range }
+            if let uptime = info.uptimeMs { report["uptime_ms"] = uptime }
+            if let pending = info.scanPending { report["scan_pending"] = pending }
+            if let dirty = info.dirty { report["dirty"] = dirty }
+            fields["firmware"] = report
+        }
+        if let place = RobotState.lastSeen {
+            fields["last_seen"] = ["yaw": place.yaw, "pitch": place.pitch]
+        }
+        if let log = followLogURL { fields["session_log"] = log.path }
+        StatusFile.write(fields, to: followLogDirectory)
+    }
 
     /// Hand the robot back what this Mac kept for it across its reset. Sent on
     /// every version report, which is once per connection: cheap, idempotent,

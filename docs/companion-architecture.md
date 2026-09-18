@@ -16,6 +16,30 @@ and at least the on-device confidence threshold. After 900 ms without a valid
 target, the robot returns to its calibrated rest position. Motor control stays
 disabled until physical calibration is complete.
 
+## The status file, and `tools/stanbot`
+
+The app holds the robot's one Wi-Fi viewer slot, so it is the only thing that
+can say what the robot is doing -- and for most of its life the only way to read
+that was to look at the window. On 2026-09-17 that turned two diagnoses into
+questions put to the owner about state the machine already knew ("why are you
+asking me if follow is on, can't you know?").
+
+`RobotConnection.writeStatus()` now writes `~/Library/Logs/Stanbot/status.json`
+about once a second, beside the session logs: the connection, the firmware and
+its flags, the Follow toggle, the session state, **the reason a session cannot
+start**, the camera and face states, whether it is asleep, the remembered place,
+and the last action. It is written atomically (temp file, then rename) so a
+reader never sees half an object.
+
+`tools/stanbot status` prints the short form, `--json` the whole object, and
+`watch` repeats it. It reports the file's **age** and exits 2 when it is stale:
+a plausible report from an app that died an hour ago is a wrong answer rather
+than a missing one, and that is the failure mode worth designing against.
+
+It is a report, not an interface -- nothing reads it back, so fields can be
+added or renamed freely. Control (turning Follow on from a shell, rebooting,
+steering) would need a command channel into the app and does not exist yet.
+
 ## Initial USB protocol
 
 The camera transport will be a bounded binary JPEG-frame protocol from the
