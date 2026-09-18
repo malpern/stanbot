@@ -144,7 +144,16 @@ the robot's view, with a little of the robot's character in it.
   the same grey, still. The robot draws the same (`StanbotEyes::drawTrouble`,
   emotion `trouble`) on its own screen for 12 s after a follow session that
   ended in a fault, then returns to whatever expression was chosen; normal
-  endings (idle, deadline, stopped) do not trigger it. Empty states use the same face,
+  endings (idle, deadline, stopped) do not trigger it. **The frown's ring is
+  centred at y=210** (`StanbotEyes.h` `kFrownY`, and the Mac's `TroubleFace`
+  offset, which a test keeps equal). It was 232 until 2026-09-18, which put the
+  curve 12 px off the bottom of a 240-tall screen with 84 px of space above it
+  -- the face read as sliding off the screen, where every other expression sits
+  evenly (the normal face measures 64 above, 65 below). **Being in trouble does
+  not stop Stanbot sleeping:** the lids come down over the X's and finish as the
+  same closed curve as every other expression, with the frown still there.
+  Before that fix `drawTrouble` ignored the sleep curtain and held the X's open
+  until the screen went black. Empty states use the same face,
   large, with the one action that helps ("Stanbot is asleep", Reconnect).
 - **Going down on purpose is sleep, not damage.** A reboot, a firmware update
   and a sleep all end the session, and all three now show the **sleeping** face

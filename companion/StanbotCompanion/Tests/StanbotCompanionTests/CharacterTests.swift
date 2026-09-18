@@ -48,6 +48,28 @@ final class CharacterTests: XCTestCase {
         }
     }
 
+    /// The frown belongs at the same height in both faces. It was 232 in both
+    /// until 2026-09-18, which left 12 px below the curve against 84 above it;
+    /// the risk now is that one moves and the other does not.
+    func testTheFrownSitsAtTheSameHeightInBothFaces() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let header = try String(contentsOf: root.appendingPathComponent("firmware/lib/StanbotEyes/src/StanbotEyes.h"),
+                                encoding: .utf8)
+        let pattern = try NSRegularExpression(pattern: #"kFrownY = (\d+);"#)
+        let match = try XCTUnwrap(pattern.firstMatch(in: header,
+                                                     range: NSRange(header.startIndex..., in: header)))
+        let firmwareY = try XCTUnwrap(Int(String(header[Range(match.range(at: 1), in: header)!])))
+
+        let swiftSource = try String(contentsOf: root.appendingPathComponent(
+            "companion/StanbotCompanion/Sources/StanbotCompanion/Character/StanbotEyes.swift"), encoding: .utf8)
+        XCTAssertTrue(swiftSource.contains(".offset(y: (\(firmwareY) - 120) * scale)"),
+                      "the Mac's frown is not at the firmware's kFrownY (\(firmwareY))")
+        // And it must leave the screen: the whole point of the move.
+        XCTAssertLessThanOrEqual(firmwareY + 30, 240, "the frown would run off the bottom")
+    }
+
     func testMoodFollowsWhatIsTrue() {
         let face = FaceBox(rect: CGRect(x: 0.6, y: 0.2, width: 0.2, height: 0.2), confidence: 0.9)
         func mood(_ connection: RobotConnection.ConnectionState = .connected("stanbot.local"),

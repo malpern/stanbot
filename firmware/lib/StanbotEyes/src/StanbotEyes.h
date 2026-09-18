@@ -205,7 +205,7 @@ class StanbotEyes {
 
     display.fillScreen(TFT_BLACK);
     if (emotion_ == StanbotEmotion::Trouble) {
-      drawTrouble(display, iris);
+      drawTrouble(display, iris, lids);
       return;
     }
     // Nearly shut: a curved lid, not a squashed eye. The Mac draws closed eyes
@@ -230,19 +230,52 @@ class StanbotEyes {
 
   // Something went wrong: two crossed-out eyes where the eyes were, and a
   // frown below, after the Sad Mac. Still, so it reads as a state, not a mood.
+  //
+  // `lids` is the sleep curtain, 1 open and 0 shut. Being in trouble does not
+  // stop Stanbot going to sleep, and until 2026-09-18 it did: drawTrouble
+  // ignored the curtain entirely, so a robot that slept while faulted held its
+  // X's open until the screen went black. The lids now come down over the X's
+  // and finish as the same closed curve every other expression uses.
   template <typename Display>
-  void drawTrouble(Display& display, uint16_t iris) {
+  void drawTrouble(Display& display, uint16_t iris, float lids = 1.0f) {
     constexpr int kBaseY = 120;
     constexpr int kArm = 30;     // half the width of each X
     constexpr int kStroke = 6;   // half the line width
-    for (int centreX : {102, 218}) {
-      display.drawWideLine(centreX - kArm, kBaseY - kArm, centreX + kArm, kBaseY + kArm, kStroke, iris);
-      display.drawWideLine(centreX - kArm, kBaseY + kArm, centreX + kArm, kBaseY - kArm, kStroke, iris);
+    if (lids <= kClosedLidsFrom) {
+      const float shut = 1.0f - lids / kClosedLidsFrom;
+      drawClosedEye(display, 102, kBaseY, shut, iris);
+      drawClosedEye(display, 218, kBaseY, shut, iris);
+    } else {
+      for (int centreX : {102, 218}) {
+        display.drawWideLine(centreX - kArm, kBaseY - kArm, centreX + kArm, kBaseY + kArm, kStroke, iris);
+        display.drawWideLine(centreX - kArm, kBaseY + kArm, centreX + kArm, kBaseY - kArm, kStroke, iris);
+      }
+      // Eyelids closing over the X, rather than the X shrinking: black bands
+      // eat into it from above and below as the curtain comes down. Only the
+      // eye band is painted over, so the frown below is untouched.
+      const int open = static_cast<int>((kArm + kStroke) * lids);
+      if (open < kArm + kStroke) {
+        // A pixel past the X on each side: drawWideLine's round cap reaches
+        // kBaseY +- (kArm + kStroke) INCLUSIVE, and a band that stops exactly
+        // there leaves a row of stray dots under the closing lid.
+        const int top = kBaseY - kArm - kStroke - 1, bottom = kBaseY + kArm + kStroke + 1;
+        display.fillRoundRect(0, top, 320, (kBaseY - open) - top, 0, TFT_BLACK);
+        display.fillRoundRect(0, kBaseY + open, 320, bottom - (kBaseY + open) + 1, 0, TFT_BLACK);
+      }
     }
-    // The frown: the upper part of a ring centred below the mouth line, so the
-    // ends turn down. Angles run clockwise from 3 o'clock in M5GFX.
-    display.fillArc(160, 232, 22, 30, 190, 350, iris);
+    // The frown: the upper part of a ring, so the ends turn down. Angles run
+    // clockwise from 3 o'clock in M5GFX.
+    //
+    // Centred at y=210, not the 232 it was until 2026-09-18. At 232 the curve
+    // reached y=228 of a 240-tall screen: 84 px of space above the face and 12
+    // below it, while every other expression sits evenly (the normal face
+    // measures 64 above, 65 below). It read as a face sliding off the bottom
+    // of the screen. The Mac's TroubleFace carries the same number.
+    display.fillArc(160, kFrownY, 22, 30, 190, 350, iris);
   }
+
+  /// Where the frown's ring is centred. Shared with the Mac (TroubleFace).
+  static constexpr int kFrownY = 210;
 
   // The mouth, only while speaking. Two styles, switchable at runtime so they
   // can be compared by eye on the robot rather than argued about (C,MOUTH,...).

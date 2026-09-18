@@ -336,7 +336,10 @@ struct TroubleFace: View {
         let grey = Color(white: 0.74)
         let arm = 30 * scale, stroke = 12 * scale
         // Laid out in the robot's 320x240 frame: eyes at x 102 and 218, y 120,
-        // the frown's arc centred at (160, 232).
+        // the frown's arc centred at (160, 210) -- StanbotEyes.h kFrownY, and
+        // the two must stay equal. It was 232 until 2026-09-18, which put the
+        // curve 12 px off the bottom of a 240-tall screen against 84 px of
+        // space above it; every other expression sits evenly.
         ZStack {
             ForEach([102.0, 218.0], id: \.self) { centre in
                 Path { path in
@@ -352,7 +355,7 @@ struct TroubleFace: View {
             }
             .stroke(grey, style: StrokeStyle(lineWidth: 8 * scale, lineCap: .round))
             .frame(width: 1, height: 1)
-            .offset(y: (232 - 120) * scale)
+            .offset(y: (210 - 120) * scale)
         }
         .shadow(color: glow ? grey.opacity(0.35) : .clear, radius: 14 * scale)
         .frame(width: 320 * scale, height: 240 * scale)

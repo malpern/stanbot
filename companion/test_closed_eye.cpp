@@ -127,11 +127,48 @@ static void test_waking_opens_the_eyes_again() {
     assert(screen.arcs.empty() && "a woken eye must be an eye again, not a closed lid");
 }
 
+static void test_the_trouble_face_also_closes_its_eyes() {
+    // Being in trouble does not stop Stanbot sleeping. Until 2026-09-18
+    // drawTrouble ignored the sleep curtain entirely, so a robot that slept
+    // while faulted held its X's wide open until the screen went black.
+    StanbotEyes eyes;
+    eyes.begin(0);
+    eyes.setEmotion(StanbotEmotion::Trouble);
+    eyes.beginSleep(0);
+    Recorder screen = drawAt(eyes, stanbot::SleepCurtain::kCloseMs + 500);
+
+    assert(screen.arcs.size() >= 2 && "the shut trouble face should draw closed lids");
+    // Two closed eyes and the frown: the frown is the one low on the screen.
+    int lids = 0, frowns = 0;
+    for (const auto& arc : screen.arcs) {
+        if (arc.y > 150) ++frowns; else ++lids;
+    }
+    assert(lids == 2 && "both eyes should be closed lids");
+    assert(frowns == 1 && "the frown should still be there: it is still in trouble");
+}
+
+static void test_the_frown_stays_on_the_screen() {
+    StanbotEyes eyes;
+    eyes.begin(0);
+    eyes.setEmotion(StanbotEmotion::Trouble);
+    Recorder screen = drawAt(eyes, 100);
+    for (const auto& arc : screen.arcs) {
+        if (arc.y <= 150) continue;                  // that is an eye, not the frown
+        assert(arc.y - arc.r1 >= 0 && "the frown runs off the top");
+        // The visible part is the TOP of the ring, so the lowest ink is a
+        // little above the centre -- but the centre plus the radius must still
+        // leave room, or the curve crowds the bottom edge as it used to.
+        assert(arc.y + 10 <= 240 && "the frown crowds the bottom of the screen");
+    }
+}
+
 int main() {
     test_shut_eyes_match_the_mac_curve();
     test_open_eyes_are_unchanged();
     test_the_curve_grows_in_rather_than_popping();
     test_waking_opens_the_eyes_again();
+    test_the_trouble_face_also_closes_its_eyes();
+    test_the_frown_stays_on_the_screen();
     std::printf("closed eye: all checks passed\n");
     return 0;
 }
