@@ -429,10 +429,11 @@ robot that is restarting -- and because it is not, the app clears a finished
 session when it sees a new boot, or the reboot's own look around would never
 start.
 
-**A reset is a small sequence, not a snap** (asked for 2026-09-17), and it is
-the same sequence for the Reboot command and for a firmware update -- the owner
+**Coming down is a small sequence, not a snap** (asked for 2026-09-17). It is
+the same sequence for the Reboot command, for a firmware update -- the owner
 said "or whenever the robot is being reset", and an update restarts through
-espota's own path, which never touches `rebootRequested` at all:
+espota's own path, which never touches `rebootRequested` -- and for **going to
+sleep**, so the robot does not nod off mid-turn and stay that way all night:
 
 1. **Home.** The session sees the pending reboot and returns the head to centre
    while it still has motor power, rather than freezing mid-turn and coming back
@@ -444,6 +445,13 @@ espota's own path, which never touches `rebootRequested` at all:
 
 Every step is bounded, in both directions: a head that cannot get home and lids
 that never report closed must not be able to prevent a reboot.
+
+**Sleep parks level, not down.** There is no downward droop to strike: M5Stack's
+Y axis runs 0..90 degrees from level to straight up, so level is the bottom of
+the range (see `head_tracker.h`). `C,SLEEP` therefore brings the head home and
+level, ends the session `stopped_for_sleep`, and only then closes the eyes and
+darkens the screen. The app deliberately does **not** stop the session first:
+that would take the head's power away a second before the robot wants it.
 
 For an update the same two steps happen inside `ArduinoOTA.onStart`: the
 session ends `stopped_for_update` once the head is home, and the lids are then

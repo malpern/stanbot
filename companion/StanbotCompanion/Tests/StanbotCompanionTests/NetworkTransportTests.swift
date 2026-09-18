@@ -287,8 +287,11 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertEqual(fake.authorizedCommands, ["FOLLOW", "FOLLOW"], "refused for cooldown, it asks again")
     }
 
-    /// Sleeping ends the session but must not switch automatic following off,
-    /// as the Stop button does: waking needs it to start the look-around.
+    /// Sleeping must not switch automatic following off, as the Stop button
+    /// does: waking needs it to start the look-around. Nor may it stop the
+    /// session itself -- the robot wants that last second of motor power to
+    /// bring the head home and level before the eyes close, and ends the
+    /// session itself (`stopped_for_sleep`) once it has.
     @MainActor
     func testSleepingWhileFollowingKeepsAutomaticFollowingOn() throws {
         let fake = try FakeRobot()
@@ -302,7 +305,8 @@ final class NetworkTransportTests: XCTestCase {
 
         robot.sleep()
         wait(upTo: 2) { fake.commands.contains("C,SLEEP") }
-        XCTAssertTrue(fake.commands.contains("C,UNFOLLOW"), "the session is ended first")
+        XCTAssertFalse(fake.commands.contains("C,UNFOLLOW"),
+                       "stopping first would take away the power the robot parks the head with")
         XCTAssertTrue(robot.followAutomatically, "sleep is not Stop: following resumes on waking")
 
         // The Stop button still means stop.

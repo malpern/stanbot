@@ -147,6 +147,18 @@ final class WakeScanTests: XCTestCase {
                                              robotOwesLookAround: true))
     }
 
+    /// Sleeping parks the head first, so its ending must be an ordinary one --
+    /// no trouble face, and retryable, or the session a wake asks for would be
+    /// refused for ever (the same trap stopped_for_reboot set).
+    func testSleepingIsAnOrdinaryEnding() {
+        let result = FollowResult(code: "stopped_for_sleep")
+        XCTAssertTrue(result.retryable, "waking must be able to start a session")
+        XCTAssertTrue(result.summary.contains("home"))
+        XCTAssertTrue(AutoFollow.shouldStart(enabled: true, unavailableReason: nil, state: .finished(result),
+                                             faceTracked: false, lastEnded: nil, now: Date(),
+                                             wokeAt: Date()))
+    }
+
     /// The uptime that tells a reboot from a reconnection.
     func testTheVersionReportCarriesUptime() {
         let line = #"SBVR {"sketch":"camera_stream","commit":"abc","dirty":false,"built":"x","protocol":1,"# +

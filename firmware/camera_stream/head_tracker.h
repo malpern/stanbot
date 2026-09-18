@@ -97,13 +97,21 @@ constexpr int kFollowYawRange = 48;
 // vertical. Steered all the way up on 2026-09-17, the head met a hard stop at
 // raw ~885 (stall_detected, goal 902), which the operator saw as vertical: 271
 // raw for 90 deg, so this servo is ~3.0 raw/deg, not the yaw servo's 3.2. The
-// 15 raw of margin keeps steering from grinding into the stop. Down: widened in
-// supervised steps. 582 was tried on 2026-09-17: held full down, the head
-// stopped at 592 and stayed 10 short of the goal (pressing against something),
-// and the owner saw it facing nearly straight down. So the minimum is 594, the
-// unpowered rest: a session never presses the head below where gravity leaves it.
-// "Nearly straight down" at 592 does not fit ~3 raw/deg from a level of 614,
-// so level itself is due a re-check before any further pitch change.
+// 15 raw of margin keeps steering from grinding into the stop.
+//
+// DOWN: there is none, and this is the axis's design, not a limit to widen.
+// M5Stack document the Y axis as 0..90 degrees -- level to straight up -- with
+// 5..85 recommended, and the 2026-09-15 first pitch motion put 0 degrees at raw
+// ~620 (docs/hardware-coverage.md: "rest 620 to 636 (+16 raw = 5 degrees ...
+// the official 5..85 degree range's lower bound)"). Level measured by eye at
+// 614 agrees with that within the servo's own error. So pitchMin 594 is already
+// BELOW the manufacturer's zero, which is why 582 was refused by the mechanism
+// on 2026-09-17: commanded full down, the head stopped at 592 and stayed 10
+// short, pressing. The note here used to add that the owner "saw it facing
+// nearly straight down", and called level due a re-check for not fitting. That
+// reading cannot be right -- 592 is a few degrees below horizontal, not near
+// the floor -- and taking it at face value invites someone to lower the floor
+// into a stall. Level is the bottom of this axis. Nothing needs re-checking.
 constexpr FollowLimits kFollowLimits = {
   kFollowYawCentre - kFollowYawRange, kFollowYawCentre + kFollowYawRange, kFollowYawCentre,
   kFollowPitchMin, kFollowPitchMax, 614,

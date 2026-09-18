@@ -2231,12 +2231,18 @@ void runFollowSession() {
           // this session runs -- up to the three minute cap. Asked for one on
           // 2026-09-17, the owner saw nothing happen for minutes. So this ends
           // the session and leaves the flag set for the loop.
-          if (rebootRequested.load() || otaActive.load()) {
+          // Going to sleep is the same shape: the head comes home and level
+          // before the eyes close, rather than the robot nodding off mid-turn
+          // and staying that way all night. M5Stack's Y axis is 0..90 degrees
+          // from level to straight up (docs/hardware-coverage.md), so there is
+          // no downward droop to strike -- level IS the bottom of the range.
+          if (rebootRequested.load() || otaActive.load() || asleep.load()) {
             if (centringForReboot == 0) {
               centringForReboot = now;
               tracker.beginReturn();
             } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
-              result = otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";
+              result = asleep.load() ? "stopped_for_sleep"
+                     : otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";
               followStopRequested.store(false);   // onStart sets it too; do not leave it armed
               break;
             }
@@ -2417,7 +2423,8 @@ void runFollowSession() {
   {
     static const char* const kNormalEndings[] = {"session_complete", "session_deadline", "session_idle",
                                                   "session_max_duration", "stopped_by_host", "stopped_for_update",
-                                                  "stopped_for_reboot", "follow_cooldown"};
+                                                  "stopped_for_reboot", "stopped_for_sleep",
+                                                  "follow_cooldown"};
     bool normal = false;
     for (const char* ending : kNormalEndings) normal = normal || strcmp(result, ending) == 0;
     if (!normal) troubleUntilMs.store(millis() + kTroubleFaceMs);

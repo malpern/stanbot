@@ -24,7 +24,7 @@ struct FollowResult: Equatable {
         // "no_result" once may be a dropped line; "no_result_repeated" is a
         // fault and stops the retrying, so silence cannot go on for hours.
         ["session_complete", "session_deadline", "session_idle", "session_max_duration",
-         "stopped_by_host", "follow_cooldown", "no_result"].contains(code)
+         "stopped_by_host", "stopped_for_sleep", "follow_cooldown", "no_result"].contains(code)
     }
 
     var summary: String {
@@ -35,6 +35,7 @@ struct FollowResult: Equatable {
         case "stopped_by_host": "Stopped. The head is powered off."
         case "stopped_for_update": "Stopped for a firmware update. The head is powered off."
         case "stopped_for_reboot": "Stopped so the robot can reboot. The head is powered off."
+        case "stopped_for_sleep": "Came home and went to sleep. The head is powered off."
         case "update_in_progress": "Refused: a firmware update is in progress."
         case "follow_refused_limits_unmeasured": "Refused: this firmware has following disabled."
         case "follow_refused_asleep": "Refused: the robot is asleep. Wake it first."

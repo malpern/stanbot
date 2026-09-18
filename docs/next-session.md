@@ -21,12 +21,14 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   commanded: that side is new ground.
 - **Pitch** level measured by eye at raw **614** (`calibration-pitch-level.jsonl`).
   Limits 594..870. Up verified: steered all the way up, the head met a hard stop
-  at ~885 that the owner saw as vertical (`stall_detected`, power off verified),
-  so pitch is ~3.0 raw/deg and the maximum is 870. Down: 582 was tried; the head
-  stopped at 592, pressing, and looked nearly straight down to the owner, so the
-  minimum is the unpowered rest, 594. That look does not fit ~3 raw/deg from a
-  level of 614: **re-check level before changing pitch again.** A head left
-  resting above 870 is refused until lowered by hand.
+  at ~885 that the owner saw as vertical, so pitch is ~3.0 raw/deg and the
+  maximum is 870. **Down does not exist on this axis** and is not a limit to
+  widen: M5Stack document Y as 0..90 deg, level to straight up, and the
+  2026-09-15 pitch motion puts 0 deg at raw ~620, so 594 is already below the
+  manufacturer's zero. That is why 582 stalled at 592. The old note claiming the
+  head looked "nearly straight down" there was a misreading and has been
+  removed; level is the bottom of the range, and nothing about it needs
+  re-checking.
 - **Losing someone** is a two-stage hunt (2026-09-17, at the owner's request):
   a 32-raw glance each side of where they went, then, if that finds nobody, the
   wake scan's whole-range look -- out to one yaw limit, out to the other, up,

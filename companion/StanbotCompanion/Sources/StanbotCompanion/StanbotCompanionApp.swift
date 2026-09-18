@@ -1164,7 +1164,10 @@ final class RobotConnection: ObservableObject {
     /// camera commands any viewer may already send.
     func sleep() {
         guard connectedOverUSB || connectedOverWiFi, !asleep else { return }
-        endSession()
+        // Deliberately NOT endSession() first. Stopping the session takes the
+        // head's power away, and the robot wants that power for one more second
+        // to bring the head home and level before the eyes close. C,SLEEP ends
+        // the session itself (`stopped_for_sleep`), having parked first.
         guard send("C,SLEEP\n") else { return }
         sleepCommandedAt = Date()
         asleep = true   // confirmed by the robot's SBSL
