@@ -276,9 +276,18 @@ Pieces:
    behind `STANBOT_LIVE_TEST=1`, against OpenAI, where it opened a session, took
    the voice it asked for and reported 119 minutes allowed. A disabled Talk
    control sits in the toolbar saying what it waits for. 29 tests, none needing
-   sound or a robot. **What is left is what needs sound:** `AVAudioEngine`
-   capture and playback with voice processing, wiring Talk to a real session,
-   Settings and inspector, the voice log, and the mouth from phase 1.
+   sound or a robot. **What is left is what needs sound:** wiring Talk to a real
+   session, Settings and inspector, the voice log, and the mouth from phase 1.
+
+   `VoiceAudio` (the engine) and `VoiceAudioMath` (its arithmetic) are written.
+   **The engine has never been started**, on purpose: voice processing takes the
+   microphone and, until the ducking configuration is proved, dims other
+   applications -- which on 2026-09-17 would have been the owner's meeting. The
+   arithmetic is tested without a sound card: loudness by RMS so a click does not
+   read as a syllable, samples surviving the round trip intact, chunking that
+   never splits a sample, and conversion from a 48 kHz stereo microphone that
+   does not lose audio as it runs -- a resampler holds a tail back, and the test
+   measures the deficit at two run lengths to tell a constant tail from a leak.
 5. **Robot audio** (see below), only if still wanted after using phase 4.
 
 ## Robot audio: a separate project
