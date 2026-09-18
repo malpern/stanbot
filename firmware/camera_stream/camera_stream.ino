@@ -166,6 +166,7 @@ std::atomic<bool> yawCenterRequested{false};
 std::atomic<bool> pitchNudgeRequested{false};
 std::atomic<int> pitchLevelRequested{0};   // raw goal; 0 none; -1 malformed or out of range
 std::atomic<bool> rebootRequested{false};
+uint32_t rebootClosingSince = 0;   // the eyes are closing for a pending reset (0: not yet)
 bool disableOnlyLatched = false; // Owner task only; blocks enable tests until reboot.
 std::atomic<uint32_t> maxEyeGapMs{0};
 uint32_t lastEyeMs = 0;
@@ -1987,6 +1988,11 @@ constexpr uint32_t kFollowIdleEndMs = 12000;    // no accepted target this long:
 constexpr uint32_t kFollowRenewEveryMs = 1000;
 constexpr uint32_t kFollowEndMarginMs = 500;    // end by the session's own path before the cutoff would
 constexpr uint32_t kFollowCooldownMs = 3000;
+// A reset returns the head to centre first, then closes the eyes, then
+// restarts. Both steps are bounded: a head that cannot get home, or lids that
+// never report closed, must not be able to prevent a reboot.
+constexpr uint32_t kRebootCentreMs = 2500;
+constexpr uint32_t kRebootEyesMs = 1200;
 // Used only when a target names a frame the robot no longer remembers sending.
 constexpr uint32_t kFollowAssumedLatencyMs = 250;  // between sessions; see runFollowSession
 uint32_t followEndedMs = 0;
@@ -2132,6 +2138,7 @@ void runFollowSession() {
   uint32_t captureStopMs = 0, sessionFrames = 0;
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
   uint32_t lastManualSequence = manualSequence.load();
+  uint32_t centringForReboot = 0;   // when the head started home for a pending reset
   int manualInputs = 0;
 
   // Both servos must start inside the follow limits, torque off and still.
@@ -2201,7 +2208,21 @@ void runFollowSession() {
           // this session returns -- up to the three minute cap. Asked for one
           // on 2026-09-17, the owner saw nothing happen for minutes. End here
           // instead and let the loop do it; the flag is left set for it.
-          if (rebootRequested.load()) { result = "stopped_for_reboot"; break; }
+          //
+          // But bring the head home first, while there is still motor power to
+          // do it with: the owner asked that a reset begin by returning to
+          // centre and closing the eyes, rather than the robot freezing mid-turn
+          // and coming back facing the wall. Bounded hard -- the reboot is not
+          // held up for more than kRebootCentreMs whatever the head does.
+          if (rebootRequested.load()) {
+            if (centringForReboot == 0) {
+              centringForReboot = now;
+              tracker.beginReturn();
+            } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
+              result = "stopped_for_reboot";
+              break;
+            }
+          }
           const uint32_t iterationStart = now;
           serviceLightBar(device);   // the session's handle: no second device on the expander
           ++iterations;
@@ -2568,17 +2589,32 @@ void cameraTask(void*) {
       if (asleep.load()) Telemetry.println("SBMV {\"result\":\"follow_refused_asleep\",\"plan\":\"follow\"}");
       else runFollowSession();
     }
-    if (rebootRequested.exchange(false)) {
-      // Software restart so a fresh once-per-boot power window is available
-      // without a physical RST. Motor power is already off (latch verified)
-      // or was never enabled this boot.
-      // Through Telemetry, not Serial alone: over Wi-Fi, Serial is silence, and
-      // a robot that goes quiet for six seconds with no word is a fault until
-      // proven otherwise.
-      Telemetry.println("SBRB {\"rebooting\":true}");
-      Serial.flush();
-      vTaskDelay(pdMS_TO_TICKS(100));
-      esp_restart();
+    // A reset is a small sequence, not a snap: the head has already come home
+    // inside the session (above), and now the eyes close before the restart, so
+    // Stanbot goes down the way it goes to sleep rather than freezing mid-face.
+    // Asked for 2026-09-17. Bounded: lids that never report closed cannot
+    // prevent a reboot.
+    if (rebootRequested.load()) {
+      if (rebootClosingSince == 0) {
+        // Through Telemetry, not Serial alone: over Wi-Fi, Serial is silence,
+        // and a robot that goes quiet for six seconds with no word is a fault
+        // until proven otherwise.
+        Telemetry.println("SBRB {\"rebooting\":true,\"closing_eyes\":true}");
+        const uint32_t closingAt = millis();
+        eyes.beginSleep(closingAt);
+        rebootClosingSince = closingAt == 0 ? 1 : closingAt;
+      } else if (eyes.closedForSleep(millis()) || millis() - rebootClosingSince > kRebootEyesMs) {
+        rebootRequested.store(false);
+        // Software restart so a fresh once-per-boot power window is available
+        // without a physical RST. Motor power is already off (latch verified)
+        // or was never enabled this boot.
+        Serial.flush();
+        // Long enough for the session's telemetry to leave over Wi-Fi. At 100 ms
+        // the last two lines of a 256-line block were lost on 2026-09-17 and the
+        // app called the session corrupted -- a restart racing its own report.
+        vTaskDelay(pdMS_TO_TICKS(700));
+        esp_restart();
+      }
     }
     if (powerTestRequested.exchange(false)) testServoPower();
     if (servoProbeRequested.exchange(false)) probeServos();

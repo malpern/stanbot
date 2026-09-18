@@ -403,6 +403,32 @@ robot that is restarting -- and because it is not, the app clears a finished
 session when it sees a new boot, or the reboot's own look around would never
 start.
 
+**A reset is a small sequence, not a snap** (asked for 2026-09-17):
+
+1. **Home.** The session sees the pending reboot and returns the head to centre
+   while it still has motor power, rather than freezing mid-turn and coming back
+   facing the wall. `HeadTracker::atRest()` says when it has arrived; 800 ms in
+   the native test, and the reset waits at most `kRebootCentreMs` (2.5 s).
+2. **Eyes.** The session ends, and the lids close as they do for sleep
+   (`eyes.beginSleep`), at most `kRebootEyesMs` (1.2 s).
+3. **Restart**, after a 700 ms drain.
+
+Every step is bounded, in both directions: a head that cannot get home and lids
+that never report closed must not be able to prevent a reboot.
+
+**That drain is not padding.** At 100 ms the last two lines of a 256-line
+telemetry block were lost on 2026-09-17 and the app called the session
+corrupted -- a restart racing its own report. The session's numbers were fine;
+only the ending was.
+
+**One more trap the same reboot exposed.** Authorizing a reboot sets the app's
+follow state to `.idle` at once, so the session that ends *because* of that
+reboot reports its result to an app that is no longer following -- and the
+`case .following` guard in `handleLine` dropped the whole line. The robot had
+learned the owner was at yaw 518 and the app threw it away. The remembered
+place is now read before that guard: it is worth keeping whatever the session
+state was.
+
 ## The light bar (running on the robot; `light_bar.h`)
 
 The twelve LEDs say what the robot is doing about you, which is otherwise only

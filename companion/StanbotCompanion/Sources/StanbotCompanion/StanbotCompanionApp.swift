@@ -808,6 +808,22 @@ final class RobotConnection: ObservableObject {
             asleep = sleeping
             return
         }
+        // Where the robot last saw someone, kept here so it survives a reset of
+        // the robot -- including one that erases its flash, or a replacement
+        // CoreS3. Handed back on connecting (`K,`). See RobotState.
+        //
+        // Read BEFORE the `.following` guard below, and that is the whole point:
+        // authorizing a reboot sets follow to .idle straight away, so a session
+        // ending because of that reboot reports its result to an app that is no
+        // longer following, and the guard dropped the line entire. On
+        // 2026-09-17 the robot learned yaw 518 and the app threw it away. The
+        // place is worth keeping whatever the session state was.
+        if line.hasPrefix("SBMV "),
+           let result = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any],
+           let yaw = result["last_seen_yaw"] as? Int, let pitch = result["last_seen_pitch"] as? Int,
+           yaw >= 0, pitch >= 0 {
+            RobotState.rememberLastSeen(yaw: yaw, pitch: pitch)
+        }
         guard case .following = follow, line.hasPrefix("SBMV ") || line.hasPrefix("SBPW "),
               let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
         else { return }
@@ -815,13 +831,6 @@ final class RobotConnection: ObservableObject {
         let code = line.hasPrefix("SBMV ") && object["plan"] as? String == "follow"
             ? object["result"] as? String
             : object["error"] as? String
-        // Where the robot last saw someone, kept here so it survives a reset of
-        // the robot -- including one that erases its flash, or a replacement
-        // CoreS3. Handed back on connecting (`K,`). See RobotState.
-        if let yaw = object["last_seen_yaw"] as? Int, let pitch = object["last_seen_pitch"] as? Int,
-           yaw >= 0, pitch >= 0 {
-            RobotState.rememberLastSeen(yaw: yaw, pitch: pitch)
-        }
         guard let code else { return }
         sessionsWithoutResult = 0   // the robot answered
         if code == "follow_cooldown", wokeAt != nil {

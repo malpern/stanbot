@@ -870,6 +870,26 @@ void measuredPitchLevelFromDroop() {
   assert(tracker.commandedPitch() == 594);
 }
 
+// atRest: the test a reset uses to know the head has come home before the eyes
+// close and the robot restarts.
+void atRestKnowsWhenTheHeadIsHome() {
+  HeadTracker tracker(kLimits, kConfig);
+  uint32_t now = 1000;
+  tracker.begin(kLimits.yawRest, 620, now);
+  assert(tracker.atRest());
+  // Sent well off to one side: not home, and it says so all the way there.
+  assert(tracker.observe(1, 0.9f, 0.0f, 0.95f, now));
+  for (int i = 0; i < 10; ++i) { now += kConfig.controlPeriodMs; tracker.step(now); }
+  assert(!tracker.atRest());
+  // Asked home, it arrives and then holds.
+  tracker.beginReturn();
+  int ticks = 0;
+  while (!tracker.atRest() && ticks < 400) { now += kConfig.controlPeriodMs; tracker.step(now); ++ticks; }
+  assert(tracker.atRest());
+  std::printf("  home again %d ms after being asked\n", ticks * static_cast<int>(kConfig.controlPeriodMs));
+  assert(ticks * kConfig.controlPeriodMs < 2500);   // kRebootCentreMs: the reset does not wait longer
+}
+
 // A look around starts where someone was last seen, when this boot has seen
 // anyone: the owner asked for it after watching a scan sweep past them.
 void aScanStartsWhereSomeoneWasLastSeen() {
@@ -978,6 +998,7 @@ void wakeScanLooksAroundWithinLimits() {
 }
 
 int main() {
+  atRestKnowsWhenTheHeadIsHome();
   aScanStartsWhereSomeoneWasLastSeen();
   wakeScanLooksAroundWithinLimits();
   measuredPitchLevelFromDroop();

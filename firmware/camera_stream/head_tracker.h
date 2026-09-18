@@ -450,6 +450,26 @@ class HeadTracker {
   // Any look around, a wake scan or a search: the head is actively hunting for
   // someone, so the session must not time out underneath it.
   bool lookingAround() const { return mode_ == FollowMode::Searching; }
+  // The head is home, within the deadband it would stop at anyway. Used to
+  // tell when a return-to-centre before a reboot has finished.
+  // Come home now: the head returns to rest, wherever it was going. Public
+  // because a pending reset asks for it from outside the tracker.
+  void beginReturn() {
+    mode_ = FollowMode::Returning;
+    goalYaw_ = limits_.yawRest;
+    goalPitch_ = !config_.pitchEnabled ? pitch_
+               : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
+               : pitchHome_;
+    haveGoal_ = true;
+  }
+  bool atRest() const {
+    const int dy = yaw_ - limits_.yawRest;
+    if (dy > config_.deadbandRaw || dy < -config_.deadbandRaw) return false;
+    if (!config_.pitchEnabled) return true;
+    const int rest = limits_.pitchRestConfirmed ? limits_.pitchRest : pitchHome_;
+    const int dp = pitch_ - rest;
+    return dp <= config_.deadbandRaw && dp >= -config_.deadbandRaw;
+  }
 
   // True once, when a face ended the wake scan: the moment to react.
   bool takeFoundDuringScan() {
@@ -501,14 +521,7 @@ class HeadTracker {
     return error < 0 ? -step : step;
   }
 
-  void beginReturn() {
-    mode_ = FollowMode::Returning;
-    goalYaw_ = limits_.yawRest;
-    goalPitch_ = !config_.pitchEnabled ? pitch_
-               : limits_.pitchRestConfirmed ? clamp(limits_.pitchRest, pitchLow_, pitchHigh_)
-               : pitchHome_;
-    haveGoal_ = true;
-  }
+
 
   // Waypoints for one search, from where the head was when the target was lost
   // and the side of the frame the face was last seen on.
