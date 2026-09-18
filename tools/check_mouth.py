@@ -18,35 +18,23 @@ this must run on the Mac the app is connected from -- which is the same Mac,
 and why it works without touching the app.
 """
 import argparse
-import glob
 import json
 import math
 import os
-import select
 import socket
 import struct
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import usb_port
+
 MOUTH_PORT = 3334
 
 
 def exchange(port, command, seconds):
-    fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    try:
-        os.write(fd, (command + "\n").encode())
-        deadline = time.time() + seconds
-        data = b""
-        while time.time() < deadline:
-            ready, _, _ = select.select([fd], [], [], 0.2)
-            if ready:
-                try:
-                    data += os.read(fd, 65536)
-                except BlockingIOError:
-                    pass
-        return data.decode("utf-8", "replace")
-    finally:
-        os.close(fd)
+    """`usb_port.exchange`: raises DTR, without which the robot receives nothing."""
+    return usb_port.exchange(port, command, seconds)
 
 
 def stats(port):
@@ -75,17 +63,22 @@ def main(argv=None):
     parser.add_argument("--seconds", type=float, default=3.0)
     args = parser.parse_args(argv)
 
-    serial_port = args.port
-    if not serial_port:
-        ports = glob.glob("/dev/cu.usbmodem*")
-        if len(ports) != 1:
-            print(f"Expected one USB serial port, found {ports}. Name it.", file=sys.stderr)
-            return 2
-        serial_port = ports[0]
+    serial_port = usb_port.resolve_or_exit(args.port)
+    # Unlike check_sleep_wake.py this cannot simply refuse when something else
+    # holds the port: the robot only accepts mouth packets from its current
+    # Wi-Fi viewer, so Stanbot has to be running. When Stanbot is also on USB it
+    # takes the SBST replies and this check goes blind -- so say which it is,
+    # rather than blaming the robot for a silence it did not cause.
+    contention = usb_port.contention_note(serial_port)
 
     before = stats(serial_port)
     if before is None:
-        print("no SBST from the robot: is it on USB?", file=sys.stderr)
+        print("no SBST from the robot.", file=sys.stderr)
+        print(contention or "Nothing else holds the port, so this is the robot or the cable.",
+              file=sys.stderr)
+        if contention:
+            print("Put Stanbot on Wi-Fi (it only needs USB for the camera) and run this again.",
+                  file=sys.stderr)
         return 2
     print(f"before: mouth_packets={before['mouth_packets']} mouth_rejected={before['mouth_rejected']}")
 
@@ -94,16 +87,26 @@ def main(argv=None):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sent = 0
     start = time.time()
-    while time.time() - start < args.seconds:
-        phase = (time.time() - start) * 3.0
-        opening = int(50 + 45 * math.sin(phase))
-        shape = int(60 * math.sin(phase * 0.7))
-        sock.sendto(packet(sent + 1, max(0, min(100, opening)), max(-100, min(100, shape))),
-                    (args.host, MOUTH_PORT))
+    try:
+        while time.time() - start < args.seconds:
+            phase = (time.time() - start) * 3.0
+            opening = int(50 + 45 * math.sin(phase))
+            shape = int(60 * math.sin(phase * 0.7))
+            sock.sendto(packet(sent + 1, max(0, min(100, opening)), max(-100, min(100, shape))),
+                        (args.host, MOUTH_PORT))
+            sent += 1
+            time.sleep(0.05)   # 20 Hz, as the app sends while speaking
+        sock.sendto(packet(sent + 1, 0, 0), (args.host, MOUTH_PORT))   # the closing 0
         sent += 1
-        time.sleep(0.05)   # 20 Hz, as the app sends while speaking
-    sock.sendto(packet(sent + 1, 0, 0), (args.host, MOUTH_PORT))   # the closing 0
-    sent += 1
+    except OSError as error:
+        # A traceback here reads as a broken tool. It is usually the network:
+        # the name not resolving, or macOS's Local Network privacy refusing the
+        # LAN from this shell (see the note in ACCESS.md). Say which host.
+        print(f"cannot reach {args.host}:{MOUTH_PORT} -- {error}", file=sys.stderr)
+        print("The robot's USB side answered, so this is the network, not the robot.\n"
+              "Pass --host with the robot's address, and check this shell is allowed\n"
+              "on the local network.", file=sys.stderr)
+        return 2
     time.sleep(0.5)
 
     # The app re-enables the stream whenever it reconnects, and text arriving
@@ -117,8 +120,9 @@ def main(argv=None):
         if after is not None:
             break
     if after is None:
-        print("could not read SBST back. The packets may still have arrived: "
-              "watch the robot, or quit Stanbot and try again.", file=sys.stderr)
+        print("could not read SBST back. The packets may still have arrived.", file=sys.stderr)
+        print(contention or "Nothing else holds the port: watch the robot, or try again.",
+              file=sys.stderr)
         return 2
     accepted = after["mouth_packets"] - before["mouth_packets"]
     rejected = after["mouth_rejected"] - before["mouth_rejected"]

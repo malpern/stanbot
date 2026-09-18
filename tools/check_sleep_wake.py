@@ -17,13 +17,13 @@ sleeps and wakes the robot a few times, and reads the base again.
 Exit 0: the base answered before and after. Exit 1: it did not.
 """
 import argparse
-import glob
 import json
 import os
-import select
 import subprocess
 import sys
-import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import usb_port
 
 
 def stanbot_running():
@@ -32,22 +32,12 @@ def stanbot_running():
 
 
 def exchange(port, command, seconds):
-    """Send one command and return what the robot says for `seconds`."""
-    fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    try:
-        os.write(fd, (command + "\n").encode())
-        deadline = time.time() + seconds
-        data = b""
-        while time.time() < deadline:
-            ready, _, _ = select.select([fd], [], [], 0.2)
-            if ready:
-                try:
-                    data += os.read(fd, 65536)
-                except BlockingIOError:
-                    pass
-        return data.decode("utf-8", "replace")
-    finally:
-        os.close(fd)
+    """Send one command and return what the robot says for `seconds`.
+
+    `usb_port.exchange` raises DTR, without which the robot never receives the
+    command and answers nothing -- which used to read as a dead robot.
+    """
+    return usb_port.exchange(port, command, seconds)
 
 
 def base_status(port):
@@ -85,18 +75,23 @@ def main():
     if stanbot_running():
         print("Stanbot is open. Quit it first: it may start a session under this check.", file=sys.stderr)
         return 2
-    port = args.port
-    if not port:
-        ports = glob.glob("/dev/cu.usbmodem*")
-        if len(ports) != 1:
-            print(f"Expected one USB serial port, found {ports}. Name it.", file=sys.stderr)
-            return 2
-        port = ports[0]
+    port = usb_port.resolve_or_exit(args.port)
+    # Quitting Stanbot is not enough on its own: anything else holding the port
+    # (a serial monitor, another check) takes the replies just as completely,
+    # and the silence looks identical to a robot that has stopped answering.
+    contention = usb_port.contention_note(port)
+    if contention:
+        print(contention, file=sys.stderr)
+        return 2
 
     before = base_status(port)
     print(f"before: {before}")
     if not healthy(before):
-        print("FAIL: the head cannot reach its base even before sleeping. Reboot the robot and try again.")
+        if before is None:
+            print("FAIL: the robot said nothing at all. That is the transport, not the base:\n"
+                  "      check the cable, and that nothing else holds %s." % port)
+        else:
+            print("FAIL: the head cannot reach its base even before sleeping. Reboot the robot and try again.")
         return 1
     for cycle in range(args.cycles):
         exchange(port, "C,SLEEP", 2.5)   # long enough for the eyes to close and the backlight to go

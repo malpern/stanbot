@@ -30,6 +30,42 @@ Consequences while it stays broken:
 - The head port is the recovery path if anything else fails.
 - Base-port power is still useful, because it is the stationary connector.
 
+## Two ways USB goes silent while the robot is perfectly well
+
+Both were diagnosed as a dead or broken robot before being understood, and
+neither announces itself: the symptom of each is that commands get no reply.
+
+**1. DTR must be asserted, or the robot never receives a byte.** The ESP32-S3's
+USB CDC only delivers host writes once DTR is raised, and `os.open` does not
+raise it. A plain open therefore sends commands into nothing. Verified
+2026-09-18: with DTR raised `V` answered instantly; without it, silence, on the
+same cable and firmware. On macOS:
+
+```python
+fcntl.ioctl(fd, 0x8004746C, struct.pack("I", 0x002 | 0x004))   # TIOCMBIS, DTR|RTS
+```
+
+`tools/usb_port.py` does this for every tool that opens the port. Anything new
+that talks to the robot over USB should use it rather than opening the device
+itself. `tools/test_usb_port.py` pins the ioctl, because the failure it prevents
+is invisible from the code.
+
+**2. A second reader takes the replies.** `/dev/cu.*` may be opened by several
+processes at once and they do not share: each byte goes to whichever read wins.
+So while Stanbot holds the port, a tool can send a good command, the robot can
+answer correctly, and the tool sees nothing. This is what produced the "no SBST"
+failures of 2026-09-17, and a `C,REBOOT` on 2026-09-18 that appeared to vanish —
+seven copies sent, `uptime_ms` still climbing.
+
+It cannot be distinguished from a dead robot by looking at the silence, so the
+tools ask the operating system instead: `usb_port.contention_note()` runs `lsof`
+and names the other holder. `check_sleep_wake.py` refuses outright; `check_mouth.py`
+cannot, because the robot only accepts mouth packets from its current Wi-Fi
+viewer and so Stanbot must be running — it reports which process is taking the
+replies and suggests putting Stanbot on Wi-Fi. **Quitting Stanbot is not the
+general fix; anything holding the port does this**, including a serial monitor
+or another check.
+
 ## USB speed is the robot's limit, not the Mac's
 
 The link negotiates to its slowest end, and the ESP32-S3's built-in serial
