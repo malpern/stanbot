@@ -1239,6 +1239,19 @@ void sendScreenshot() {
                 swapped ? "true" : "false");
 }
 
+// Take and send a screenshot if one is owed. Called from whichever task is
+// actually running: the camera task normally, the session capture task during
+// a follow session. Both own the viewer socket while they run, which is why
+// the send belongs here and not on the loop task.
+void serviceScreenshot(bool spriteIsStatic) {
+  // The loop task takes the copy when it can, between a push and the next
+  // draw. It cannot during a session -- it is inside runFollowSession -- but
+  // then the face is frozen for the whole session, so the sprite is static and
+  // safe to copy from here.
+  if (spriteIsStatic && screenshotRequested.load() && !screenshotReady.load()) captureScreenshot();
+  if (screenshotReady.exchange(false)) sendScreenshot();
+}
+
 void sendFrame(const ESPVideoBufferClass& frame) {
   uint8_t* jpeg = nullptr;
   size_t jpegLength = 0;
@@ -2170,6 +2183,12 @@ std::atomic<bool> sessionCaptureDone{true};
 void sessionCaptureTask(void*) {
   while (sessionCaptureRun.load()) {
     pollNetworkCommands();
+    // C,SCREEN timed out for the whole of every follow session -- the state the
+    // robot is in most of the time -- because the two tasks that normally
+    // handle it are both stopped: the loop task is inside runFollowSession, and
+    // the camera task is blocked in captureBuffer() while THIS task owns the
+    // camera. It owns the viewer socket too, so the send belongs here.
+    serviceScreenshot(true);
     serviceFrame();
     vTaskDelay(1);
   }
@@ -2785,16 +2804,11 @@ void cameraTask(void*) {
     if (servoProbeRequested.exchange(false)) probeServos();
     if (resetStats.exchange(false)) { stats = {}; stats.startedMs = millis(); framePacer.reset(); }
     if (versionRequested.exchange(false)) emitVersion();
-    // A follow session owns the loop task for its whole length, so loop()
-    // cannot take the copy and C,SCREEN simply timed out -- while following,
-    // which is the state the robot is in most of the time. But a blocked loop
-    // is exactly what makes this safe: the face is frozen for the session
-    // (which is why it does not animate while the head moves), so nothing is
-    // writing the sprite and this task can copy it itself.
-    if (screenshotRequested.load() && !screenshotReady.load() && motionRunning.load()) {
-      captureScreenshot();
-    }
-    if (screenshotReady.exchange(false)) sendScreenshot();
+    // Outside a session the loop task takes the copy; this task only sends.
+    // It cannot help DURING a session: it is blocked inside captureBuffer(),
+    // because sessionCaptureTask has taken over the camera and the viewer --
+    // which is why that task services screenshots instead.
+    serviceScreenshot(false);
     serviceLightBar(nullptr);
     {
       const uint32_t request = registerRequest.exchange(0);
