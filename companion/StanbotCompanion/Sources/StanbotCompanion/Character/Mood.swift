@@ -59,8 +59,14 @@ struct Mood: Equatable {
         case .connected:
             break
         }
-        if case .finished(let result) = follow, !result.retryable {
-            return Mood(emotion: .trouble, caption: "Something’s wrong")
+        if case .finished(let result) = follow {
+            // Going down on purpose is sleep, not damage. The trouble face is
+            // for something breaking; a reboot or an update is Stanbot closing
+            // its eyes, and it should look the same as going to sleep does.
+            if result.goingToSleep {
+                return Mood(emotion: .sleepy, caption: result.sleepingCaption, asleep: true)
+            }
+            if result.isFault { return Mood(emotion: .trouble, caption: "Something’s wrong") }
         }
         let look = box.map { CGPoint(x: $0.rect.midX * 2 - 1, y: 1 - $0.rect.midY * 2) }
         let closeness = Double(box?.rect.width ?? 0)

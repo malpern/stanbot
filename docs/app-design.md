@@ -146,6 +146,28 @@ the robot's view, with a little of the robot's character in it.
   ended in a fault, then returns to whatever expression was chosen; normal
   endings (idle, deadline, stopped) do not trigger it. Empty states use the same face,
   large, with the one action that helps ("Stanbot is asleep", Reconnect).
+- **Going down on purpose is sleep, not damage.** A reboot, a firmware update
+  and a sleep all end the session, and all three now show the **sleeping** face
+  — closed eyes, "Back in a moment…" / "Updating…" / "Asleep" — never the
+  trouble face. This was wrong until 2026-09-18, when the owner watched an
+  orderly reboot put the Sad Mac up: `Mood.of` tested `!result.retryable`, and
+  that flag answers a different question — *is starting again worth trying* —
+  which a deliberate shutdown fails just as a fault does. `FollowResult` now
+  says which it is: `goingToSleep` for the three deliberate stops, `isFault`
+  for things that actually broke. A **refusal** is neither: `requires_unused_boot`,
+  `follow_refused_asleep` and the `auth_` codes tell the owner what to do, and
+  the trouble face would replace that with "broken".
+- **Closed eyes are the same curve in both faces.** Shut, an eye is a sagging
+  arc, not a flattened one: 70 wide with a 17.6 sag and a 9-weight round-capped
+  stroke, at the robot's own 320x240 scale. The Mac draws it as a quad curve
+  (`ClosedEye`); the robot draws the same geometry as a swept arc
+  (`StanbotEyes::drawClosedEye`), because `fillArc` is what M5GFX gives it. The
+  robot used to collapse each eye to a 2 px bar instead, so falling asleep read
+  as the picture failing rather than as eyes closing — the owner asked for them
+  to match on 2026-09-18. The sag grows in over the last of the closing so the
+  eye melts into the curve rather than popping into it.
+  `companion/test_closed_eye.cpp` checks the robot's arc against the Mac's
+  numbers, since the alternative is judging it by eye on a 2-inch screen.
 - **Rounded type** only where Stanbot speaks (captions, empty-state titles,
   face labels); the system font everywhere else. The accent is the robot's eye
   cyan, softened.

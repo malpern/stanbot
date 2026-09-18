@@ -208,6 +208,19 @@ class StanbotEyes {
       drawTrouble(display, iris);
       return;
     }
+    // Nearly shut: a curved lid, not a squashed eye. The Mac draws closed eyes
+    // as a sagging arc (StanbotEyes.swift, ClosedEye) and the robot flattened
+    // to a 2 px bar instead, so falling asleep read as the picture collapsing
+    // rather than as eyes closing. Asked for 2026-09-18: make them match.
+    if (lids <= kClosedLidsFrom) {
+      // Sag grows in as the last of the opening goes, so the rounded eye melts
+      // into the curve instead of popping into it.
+      const float shut = 1.0f - lids / kClosedLidsFrom;
+      drawClosedEye(display, 102, kBaseY, shut, iris);
+      drawClosedEye(display, 218, kBaseY, shut, iris);
+      drawMouth(display);
+      return;
+    }
     drawEye(display, 102, kBaseY, width, height, radius, pupilX, pupilY,
             iris);
     drawEye(display, 218, kBaseY, width, height, radius, pupilX, pupilY,
@@ -285,6 +298,51 @@ class StanbotEyes {
         display.fillRoundRect(x, g.centerY - height / 2, g.arcThickness, height,
                               g.arcThickness / 2, kSlot);
       }
+    }
+  }
+
+  // A closed eye: the same sagging curve the Mac draws, so the two faces read
+  // as one character. Geometry is taken from the Mac's ClosedEye rather than
+  // invented -- at the robot's own 320x240 scale that curve is 70 wide with a
+  // 17.6 sag, which is a circular arc of radius 44 swept 53 degrees either side
+  // of straight down. Angles run clockwise from 3 o'clock in M5GFX, so
+  // straight down is 90.
+  static constexpr int kClosedWidth = 70;
+  static constexpr int kClosedSag = 18;
+  static constexpr int kClosedStroke = 9;      // the Mac's lineWidth
+  /// Below this much lid left, the eye is drawn as the curve.
+  static constexpr float kClosedLidsFrom = 0.16f;
+
+  template <typename Display>
+  void drawClosedEye(Display& display, int centerX, int centerY, float shut, uint16_t iris) {
+    if (shut < 0.0f) shut = 0.0f;
+    if (shut > 1.0f) shut = 1.0f;
+    // A flat bar at the moment of the switch, the full curve once shut.
+    const int sag = static_cast<int>(kClosedSag * shut);
+    const int half = kClosedWidth / 2;
+    if (sag < 2) {
+      display.fillRoundRect(centerX - half, centerY - kClosedStroke / 2, kClosedWidth,
+                            kClosedStroke, kClosedStroke / 2, iris);
+      return;
+    }
+    // Radius and sweep for this sag, so the ends stay put while the middle
+    // drops: R from the sagitta, the half angle from asin(half / R).
+    const float radius = (static_cast<float>(half) * half + static_cast<float>(sag) * sag)
+                         / (2.0f * sag);
+    float ratio = half / radius;
+    if (ratio > 1.0f) ratio = 1.0f;
+    const int sweep = static_cast<int>(asinf(ratio) * 180.0f / 3.14159265f);
+    const int arcCentreY = centerY + sag / 2 - static_cast<int>(radius);
+    const int inner = static_cast<int>(radius) - kClosedStroke / 2;
+    const int outer = inner + kClosedStroke;
+    display.fillArc(centerX, arcCentreY, inner, outer, 90 - sweep, 90 + sweep, iris);
+    // The Mac's stroke has round caps; fillArc ends square, and at this weight
+    // the difference is visible as a clipped tip.
+    for (int side = -1; side <= 1; side += 2) {
+      const float angle = (90 + side * sweep) * 3.14159265f / 180.0f;
+      const int capX = centerX + static_cast<int>(cosf(angle) * radius);
+      const int capY = arcCentreY + static_cast<int>(sinf(angle) * radius);
+      display.fillCircle(capX, capY, kClosedStroke / 2, iris);
     }
   }
 

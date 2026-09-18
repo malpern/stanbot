@@ -23,6 +23,31 @@ final class CharacterTests: XCTestCase {
         }
     }
 
+    /// Going down on purpose is sleep, not damage. The owner saw the Sad Mac
+    /// face on an orderly reboot on 2026-09-18: the code read `!retryable` as
+    /// "something broke", but that flag answers whether starting again is worth
+    /// trying, which a deliberate shutdown also fails.
+    func testDeliberateShutdownsSleepRatherThanLookBroken() {
+        func mood(_ code: String) -> Mood {
+            Mood.of(connection: .connected("stanbot.local"), camera: .receiving,
+                    face: .searching, box: nil, follow: .finished(FollowResult(code: code)))
+        }
+        for code in ["stopped_for_reboot", "stopped_for_update", "stopped_for_sleep"] {
+            XCTAssertEqual(mood(code).emotion, .sleepy, "\(code) should look asleep")
+            XCTAssertTrue(mood(code).asleep, "\(code) should draw closed eyes")
+            XCTAssertNotEqual(mood(code).caption, "Something’s wrong", "\(code)")
+        }
+        // A refusal the owner can act on is not a fault either: its summary
+        // says what to do, and the trouble face says only "broken".
+        for code in ["requires_unused_boot", "follow_refused_asleep", "auth_bad_mac"] {
+            XCTAssertNotEqual(mood(code).emotion, .trouble, "\(code) is a refusal, not a fault")
+        }
+        // Things that really did break still look broken.
+        for code in ["base_unreachable", "no_result_repeated", "preflight_refused"] {
+            XCTAssertEqual(mood(code).emotion, .trouble, "\(code) should show the trouble face")
+        }
+    }
+
     func testMoodFollowsWhatIsTrue() {
         let face = FaceBox(rect: CGRect(x: 0.6, y: 0.2, width: 0.2, height: 0.2), confidence: 0.9)
         func mood(_ connection: RobotConnection.ConnectionState = .connected("stanbot.local"),

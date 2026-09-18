@@ -18,6 +18,39 @@ struct FollowResult: Equatable {
 
     var needsReboot: Bool { code == "requires_unused_boot" }
 
+    /// The robot stopped on purpose and is on its way down: a reboot, a
+    /// firmware update, or sleep. Not a fault, and not something to look
+    /// alarmed about -- it is going to sleep, and should look like it.
+    var goingToSleep: Bool {
+        ["stopped_for_reboot", "stopped_for_update", "stopped_for_sleep"].contains(code)
+    }
+
+    /// Something actually broke. Deliberately NOT `!retryable`: that answers a
+    /// different question (is starting again worth trying), and reading it as
+    /// "is this a fault" put the Sad Mac face on an orderly reboot -- the owner
+    /// saw it on 2026-09-18. A refusal the owner can act on is not a fault
+    /// either: it says what to do, and the trouble face says only "broken".
+    var isFault: Bool {
+        if goingToSleep || retryable { return false }
+        return ![
+            "requires_unused_boot",          // reboot to run another session
+            "follow_refused_asleep",         // wake it first
+            "follow_refused_limits_unmeasured",
+            "follow_requires_stream_on",
+            "update_in_progress",
+            "auth_no_passphrase", "auth_no_passphrase_stored", "auth_bad_mac",
+        ].contains(code)
+    }
+
+    /// What Stanbot says while it is going down on purpose.
+    var sleepingCaption: String {
+        switch code {
+        case "stopped_for_reboot": "Back in a moment…"
+        case "stopped_for_update": "Updating…"
+        default: "Asleep"
+        }
+    }
+
     /// Whether starting again straight away makes sense. Refusals about the
     /// firmware, the passphrase or the servos would only repeat.
     var retryable: Bool {
