@@ -470,24 +470,6 @@ session ended 50 degrees off centre and 22 above level -- reporting
 `stopped_for_sleep` as though it had worked. The latch is cleared by `begin()`,
 so it never outlives its session.
 
-**The face is frozen for the whole of a session, and sleeping has to work
-around it.** Every eye render lives in `loop()`, and `loop()` is blocked inside
-`runFollowSession()` until the session ends -- so while the head travels, the
-screen holds whatever expression it last drew. Left alone that makes going to
-sleep three waits in a row: travel with open eyes, then a 0.7 s close, then
-black. The owner asked for one movement instead, 2026-09-17: eyes closing as it
-sets off, the closed lids visible all the way home, and the screen going dark
-only on arrival. So the sleep park closes the eyes when it starts and draws the
-face from inside the session while it goes -- **pushing the sprite only when
-`eyes.update()` returns true**. It paces itself at about 30 fps and returns
-false without touching the sprite when called sooner, so pushing anyway puts a
-stale, half-composed buffer on the screen: on 2026-09-17 that read as the screen
-flashing with the eyes drawn a fraction of the way. It is why `loop()` has
-always tested the return value. By the time `loop()`
-resumes the lids are already down, so `closedForSleep` is true at once and the
-screen darkens the moment the head arrives. It is bounded to that one state,
-which lasts under four seconds.
-
 **Sleep parks level, not down.** There is no downward droop to strike: M5Stack's
 Y axis runs 0..90 degrees from level to straight up, so level is the bottom of
 the range (see `head_tracker.h`). `C,SLEEP` therefore brings the head home and

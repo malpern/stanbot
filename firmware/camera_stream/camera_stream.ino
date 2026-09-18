@@ -2244,31 +2244,11 @@ void runFollowSession() {
             if (centringForReboot == 0) {
               centringForReboot = now;
               tracker.comeHome();   // latched: a face or a search must not divert it
-              // Going to sleep: close the eyes NOW, at the start of the journey
-              // home, rather than after it. The owner asked for the closed lids
-              // to stay visible until the head arrives, and for the screen to
-              // go dark only then -- one movement, not three waits.
-              if (asleep.load()) eyes.beginSleep(now);
             } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
               result = asleep.load() ? "stopped_for_sleep"
                      : otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";
               followStopRequested.store(false);   // onStart sets it too; do not leave it armed
               break;
-            }
-            // Every eye render lives in loop(), and loop() is blocked in here for
-            // the whole session -- which is why the face freezes mid-expression
-            // while the head travels. Drive it from here while coming home to
-            // sleep, so the lids can be seen closing and then staying closed.
-            // Bounded to this one state, which lasts under four seconds.
-            //
-            // PUSH ONLY WHEN update() SAYS IT DREW. It paces itself at about
-            // 30 fps and returns false without touching the sprite when called
-            // sooner; pushing anyway puts a stale, half-composed buffer on the
-            // screen. That is exactly what it looked like on 2026-09-17 -- the
-            // screen flashing and the eyes drawn a fraction of the way -- and
-            // it is why loop() has always tested the return value.
-            if (asleep.load() && eyeFrameReady && eyes.update(eyeFrame, now)) {
-              eyeFrame.pushSprite(0, 0);
             }
           } else if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
