@@ -51,7 +51,18 @@ def exchange(port, command, seconds):
 
 
 def base_status(port):
-    """The base's line from the read-only probe: a dict, or None if it never came."""
+    """The base's line from the read-only probe: a dict, or None if it never came.
+
+    Stops the stream first. Frames and text share this one USB channel, and only
+    the frames carry a length, so a reply that arrives among JPEG data is
+    shredded and the base line is simply lost. On 2026-09-17 that made this
+    check report FAIL -- "the head cannot reach its base" -- about a robot whose
+    base was answering perfectly well, because Stanbot had been killed mid
+    stream and the robot went on sending frames to a viewer that no longer
+    existed. A check that cries wolf about the one fault it exists to catch is
+    worse than no check.
+    """
+    exchange(port, "X", 1)
     for line in exchange(port, "Q", 4).splitlines():
         if line.startswith("SBSC ") and '"base"' in line:
             try:

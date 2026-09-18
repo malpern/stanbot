@@ -174,7 +174,9 @@ firmware plus the sleep work.
   such call (mark a genuinely safe one `// i2c-ok: why`); use the camera task's
   driver instead, as `backlight.h` does. **After flashing anything that touches
   sleep, power, the display, the light bar or I2C, run
-  `python3 tools/check_sleep_wake.py`** (robot on USB, Stanbot closed; moves
+  `python3 tools/check_sleep_wake.py`** (it stops the stream first: text and
+  frames share the USB channel, and a reply among JPEG data is shredded, which
+  on 2026-09-17 made it report a healthy robot as FAIL) (robot on USB, Stanbot closed; moves
   nothing): it reads the base, sleeps and wakes three times, and reads it again.
 - **Failures must be loud.** The robot reports its base link as `SBHL` on every
   connect and whenever it changes; the app shows it as the orange alert, the red
