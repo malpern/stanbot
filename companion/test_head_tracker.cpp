@@ -902,8 +902,9 @@ void aScanStartsWhereSomeoneWasLastSeen() {
   const int remembered = tracker.lastSeenYaw();
   assert(remembered > kLimits.yawRest);
 
-  // A fresh session that remembers: the first place it goes is that one, and
-  // it gets there before it reaches either limit.
+  // A fresh session that remembers: the first place it goes is that one, it
+  // gets there before it reaches either limit, and it HOLDS there -- the chair
+  // is the guess worth testing, not merely where the sweep starts.
   HeadTracker next(kLimits, kConfig);
   next.begin(kLimits.yawRest, 630, now);
   next.rememberLastSeen(remembered, 630);
@@ -919,6 +920,26 @@ void aScanStartsWhereSomeoneWasLastSeen() {
   assert(arrivedAt >= 0);
   std::printf("  scan reached the remembered %d raw after %d ms\n",
               remembered, arrivedAt * static_cast<int>(kConfig.controlPeriodMs));
+  // It stays there for chairHoldMs, not the ordinary dwell: long enough for a
+  // still image. Let it settle onto the goal first (easing creeps the last few
+  // raw), then count the ticks where the head does not move at all.
+  int previous = next.commandedYaw();
+  for (int i = 0; i < 20; ++i) {
+    now += kConfig.controlPeriodMs;
+    next.step(now);
+    if (next.commandedYaw() == previous) break;
+    previous = next.commandedYaw();
+  }
+  int stillTicks = 0;
+  for (int i = 0; i < 60; ++i) {
+    now += kConfig.controlPeriodMs;
+    next.step(now);
+    if (next.commandedYaw() != previous) break;
+    ++stillTicks;
+  }
+  const int heldMs = stillTicks * static_cast<int>(kConfig.controlPeriodMs);
+  std::printf("  and held there %d ms (ordinary dwell is %u)\n", heldMs, kConfig.searchDwellMs);
+  assert(heldMs > static_cast<int>(kConfig.searchDwellMs));
   // And it is still a full look around if nobody is there: both limits, then home.
   int lowest = kLimits.yawMax, highest = kLimits.yawMin;
   for (int i = 0; i < 700 && next.mode() != FollowMode::Idle; ++i) {

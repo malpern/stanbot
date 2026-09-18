@@ -46,6 +46,10 @@ full follow session ran on it at 14:31 (301 observations, ended `session_idle`).
   during its 2.4 s waking). Built, NOT yet seen.
 - **A reboot asked for mid-session** now ends the session (`stopped_for_reboot`)
   instead of waiting out the 3-minute cap in silence. Built, NOT yet seen.
+- **A look around checks the chair first**: where they were last seen, held
+  1.2 s, then 20 deg either side, and only then the room. 1.0 s to be looking
+  at someone in their usual place; 19.1 s for the whole room when they are not.
+  Built, NOT yet seen.
 - **A look around stops every 40 deg** rather than sweeping between the two
   limits: on 2026-09-17 a whole look returned 114 frames with no face in any of
   them while the owner was in the room. Six stops across 180 deg, 15.5 s.

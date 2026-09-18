@@ -132,8 +132,9 @@ constexpr bool kFollowPitchEnabled = true;
 constexpr bool kFollowPitchEnabled = false;
 #endif
 
-// Room for the longest look around: the glances, a stop every scanSpacingRaw
-// across the full range, and the two pitch legs.
+// Room for the longest look around: the chair and its two neighbours (or the
+// two glances of a search), a stop every scanSpacingRaw across the full range,
+// and the two pitch legs.
 constexpr unsigned kMaxWaypoints = 16;
 
 struct FollowConfig {
@@ -186,6 +187,10 @@ struct FollowConfig {
   // view (rawPerUnitX 96 is the image edge, ~30 deg, so ~60 deg across), so the
   // stops overlap and nobody can stand in a gap between two of them.
   int scanSpacingRaw = 128;          // 40 degrees
+  // Where the person was last seen is checked first and properly, before any
+  // sweep of the room: held this long, and then either side of it.
+  uint32_t chairHoldMs = 1200;
+  int chairNearRaw = 64;             // 20 degrees: still "by the desk"
   int scanPitchUpRaw = 90;           // how far above level the upward look goes
   uint32_t scanHoldMs = 300;         // a beat before the first turn
 
@@ -422,9 +427,22 @@ class HeadTracker {
     unsigned n = 0;
     int first = -1;   // with nothing remembered, sweep robot-left first
     if (haveLastSeen_) {
-      waypoints_[n++] = {clamp(lastSeenYaw_, limits_.yawMin, limits_.yawMax),
-                         config_.pitchEnabled ? clamp(lastSeenPitch_, pitchLow_, pitchHigh_) : pitch_};
-      // Carry on outward from that side rather than crossing the room first.
+      // The chair. The owner sits in the same place nearly all the time --
+      // "I'll likely be at the same location, sitting in my chair, or nearby
+      // most of the time. Only if I'm not there should it sweep around the
+      // room looking for me" -- so this is not merely where the sweep starts:
+      // it is the guess worth testing properly, and it is held `chairHoldMs`
+      // rather than the ordinary dwell, long enough for detection to settle on
+      // a still image.
+      const int chair = clamp(lastSeenYaw_, limits_.yawMin, limits_.yawMax);
+      const int chairPitch = config_.pitchEnabled ? clamp(lastSeenPitch_, pitchLow_, pitchHigh_) : pitch_;
+      waypoints_[n++] = {chair, chairPitch, config_.chairHoldMs};
+      // Then just beside it, either side: a chair is not a point, and someone
+      // leaning out of it or standing next to it is still "there".
+      waypoints_[n++] = {clamp(chair - config_.chairNearRaw, limits_.yawMin, limits_.yawMax), chairPitch, 0};
+      waypoints_[n++] = {clamp(chair + config_.chairNearRaw, limits_.yawMin, limits_.yawMax), chairPitch, 0};
+      // Only then the room, carrying on outward from that side rather than
+      // crossing it first.
       first = lastSeenYaw_ < limits_.yawRest ? -1 : +1;
     }
     waypointCount_ = layOutLookAround(first, n);
@@ -461,11 +479,11 @@ class HeadTracker {
     const int step = from < to ? config_.scanSpacingRaw : -config_.scanSpacingRaw;
     for (int yaw = from; n < kMaxWaypoints - 2; yaw += step) {
       const bool last = (step > 0 && yaw >= to) || (step < 0 && yaw <= to);
-      waypoints_[n++] = {last ? to : yaw, level};
+      waypoints_[n++] = {last ? to : yaw, level, 0};
       if (last) break;
     }
-    waypoints_[n++] = {limits_.yawRest, up};
-    waypoints_[n++] = {limits_.yawRest, down};
+    waypoints_[n++] = {limits_.yawRest, up, 0};
+    waypoints_[n++] = {limits_.yawRest, down, 0};
     return n;
   }
 
@@ -565,8 +583,8 @@ class HeadTracker {
       glancePitch = clamp(pitch_ + up * limits_.pitchUpSign * config_.searchGlancePitchRaw, pitchLow_, pitchHigh_);
     }
     const int lost = yaw_;
-    waypoints_[0] = {clamp(lost + side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch};
-    waypoints_[1] = {clamp(lost - side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch};
+    waypoints_[0] = {clamp(lost + side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch, 0};
+    waypoints_[1] = {clamp(lost - side * config_.searchGlanceRaw, limits_.yawMin, limits_.yawMax), glancePitch, 0};
     waypointCount_ = layOutLookAround(side, 2);
     mode_ = FollowMode::Searching;
     searchStartMs_ = nowMs;
@@ -579,7 +597,9 @@ class HeadTracker {
   bool advanceSearch(uint32_t nowMs) {
     if (nowMs - searchStartMs_ < (scanning_ ? config_.scanHoldMs : config_.searchHoldMs)) return false;   // hold still first
     if (haveGoal_) return true;                                        // still travelling
-    if (arrivedMs_ != 0 && nowMs - arrivedMs_ < config_.searchDwellMs) return false;
+    const uint32_t dwell = waypoint_ < waypointCount_ && waypoints_[waypoint_].holdMs != 0
+                        ? waypoints_[waypoint_].holdMs : config_.searchDwellMs;
+    if (arrivedMs_ != 0 && nowMs - arrivedMs_ < dwell) return false;
     if (arrivedMs_ != 0) ++waypoint_;
     arrivedMs_ = 0;
     if (waypoint_ >= waypointCount_) { beginReturn(); return true; }
@@ -614,7 +634,7 @@ class HeadTracker {
   int pitchHome_ = 0, pitchLow_ = 0, pitchHigh_ = 0;  // this session's pitch start and bounds
   int lastStepYaw_ = 0, lastStepPitch_ = 0;           // for easing
   float lastX_ = 0.0f, lastY_ = 0.0f;                 // where the face was last seen, for search
-  struct Waypoint { int yaw, pitch; };
+  struct Waypoint { int yaw, pitch; uint32_t holdMs; };
   // Two glances or a remembered place, then a stop every scanSpacingRaw across
   // the range, then up and down. At the widest limits and the closest spacing
   // this is sixteen; the layout stops adding rather than overrun.

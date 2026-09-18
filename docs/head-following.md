@@ -315,9 +315,24 @@ so the 12 s is 12 s of *resting* after the look has finished. Host tests:
 ## Looking around with nobody to lose (a wake, or a reboot)
 
 `beginScan` is the look around for a robot that has not lost anybody: it has
-just woken, or just come back from a reboot. It **starts where someone was last
-seen**, if this boot has seen anyone, and carries on outward from that side
-rather than crossing the room first; then the ordinary look around, then home.
+just woken, or just come back from a reboot. **The chair comes first**, then
+beside it, and only then the room:
+
+1. **Where they were last seen**, held `chairHoldMs` (1.2 s) rather than the
+   ordinary 400 ms dwell -- long enough for detection to settle on a still
+   image, because this is the guess worth testing rather than merely where a
+   sweep starts.
+2. **Either side of it**, `chairNearRaw` (64 raw, 20 deg) each way: a chair is
+   not a point, and someone leaning out of it or standing beside it is still
+   there.
+3. **The room**, stop by stop, carrying on outward from that side rather than
+   crossing it first; then home.
+
+This is the desk the robot lives on: "I'll likely be at the same location,
+sitting in my chair, or nearby most of the time. Only if I'm not there should it
+sweep around the room looking for me" (2026-09-17). At the live limits the head
+is pointed at the chair **1.0 s** after the look begins, and the full room sweep
+-- 19.1 s -- happens only when nobody is found there.
 The owner asked for it on 2026-09-17, having watched a scan sweep past where
 they were sitting: "Remember where I was last time and start the search in that
 general area. Only if that fails, then do a full scan search."
