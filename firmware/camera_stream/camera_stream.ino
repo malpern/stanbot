@@ -263,6 +263,8 @@ std::atomic<bool> scanOnFirstSession{true};
 // app, C,LOOK). The next session begins with a full look around, starting where
 // it last saw them, whatever else it would have done.
 std::atomic<bool> lookRequested{false};
+// -1: leave it alone. 0: the capsule. 1: the speaker grille (MouthModel.h).
+std::atomic<int> mouthStyleRequested{-1};
 // Where a face was last seen, so a look around can start there instead of at a
 // limit. Carried from one session to the next in RAM, and across reboots by the
 // MAC, which hands it back on connecting (the K command below). It lived in NVS
@@ -759,6 +761,11 @@ void handleCommand(const char* line) {
   }
   else if (strcmp(line, "C,OFF") == 0) powerDownRequested.store(true);
   else if (strcmp(line, "C,LOOK") == 0) { lookRequested.store(true); followRequested.store(true); }
+  // Which mouth to draw. A display change and nothing else, so it needs no
+  // authorization: it exists to be switched back and forth while watching the
+  // robot, which is the only way to settle which one is better.
+  else if (strcmp(line, "C,MOUTH,CAPSULE") == 0) mouthStyleRequested.store(0);
+  else if (strcmp(line, "C,MOUTH,GRILLE") == 0) mouthStyleRequested.store(1);
   else if (strcmp(line, "C,REBOOT") == 0) rebootRequested.store(true);
   else if (strcmp(line, "C,FOLLOW") == 0) followRequested.store(true);
   else if (strcmp(line, "C,UNFOLLOW") == 0) followStopRequested.store(true);
@@ -2804,6 +2811,10 @@ void loop() {
   if (servicesStarted && otaEnabled.load()) ArduinoOTA.handle();
   const int emotion = pendingEmotion.exchange(-1);
   if (emotion >= 0) { chosenEmotion = static_cast<StanbotEmotion>(emotion); eyes.setEmotion(chosenEmotion); }
+  if (const int style = mouthStyleRequested.exchange(-1); style >= 0) {
+    eyes.setMouthStyle(style == 1 ? stanbot::MouthStyle::Grille : stanbot::MouthStyle::Capsule);
+    Telemetry.printf("SBMS {\"mouth_style\":\"%s\"}\n", style == 1 ? "grille" : "capsule");
+  }
   // Found someone on waking: surprised, glee, then focused while it follows.
   if (const uint32_t began = reactionStartedMs.load(); began != 0) {
     const uint32_t elapsed = now - began;

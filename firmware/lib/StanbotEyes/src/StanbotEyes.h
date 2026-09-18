@@ -66,6 +66,11 @@ class StanbotEyes {
   // opens its eyes, and only then looks around (asked for 2026-09-17).
   bool eyesOpen(uint32_t now) const { return curtain_.openness(now) >= 1.0f; }
 
+  // Which mouth to draw. Public because the sketch switches it at runtime
+  // (C,MOUTH,...), so the two can be compared by eye on the robot.
+  void setMouthStyle(stanbot::MouthStyle style) { mouthStyle_ = style; }
+  stanbot::MouthStyle mouthStyle() const { return mouthStyle_; }
+
   // A loudness packet from the Mac while it plays speech (MouthModel.h).
   bool mouthReceive(uint32_t sequence, uint8_t open, int8_t shape, uint32_t now) {
     return mouth_.receive(sequence, open, shape, now);
@@ -142,6 +147,7 @@ class StanbotEyes {
   stanbot::GazeBrain gaze_{0xC0FFEEu};
   stanbot::MouthModel mouth_;
   stanbot::SleepCurtain curtain_;
+  stanbot::MouthStyle mouthStyle_ = stanbot::MouthStyle::Capsule;
   StanbotEmotion emotion_ = StanbotEmotion::Normal;
   struct Pose { float width; float height; float tilt; float pupilScale; };
   Pose currentPose_{86, 112, 0, 1};
@@ -217,10 +223,11 @@ class StanbotEyes {
     display.fillArc(160, 232, 22, 30, 190, 350, iris);
   }
 
-  // The mouth, only while speaking: a grey capsule a little dimmer than the
-  // irises, with a dark opening once it is tall enough (MouthModel.h).
+  // The mouth, only while speaking. Two styles, switchable at runtime so they
+  // can be compared by eye on the robot rather than argued about (C,MOUTH,...).
   template <typename Display>
   void drawMouth(Display& display) {
+    if (mouthStyle_ == stanbot::MouthStyle::Grille) { drawGrille(display); return; }
     const stanbot::MouthShape m = mouth_.shape();
     if (!m.visible) return;
     constexpr uint16_t kMouthGrey = 0x9CD3;   // about 60% grey; the irises are 0xBDF7
@@ -229,6 +236,39 @@ class StanbotEyes {
     if (m.innerWidth > 0) {
       display.fillRoundRect(m.centerX - m.innerWidth / 2, m.centerY - m.innerHeight / 2,
                             m.innerWidth, m.innerHeight, min(m.innerWidth, m.innerHeight) / 2, TFT_BLACK);
+    }
+  }
+
+  // A speaker panel rather than a face: a dark body with slots, and short arcs
+  // either side that appear with loudness. The slots sag or lift with mood,
+  // which is the grille's only way to say how it feels -- a speaker cannot
+  // frown, so it leans.
+  template <typename Display>
+  void drawGrille(Display& display) {
+    const stanbot::GrilleShape g = mouth_.grille();
+    if (!g.visible) return;
+    constexpr uint16_t kBody = 0x4208;    // dark, like a real grille: it sits in the face
+    constexpr uint16_t kSlot = 0x9CD3;    // the same grey the capsule used
+    display.fillRoundRect(g.centerX - g.width / 2, g.centerY - g.height / 2, g.width, g.height,
+                          min(g.width, g.height) / 3, kBody);
+    const int first = g.centerY - (g.slotCount - 1) * g.slotSpacing / 2;
+    for (int index = 0; index < g.slotCount; ++index) {
+      // The outer slots carry the lean; the middle one stays put, so the panel
+      // bends rather than slides.
+      const int fromCentre = index - (g.slotCount - 1) / 2;
+      const int lean = fromCentre == 0 ? 0 : (fromCentre > 0 ? g.tilt : -g.tilt);
+      const int y = first + index * g.slotSpacing + lean;
+      display.fillRoundRect(g.centerX - g.slotWidth / 2, y - g.slotHeight / 2,
+                            g.slotWidth, g.slotHeight, g.slotHeight / 2, kSlot);
+    }
+    for (int arc = 0; arc < g.arcCount; ++arc) {
+      const int offset = g.width / 2 + g.arcGap + arc * (g.arcThickness + g.arcGap);
+      const int height = g.arcLength;
+      for (int side = -1; side <= 1; side += 2) {
+        const int x = g.centerX + side * offset - (side < 0 ? g.arcThickness : 0);
+        display.fillRoundRect(x, g.centerY - height / 2, g.arcThickness, height,
+                              g.arcThickness / 2, kSlot);
+      }
     }
   }
 

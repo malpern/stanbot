@@ -19,7 +19,10 @@ inline bool networkCommandAllowed(const char* line) {
   // C,SLEEP and C,WAKE only darken or restore the screen and stop or allow the
   // stream, which X and S already do; turning the robot OFF is not here,
   // because only its button can undo that (command_auth.h).
-  static const char* const exact[] = {"S", "X", "V", "P", "Z", "C,UNFOLLOW", "C,SLEEP", "C,WAKE"};
+  // C,MOUTH,... only chooses how the mouth is drawn: a display change, like E,
+  // and G,, and it exists to be switched while watching the robot.
+  static const char* const exact[] = {"S", "X", "V", "P", "Z", "C,UNFOLLOW", "C,SLEEP", "C,WAKE",
+                                      "C,MOUTH,CAPSULE", "C,MOUTH,GRILLE"};
   for (const char* command : exact) {
     if (strcmp(line, command) == 0) return true;
   }

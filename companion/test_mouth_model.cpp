@@ -119,6 +119,72 @@ void stalledLoopDoesNotFlingTheSprings() {
   assert(mouth.shapeValue() >= -1.0f && mouth.shapeValue() <= 1.0f);
 }
 
+// The speaker grille: the second mouth style, asked for on 2026-09-17. The
+// question it has to answer is not "can it show loudness" -- any bar can -- but
+// whether it can still carry feeling once the lips are gone.
+// Keep speaking, as the app does: a packet every 50 ms. Without this the mouth
+// correctly goes away after kSilenceRestMs, which is the model working, not a
+// grille that failed to appear.
+static void speak(MouthModel& mouth, uint32_t& now, uint8_t open, int8_t shape, uint32_t ms) {
+  static uint32_t sequence = 100;
+  for (uint32_t elapsed = 0; elapsed < ms; elapsed += 50) {
+    mouth.receive(++sequence, open, shape, now);
+    runFor(mouth, now, 50);
+  }
+}
+
+void grilleShowsSpeechAndMood() {
+  stanbot::MouthModel mouth;
+  uint32_t now = 1000;
+  // Silent: nothing at all, the same as the capsule. A grille that sits there
+  // all day would be a feature of the face, not something Stanbot does.
+  mouth.update(now);
+  assert(!mouth.grille().visible);
+
+  // Speaking quietly: the panel is there, no sound coming out of it yet.
+  speak(mouth, now, 10, 0, 400);
+  const stanbot::GrilleShape quiet = mouth.grille();
+  assert(quiet.visible);
+  assert(quiet.slotCount == stanbot::MouthModel::kGrilleSlots);
+  assert(quiet.arcCount == 0);
+
+  // Louder: arcs appear and reach further, and the slots open apart.
+  speak(mouth, now, 100, 0, 500);
+  const stanbot::GrilleShape loud = mouth.grille();
+  assert(loud.arcCount == stanbot::MouthModel::kMaxArcs);
+  assert(loud.arcLength > quiet.arcLength);
+  assert(loud.slotSpacing > quiet.slotSpacing);
+  // The body does NOT breathe in and out: a panel that changes size reads as a
+  // mouth again, which is the thing this style exists not to be.
+  assert(loud.height == quiet.height);
+  std::printf("  grille: %d arcs at full voice, reach %d, slots %d apart\n",
+              loud.arcCount, loud.arcLength, loud.slotSpacing);
+
+  // Mood is the whole argument for this style being usable. A speaker cannot
+  // frown, so the slots lean: sad sags, pleased lifts, and neutral is flat.
+  mouth.setMood(0.0f);
+  assert(mouth.grille().tilt == 0);
+  mouth.setMood(-1.0f);
+  const int sad = mouth.grille().tilt;
+  mouth.setMood(1.0f);
+  const int pleased = mouth.grille().tilt;
+  assert(sad > 0 && pleased < 0 && sad == -pleased);
+  std::printf("  grille: mood bends the slots %d px, sad against pleased\n", sad);
+
+  // Brightness stretches the arcs: an "ee" reaches further than an "oo" at the
+  // same loudness, which is the timbre the capsule showed by going wide.
+  mouth.setMood(0.0f);
+  speak(mouth, now, 100, 100, 500);
+  const int bright = mouth.grille().arcLength;
+  speak(mouth, now, 100, -100, 500);
+  assert(bright >= mouth.grille().arcLength);
+
+  // And it leaves the way the capsule does, growing away from the centre,
+  // rather than switching off.
+  for (int i = 0; i < 200 && mouth.grille().visible; ++i) { now += 16; mouth.update(now); }
+  assert(!mouth.grille().visible);
+}
+
 int main() {
   parsesOnlyWellFormedPackets();
   hiddenUntilSpeechThenGrowsIn();
@@ -127,6 +193,7 @@ int main() {
   returnsToTheLineWhenPacketsStop();
   staleAndRepeatedSequencesAreIgnored();
   stalledLoopDoesNotFlingTheSprings();
+  grilleShowsSpeechAndMood();
   std::puts("mouth model: all tests passed");
   return 0;
 }

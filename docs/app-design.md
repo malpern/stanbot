@@ -223,6 +223,29 @@ camera, the caption is "Looking at you" (what Stanbot does), and nothing claims
 eye contact. In the title bar the eyes are small, too small for dilation and
 catchlights to read; they show fully where the face is drawn large.
 
+## Two faces, deliberately unequal
+
+The robot's face and the app's face are the same character drawn under
+completely different constraints, and they are **not** meant to match
+pixel for pixel.
+
+- **On the robot**, an ESP32-S3 draws into a 16-bit sprite with no alpha, while
+  the same core is running the camera, the servos and Wi-Fi. Everything there is
+  a compromise: flat fills, hard edges, presence faked by growing a shape out of
+  the centre because there is no opacity to fade. Do the best that can be done
+  inside that, and no more -- a frame the robot cannot afford costs following,
+  which is the thing it is actually for.
+- **In the app**, none of that applies, and the owner's direction (2026-09-17)
+  is to stop pretending it does: **go for maximum emotion and fidelity, and use
+  Metal.** A Mac has a GPU sitting idle. The Mac face should be the fullest
+  expression of the character -- glow, depth, soft light, real opacity, motion
+  that eases -- rather than an imitation of a small embedded screen.
+
+The LCD grid below is the one place the app deliberately imitates the robot, and
+it is there to say "this is what Stanbot sees out of", not to cap the fidelity.
+Where the two disagree, the app may be richer; it must never be *different* --
+same expression, same timing, same meaning, better drawn.
+
 ## The screen look (Metal)
 
 The eyes glow a little and, when drawn large, carry a faint LCD pixel grid with

@@ -43,6 +43,34 @@ inline bool parseMouthPacket(const uint8_t* data, size_t length, uint32_t& seque
   return true;
 }
 
+// Two ways to draw the same speech. The owner asked for the second on
+// 2026-09-17: "more like a speaker grill with sound lines coming from it".
+//
+// The argument for it is that Stanbot's eyes are frankly abstract -- two
+// rounded rectangles -- so a mouth that gestures at lips is the one part
+// pretending to be anatomy. A grille is honest about what it is. The cost is
+// that a mouth can show *valence* and a speaker cannot, so the grille leans
+// instead (`tilt`): slots sagging when sad, lifting when pleased. That buys
+// back most of what a frown was doing, and the eyes were carrying the rest
+// anyway.
+enum class MouthStyle : uint8_t { Capsule = 0, Grille = 1 };
+
+// The grille, in robot display pixels. A body with horizontal slots, and short
+// arcs either side that appear with loudness -- two a side, not an equaliser:
+// the owner has asked for calm throughout and radiating lines are the easiest
+// thing in the world to make busy.
+struct GrilleShape {
+  bool visible;
+  int centerX, centerY;
+  int width, height;
+  int slotCount;                 // horizontal slots drawn inside the body
+  int slotWidth, slotHeight;
+  int slotSpacing;               // centre to centre
+  int tilt;                      // pixels the outer slots drop (+) or lift (-)
+  int arcCount;                  // 0..kMaxArcs each side
+  int arcLength, arcThickness, arcGap;
+};
+
 class MouthModel {
  public:
   // Geometry, in robot display pixels. The eyes are centred at y 120 and are
@@ -121,6 +149,59 @@ class MouthModel {
              kRoundDeepen * round * open;
   }
 
+  // Emotional lean, -1 sad to +1 pleased. The eyes know the expression; the
+  // grille only needs to know which way to sag.
+  void setMood(float mood) { mood_ = mood < -1.0f ? -1.0f : (mood > 1.0f ? 1.0f : mood); }
+  float mood() const { return mood_; }
+
+  static constexpr int kGrilleWidth = 74;      // wider than the capsule: a panel, not a feature
+  static constexpr int kGrilleHeight = 26;
+  static constexpr int kGrilleSlots = 3;
+  static constexpr int kSlotThickness = 3;
+  static constexpr int kGrilleRim = 6;         // body edge left around the slots
+  static constexpr int kMaxArcs = 2;           // each side. Two, deliberately.
+  static constexpr int kArcThickness = 3;
+  static constexpr int kArcGap = 6;
+  static constexpr int kArcMinLength = 4;
+  static constexpr int kArcMaxLength = 11;
+  static constexpr float kArcFirstAt = 0.18f;  // loudness at which one arc appears
+  static constexpr float kArcSecondAt = 0.55f; // and the second
+  static constexpr int kMaxTilt = 4;           // how far a mood bends the slots
+
+  /// The grille for the current speech and mood. Like the capsule it grows in
+  /// from the centre, so the two styles arrive and leave the same way.
+  GrilleShape grille() const {
+    GrilleShape g{};
+    g.centerX = kCenterX;
+    g.centerY = kCenterY;
+    const float width = kGrilleWidth * presence_;
+    g.width = static_cast<int>(width + 0.5f);
+    g.height = kGrilleHeight;
+    g.visible = presence_ > 0.0f && g.width >= 2 * kGrilleRim + 2;
+    if (!g.visible) return g;
+
+    g.slotCount = kGrilleSlots;
+    g.slotHeight = kSlotThickness;
+    g.slotWidth = g.width - 2 * kGrilleRim;
+    // Louder speech opens the slots apart, the way a cone moves: the body stays
+    // the same size, so the panel does not breathe in and out.
+    const int span = g.height - 2 * kSlotThickness;
+    const float spread = 0.45f + 0.55f * open_;
+    g.slotSpacing = static_cast<int>(span * spread / (kGrilleSlots - 1) + 0.5f);
+    g.tilt = static_cast<int>(-mood_ * kMaxTilt + (mood_ < 0 ? -0.5f : 0.5f));
+
+    // Sound coming out: one arc from kArcFirstAt, a second from kArcSecondAt,
+    // each longer the louder it is. Brightness (shape) stretches them a little,
+    // so an "ee" reaches further than an "oo" at the same loudness.
+    g.arcCount = open_ >= kArcSecondAt ? 2 : (open_ >= kArcFirstAt ? 1 : 0);
+    const float reach = open_ * (1.0f + 0.25f * (shape_ > 0.0f ? shape_ : 0.0f));
+    g.arcLength = kArcMinLength + static_cast<int>((kArcMaxLength - kArcMinLength) * reach + 0.5f);
+    if (g.arcLength > kArcMaxLength) g.arcLength = kArcMaxLength;
+    g.arcThickness = kArcThickness;
+    g.arcGap = kArcGap;
+    return g;
+  }
+
   MouthShape shape() const {
     MouthShape s{};
     s.centerX = kCenterX;
@@ -141,6 +222,8 @@ class MouthModel {
   }
 
  private:
+  float mood_ = 0.0f;
+
   static void spring(float& value, float& velocity, float goal, float step) {
     const float accel = kSpringOmega * kSpringOmega * (goal - value) - 2.0f * kSpringOmega * velocity;
     velocity += accel * step;

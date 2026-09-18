@@ -219,6 +219,37 @@ speaking**:
   (150 ms). The picture leads the sound slightly (app 30 ms, robot 60 ms): people
   forgive a mouth that leads far more than one that lags.
 
+### A second style: the speaker grille
+
+Asked for on 2026-09-17: "more like a speaker grill with sound lines coming from
+it". Both styles are built and switchable at runtime (`C,MOUTH,CAPSULE` /
+`C,MOUTH,GRILLE`, a display change needing no authorization), because this is a
+question of taste and the only way to settle it is to watch both on the robot.
+
+- **The case for it.** Stanbot's eyes are frankly abstract -- two rounded
+  rectangles -- so a mouth that gestures at lips is the one part pretending to
+  be anatomy, which is the straddle that reads as slightly off. Anthropomorphism
+  does not come from human features: KITT is a row of bars, R2-D2 has no mouth,
+  Wall-E's whole performance is eyes. What makes Stanbot feel like someone is
+  that it turns to look at you and its pupils dilate when you face it, and a
+  grille takes none of that away.
+- **The cost, stated plainly.** The mouth is the only part that can show
+  *valence* independently of gaze -- the trouble face is literally X eyes and a
+  frown. A speaker cannot frown. So the grille **leans** instead: `setMood(-1)`
+  sags the outer slots 3-4 px, `+1` lifts them, and the middle slot stays put so
+  the panel bends rather than slides. That recovers most of what the frown did.
+- **Shape.** A dark body with three slots, sized once and never breathing in and
+  out -- a panel that changes size is a mouth again. Loudness opens the slots
+  apart, the way a cone moves, and puts one arc either side at 18% and a second
+  at 55%. Two arcs, not an equaliser: the owner has asked for calm throughout
+  and radiating lines are the easiest thing in the world to make busy.
+  Brightness stretches the arcs, so an "ee" reaches further than an "oo" at the
+  same loudness, which is the timbre the capsule showed by going wide.
+- **One honesty problem**, worth knowing before choosing it: a grille says *the
+  sound comes from here*, and it does not -- the voice plays from the Mac, and
+  robot audio is phase 5. A mouth is an avatar for a voice from anywhere; a
+  grille depicts hardware the robot has not got yet.
+
 Pieces:
 - **Robot:** `MouthModel.h` (in `firmware/lib/StanbotEyes/src`) is the model and
   packet parser; `StanbotEyes` draws the mouth in its normal redraw; `mouthTask`
