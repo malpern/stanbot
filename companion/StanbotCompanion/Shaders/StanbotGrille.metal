@@ -80,6 +80,11 @@ half4 stanbotGrille(float2 position, half4 color, float2 size, float unit,
         float bow = -tilt * unit * across * across;
         float d = roundedBox(p - centre - float2(0.0, bow),
                              float2(slotWidth * 0.5, thickness * 0.5), thickness * 0.5);
+        // Clipped to the panel, always. The geometry is fitted so this never
+        // has to bite, but a slot drawn outside its own grille breaks the one
+        // thing the shape is saying -- that these are cuts in a surface -- and
+        // no constant should be able to do that by accident.
+        d = max(d, dBody + 1.5);
         slotLight += 1.0 - smoothstep(-aa, aa, d);
         // The light a lit slot spills onto the panel around it.
         slotBloom += exp(-max(d, 0.0) / (2.2 * unit));

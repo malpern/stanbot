@@ -154,11 +154,25 @@ class MouthModel {
   void setMood(float mood) { mood_ = mood < -1.0f ? -1.0f : (mood > 1.0f ? 1.0f : mood); }
   float mood() const { return mood_; }
 
+  // The panel, and everything inside it derived FROM it. The slots used to be
+  // sized independently and at full voice and full mood they broke out through
+  // the top and bottom edges -- which destroys the whole idea: slots are cut
+  // INTO a panel, they cannot spill out of one. So the container is the
+  // constraint now, and the expression is fitted to it.
+  //
+  // Room: the mouth is centred at y 212, the eyes' lowest edge is 191 and the
+  // display ends at 240, so a panel may be about 40 tall. 36 leaves a margin at
+  // both ends.
   static constexpr int kGrilleWidth = 74;      // wider than the capsule: a panel, not a feature
-  static constexpr int kGrilleHeight = 26;
+  static constexpr int kGrilleHeight = 36;
   static constexpr int kGrilleSlots = 3;
   static constexpr int kSlotThickness = 3;
-  static constexpr int kGrilleRim = 6;         // body edge left around the slots
+  static constexpr int kGrilleRim = 6;         // body edge left around the slots, horizontally
+  static constexpr int kGrilleRimV = 2;        // and vertically: the lip the slots stay inside
+
+  // How far from the middle the outermost pixel of a slot may ever be. Bow and
+  // spacing are both fitted under this, so nothing can leave the panel.
+  static constexpr int kSlotRoom = kGrilleHeight / 2 - kGrilleRimV - kSlotThickness / 2;
   static constexpr int kMaxArcs = 2;           // each side. Two, deliberately.
   static constexpr int kArcThickness = 3;
   static constexpr int kArcGap = 6;
@@ -167,6 +181,8 @@ class MouthModel {
   static constexpr float kArcFirstAt = 0.18f;  // loudness at which one arc appears
   static constexpr float kArcSecondAt = 0.55f; // and the second
   static constexpr int kMaxTilt = 4;           // how far a mood bends the slots
+  // What is left for the slots to spread into once the bow has had its share.
+  static constexpr int kMaxSlotSpacing = kSlotRoom - kMaxTilt;
 
   /// The grille for the current speech and mood. Like the capsule it grows in
   /// from the centre, so the two styles arrive and leave the same way.
@@ -184,10 +200,10 @@ class MouthModel {
     g.slotHeight = kSlotThickness;
     g.slotWidth = g.width - 2 * kGrilleRim;
     // Louder speech opens the slots apart, the way a cone moves: the body stays
-    // the same size, so the panel does not breathe in and out.
-    const int span = g.height - 2 * kSlotThickness;
-    const float spread = 0.45f + 0.55f * open_;
-    g.slotSpacing = static_cast<int>(span * spread / (kGrilleSlots - 1) + 0.5f);
+    // the same size, so the panel does not breathe in and out. The widest
+    // spacing is what fits once the bow has taken its room, so a shout with a
+    // frown still sits inside the panel.
+    g.slotSpacing = static_cast<int>(kMaxSlotSpacing * (0.5f + 0.5f * open_) + 0.5f);
     g.tilt = static_cast<int>(-mood_ * kMaxTilt + (mood_ < 0 ? -0.5f : 0.5f));
 
     // Sound coming out: one arc from kArcFirstAt, a second from kArcSecondAt,

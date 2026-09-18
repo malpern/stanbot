@@ -249,6 +249,16 @@ question of taste and the only way to settle it is to watch both on the robot.
   thing (`Shaders/StanbotGrille.metal`): concentric **curved arcs** struck from
   the edge of the panel, opening wider as the voice rises, with bloom and
   falloff, and slots that bow smoothly. Same shape, same timing, better drawn.
+- **The container is the constraint.** Slots are cut INTO a panel, so nothing
+  may be drawn outside one: at 26 tall the bowed slots broke through the top and
+  bottom at full voice with a frown, and the shape stopped meaning anything.
+  The panel is 36 now -- the mouth sits at y 212, the eyes' lowest edge is 191
+  and the display ends at 240, so that is about the most the face has room for
+  -- and the spread and the bow are both derived from it (`kSlotRoom`,
+  `kMaxSlotSpacing`), so a shout with a frown still sits inside. The Mac also
+  clips the slots to the body in the shader, and a test walks the whole range of
+  loudness and mood asserting nothing reaches the edge. Found by eye; kept by
+  the test.
 - **Shape.** A dark body with three slots, sized once and never breathing in and
   out -- a panel that changes size is a mouth again. Loudness opens the slots
   apart, the way a cone moves, and puts one arc either side at 18% and a second

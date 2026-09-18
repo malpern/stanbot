@@ -99,10 +99,19 @@ enum MouthStyle: String, CaseIterable, Identifiable {
 /// how well it is drawn.
 struct GrilleGeometry {
     static let width = 74.0
-    static let height = 26.0
+    /// The panel, and everything inside derived from it. At 26 the slots broke
+    /// out through the top and bottom at full voice and full mood, which
+    /// destroys the metaphor: slots are cut INTO a panel. The container is the
+    /// constraint; the expression is fitted to it.
+    static let height = 36.0
     static let slots = 3.0
     static let slotThickness = 3.0
+    static let rimV = 2.0
     static let maxTilt = 4.0
+    /// How far from the middle a slot's outermost pixel may ever be.
+    static var slotRoom: Double { height / 2 - rimV - slotThickness / 2 }
+    /// What is left to spread into once the bow has taken its share.
+    static var maxSpacing: Double { slotRoom - maxTilt }
     static let arcGap = 6.0
     static let arcMinLength = 4.0
     static let arcMaxLength = 11.0
@@ -110,9 +119,16 @@ struct GrilleGeometry {
     static let arcSecondAt = 0.55
 
     /// Slot spacing: louder speech opens the slots apart, the way a cone moves.
+    /// The widest is what fits once the bow has its room, so a shout with a
+    /// frown still sits inside the panel.
     static func spacing(open: Double) -> Double {
-        let span = height - 2 * slotThickness
-        return span * (0.45 + 0.55 * open) / (slots - 1)
+        maxSpacing * (0.5 + 0.5 * max(0, min(1, open)))
+    }
+
+    /// The outermost pixel any slot reaches, for this loudness and mood. Must
+    /// never exceed `height / 2 - rimV`, and there is a test that says so.
+    static func slotExtent(open: Double, mood: Double) -> Double {
+        spacing(open: open) + abs(tilt(mood: mood)) + slotThickness / 2
     }
 
     /// How many arcs are showing, and how far they reach. Brightness stretches

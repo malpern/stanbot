@@ -17,9 +17,37 @@ final class MouthStyleTests: XCTestCase {
 
     /// The numbers that must match `MouthModel.h`, because the Mac and the robot
     /// draw the same grille and only the quality differs.
+    /// Nothing may ever be drawn outside the panel. Slots are cut INTO a
+    /// surface; one that spills past the edge stops being a cut and the whole
+    /// shape stops meaning anything. At 26 tall this failed at full voice with
+    /// a frown, and it took an eye to notice -- so it is a test now, across the
+    /// entire range rather than at the corners.
+    func testNoSlotEverLeavesThePanel() {
+        let limit = GrilleGeometry.height / 2 - GrilleGeometry.rimV
+        for openStep in 0...20 {
+            for moodStep in -10...10 {
+                let open = Double(openStep) / 20
+                let mood = Double(moodStep) / 10
+                let extent = GrilleGeometry.slotExtent(open: open, mood: mood)
+                XCTAssertLessThanOrEqual(extent, limit,
+                                         "open \(open), mood \(mood): slots reach \(extent), panel allows \(limit)")
+            }
+        }
+    }
+
+    /// The panel has to be big enough for the expression, and small enough for
+    /// the face: the eyes' lowest edge is 191 and the display ends at 240, with
+    /// the mouth centred at 212.
+    func testThePanelFitsBetweenTheEyesAndTheChin() {
+        let half = GrilleGeometry.height / 2
+        XCTAssertLessThanOrEqual(212 - half, 240.0)
+        XCTAssertGreaterThan(212 - half, 191, "the panel must not reach the eyes")
+        XCTAssertLessThan(212 + half, 240, "nor run off the bottom of the display")
+    }
+
     func testTheGrilleAgreesWithTheRobot() {
         XCTAssertEqual(GrilleGeometry.width, 74)
-        XCTAssertEqual(GrilleGeometry.height, 26)
+        XCTAssertEqual(GrilleGeometry.height, 36)
         XCTAssertEqual(GrilleGeometry.slots, 3)
         XCTAssertEqual(GrilleGeometry.arcFirstAt, 0.18)
         XCTAssertEqual(GrilleGeometry.arcSecondAt, 0.55)
