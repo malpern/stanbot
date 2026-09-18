@@ -2158,6 +2158,7 @@ void runFollowSession() {
   uint32_t lastSequence = targetSequence.load();   // anything queued before the session is stale
   uint32_t lastManualSequence = manualSequence.load();
   uint32_t centringForReboot = 0;   // when the head started home for a pending reset
+  uint32_t lastParkFrameMs = 0;     // the face is drawn from in here while it parks to sleep
   int manualInputs = 0;
 
   // Both servos must start inside the follow limits, torque off and still.
@@ -2244,11 +2245,26 @@ void runFollowSession() {
             if (centringForReboot == 0) {
               centringForReboot = now;
               tracker.comeHome();   // latched: a face or a search must not divert it
+              // Going to sleep: close the eyes NOW, at the start of the journey
+              // home, rather than after it. The owner asked for the closed lids
+              // to stay visible until the head arrives, and for the screen to
+              // go dark only then -- one movement, not three waits.
+              if (asleep.load()) eyes.beginSleep(now);
             } else if (tracker.atRest() || now - centringForReboot > kRebootCentreMs) {
               result = asleep.load() ? "stopped_for_sleep"
                      : otaActive.load() ? "stopped_for_update" : "stopped_for_reboot";
               followStopRequested.store(false);   // onStart sets it too; do not leave it armed
               break;
+            }
+            // Every eye render lives in loop(), and loop() is blocked in here for
+            // the whole session -- which is why the face freezes mid-expression
+            // while the head travels. Drive it from here while coming home to
+            // sleep, so the lids can be seen closing and then staying closed.
+            // Bounded to this one state, which lasts under four seconds.
+            if (asleep.load() && eyeFrameReady && now - lastParkFrameMs >= 40) {
+              lastParkFrameMs = now;
+              eyes.update(eyeFrame, now);
+              eyeFrame.pushSprite(0, 0);
             }
           } else if (followStopRequested.exchange(false)) { result = "stopped_by_host"; break; }
           const uint32_t iterationStart = now;
